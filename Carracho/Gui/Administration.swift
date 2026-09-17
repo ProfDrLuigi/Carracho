@@ -515,20 +515,30 @@ extension ViewController {
             adminBotAccountsButton, adminBotReloadButton, adminBotToggleButton,
         ], spacing: 8)
 
+        func botDivider() -> NSView {
+            let divider = CarrachoDividerView()
+            divider.translatesAutoresizingMaskIntoConstraints = false
+            divider.heightAnchor.constraint(equalToConstant: 1).isActive = true
+            return divider
+        }
+        // The body is at least as tall as the viewport. A transparent spacer absorbs any
+        // surplus height so dividers remain hairlines and the status/actions stay at the bottom.
+        let flexibleSpace = NSView()
+
         appendAdminContent([
             runtimeTitle,
             runtimeRow,
-            CarrachoDividerView(),
-            accountRow,
-            CarrachoDividerView(),
-            localhostNote,
-            profileNote,
-            CarrachoDividerView(),
+            botDivider(),
             greetingTitle,
             greetingToggleRow,
             greetingTextRow,
             greetingNote,
-            CarrachoDividerView(),
+            botDivider(),
+            accountRow,
+            localhostNote,
+            profileNote,
+            flexibleSpace,
+            botDivider(),
             actions,
         ], to: page, minimumBodyHeight: 410)
         updateBotAdministrationUI()
