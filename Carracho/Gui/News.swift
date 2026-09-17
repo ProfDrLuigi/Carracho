@@ -1154,6 +1154,13 @@ extension ViewController {
         body.textContainer?.widthTracksTextView = true
         let attachments = CarrachoComposerAttachmentStrip()
         attachments.onRemoveImage = { [weak self] id in self?.deletePendingMedia(id) }
+        body.youTubeURLHandler = { [weak self] reference in
+            guard let self,
+                  self.lastLoginResult?.supportsYouTubeLinks == true,
+                  attachments.youtubeCount < LegacyMediaTransfer.maximumYouTubeLinksPerNewsPost else { return false }
+            attachments.addYouTube(reference)
+            return true
+        }
         let bodyScroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: accessoryWidth, height: 235))
         bodyScroll.hasVerticalScroller = true
         bodyScroll.borderType = .bezelBorder
@@ -1359,6 +1366,13 @@ extension ViewController {
         body.textContainer?.widthTracksTextView = true
         let attachments = CarrachoComposerAttachmentStrip()
         attachments.onRemoveImage = { [weak self] id in self?.deletePendingMedia(id) }
+        body.youTubeURLHandler = { [weak self] reference in
+            guard let self,
+                  self.lastLoginResult?.supportsYouTubeLinks == true,
+                  attachments.youtubeCount < LegacyMediaTransfer.maximumYouTubeLinksPerNewsPost else { return false }
+            attachments.addYouTube(reference)
+            return true
+        }
         let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: accessoryWidth, height: 235))
         scroll.hasVerticalScroller = true
         scroll.borderType = .bezelBorder

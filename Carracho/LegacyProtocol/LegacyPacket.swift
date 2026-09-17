@@ -181,6 +181,9 @@ enum LegacyCommand {
     static let forumArticleReactions: UInt32 = 0xf0000202
     static let forumArticleReactionSet: UInt32 = 0xf0000203
     static let forumArticleDelete: UInt32 = 0xf0000204
+    /// Async modern-client notification that a News article's reactions changed.
+    /// Field 1 = group name (MacRoman), field 2 = article ID (UInt32 BE).
+    static let forumArticleReactionChanged: UInt32 = 0xf0000205
     /// Authenticated self-service password update. Field 1 contains the new
     /// password as MacRoman bytes (0...64 bytes). No account-management
     /// permission is required because the server only updates the session's

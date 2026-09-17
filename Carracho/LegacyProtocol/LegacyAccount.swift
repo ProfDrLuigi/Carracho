@@ -10,6 +10,8 @@ enum LegacyAccountField {
     static let picture: UInt32 = 0xf0000012
     /// Modern Carracho extension: read-only marker for accounts that can only be activated locally.
     static let localLoginOnly: UInt32 = 0xf0000013
+    /// Modern Carracho extension: parallel per-account transfer counters for account-list replies.
+    static let transferStatistics: UInt32 = 0xf0000014
 }
 
 struct LegacyAccountDetails: Equatable {
@@ -81,6 +83,31 @@ struct LegacyAccountRecord: Equatable {
     }
 }
 
+
+struct LegacyAccountTransferStatistics: Equatable {
+    static let wireSize = 32
+
+    var downloadCount: UInt64
+    var downloadBytes: UInt64
+    var uploadCount: UInt64
+    var uploadBytes: UInt64
+
+    func encoded() -> Data {
+        var data = LegacyWire.uint64BE(downloadCount)
+        data.append(LegacyWire.uint64BE(downloadBytes))
+        data.append(LegacyWire.uint64BE(uploadCount))
+        data.append(LegacyWire.uint64BE(uploadBytes))
+        return data
+    }
+
+    static func decode(from cursor: inout LegacyByteCursor) throws -> LegacyAccountTransferStatistics {
+        LegacyAccountTransferStatistics(downloadCount: try cursor.readUInt64BE(),
+                                        downloadBytes: try cursor.readUInt64BE(),
+                                        uploadCount: try cursor.readUInt64BE(),
+                                        uploadBytes: try cursor.readUInt64BE())
+    }
+}
+
 struct LegacyCompactAccountSummary: Equatable {
     static let wireSize = 0x88
 
@@ -96,6 +123,8 @@ struct LegacyCompactAccountSummary: Equatable {
     var userMode: UInt8
     /// Byte 0x87 is serializer stack padding in the classic server; emit zero for deterministic modern output.
     var legacyPadding: UInt8
+    /// Modern-only account-list metadata carried in a separate TLV, never inside the 136-byte classic record.
+    var transferStatistics: LegacyAccountTransferStatistics? = nil
 
     func encoded() throws -> Data {
         var data = try LegacyWire.fixedCString(login, width: 64)
@@ -142,6 +171,34 @@ extension LegacyPackedRecords {
                 cursor.readBytes(count: LegacyCompactAccountSummary.wireSize)
             ))
         }
+        try cursor.requireEnd()
+        return result
+    }
+
+    static func encodeAccountTransferStatistics(_ statistics: [LegacyAccountTransferStatistics]) throws -> Data {
+        guard statistics.count <= Int(UInt32.max) else {
+            throw LegacyProtocolError.invalidLength("too many account transfer statistics")
+        }
+        var data = LegacyWire.uint32BE(UInt32(statistics.count))
+        for value in statistics { data.append(value.encoded()) }
+        guard data.count <= Int(UInt16.max) else {
+            throw LegacyProtocolError.invalidLength("account transfer statistics exceed one TLV")
+        }
+        return data
+    }
+
+    static func decodeAccountTransferStatistics(_ data: Data, expectedCount: Int) throws -> [LegacyAccountTransferStatistics] {
+        var cursor = LegacyByteCursor(data)
+        let count = Int(try cursor.readUInt32BE())
+        guard count == expectedCount else {
+            throw LegacyProtocolError.invalidRecord("account transfer statistics count does not match account list")
+        }
+        guard data.count == 4 + count * LegacyAccountTransferStatistics.wireSize else {
+            throw LegacyProtocolError.invalidLength("account transfer statistics payload has invalid length")
+        }
+        var result: [LegacyAccountTransferStatistics] = []
+        result.reserveCapacity(count)
+        for _ in 0..<count { result.append(try LegacyAccountTransferStatistics.decode(from: &cursor)) }
         try cursor.requireEnd()
         return result
     }

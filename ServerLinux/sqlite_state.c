@@ -231,6 +231,37 @@ int cr_sqlite_record_account_transfer(sqlite3 *db, const char *account_id, const
 }
 
 
+int cr_sqlite_account_transfer_statistics(sqlite3 *db, const char *account_id,
+                                          uint64_t *download_count, uint64_t *download_bytes,
+                                          uint64_t *upload_count, uint64_t *upload_bytes) {
+    if (!db || !account_id || !*account_id || !download_count || !download_bytes || !upload_count || !upload_bytes) return -1;
+    *download_count = *download_bytes = *upload_count = *upload_bytes = 0;
+    sqlite3_stmt *stmt = NULL;
+    if (prepare(db, "SELECT download_count,download_bytes,upload_count,upload_bytes FROM account_transfer_statistics WHERE account_id=?", &stmt) ||
+        bind_text(stmt, 1, account_id)) {
+        if (stmt) sqlite3_finalize(stmt);
+        return -1;
+    }
+    int rc = sqlite3_step(stmt);
+    if (rc == SQLITE_ROW) {
+        sqlite3_int64 dc = sqlite3_column_int64(stmt, 0);
+        sqlite3_int64 dbv = sqlite3_column_int64(stmt, 1);
+        sqlite3_int64 uc = sqlite3_column_int64(stmt, 2);
+        sqlite3_int64 ub = sqlite3_column_int64(stmt, 3);
+        *download_count = dc < 0 ? 0 : (uint64_t)dc;
+        *download_bytes = dbv < 0 ? 0 : (uint64_t)dbv;
+        *upload_count = uc < 0 ? 0 : (uint64_t)uc;
+        *upload_bytes = ub < 0 ? 0 : (uint64_t)ub;
+    } else if (rc != SQLITE_DONE) {
+        fprintf(stderr, "carracho-server: sqlite step: %s\n", sqlite3_errmsg(db));
+        sqlite3_finalize(stmt);
+        return -1;
+    }
+    sqlite3_finalize(stmt);
+    return 0;
+}
+
+
 static void lowercase_id(const char *src, char out[128]) {
     size_t n = strlen(src); if (n > 127) n = 127;
     for (size_t i=0;i<n;i++) out[i]=(char)tolower((unsigned char)src[i]);

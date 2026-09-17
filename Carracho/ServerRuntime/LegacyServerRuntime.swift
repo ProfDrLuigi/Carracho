@@ -2419,11 +2419,29 @@ final class LegacyServerRuntime {
             try session.sendAuthenticated(Self.errorPacket(transactionID: packet.transactionID, code: 1)); return
         }
         do {
-            let summaries = try backend.snapshot().accounts.map { try $0.legacyCompactSummary() }
+            let snapshot = backend.snapshot()
+            let summaries = try snapshot.accounts.map { try $0.legacyCompactSummary() }
+            var fields = [LegacyTLV(type: 0x10,
+                                    value: try LegacyPackedRecords.encodeCompactAccountList(summaries))]
+            if !session.isLegacyTransport {
+                let stored = try backend.accountTransferStatistics()
+                let byID = Dictionary(uniqueKeysWithValues: stored.map { ($0.accountID, $0) })
+                let statistics = snapshot.accounts.map { account -> LegacyAccountTransferStatistics in
+                    guard let value = byID[account.id] else {
+                        return LegacyAccountTransferStatistics(downloadCount: 0, downloadBytes: 0,
+                                                               uploadCount: 0, uploadBytes: 0)
+                    }
+                    return LegacyAccountTransferStatistics(downloadCount: value.downloadCount,
+                                                           downloadBytes: value.downloadBytes,
+                                                           uploadCount: value.uploadCount,
+                                                           uploadBytes: value.uploadBytes)
+                }
+                fields.append(LegacyTLV(type: LegacyAccountField.transferStatistics,
+                                        value: try LegacyPackedRecords.encodeAccountTransferStatistics(statistics)))
+            }
             try session.sendAuthenticated(LegacyPacket(command: LegacyCommand.accountList,
                                                         transactionID: packet.transactionID,
-                                                        fields: [LegacyTLV(type: 0x10,
-                                                                           value: try LegacyPackedRecords.encodeCompactAccountList(summaries))]))
+                                                        fields: fields))
         } catch {
             log("Account-list request failed: \(error.localizedDescription)")
             try session.sendAuthenticated(Self.errorPacket(transactionID: packet.transactionID, code: 1))
@@ -5775,6 +5793,20 @@ extension LegacyServerRuntime {
             }
             try session.sendAuthenticated(LegacyPacket(command: LegacyCommand.forumArticleReactionSet,
                                                         transactionID: packet.transactionID, fields: fields))
+
+            let changedEvent = LegacyPacket(command: LegacyCommand.forumArticleReactionChanged,
+                                            transactionID: 0,
+                                            fields: [
+                                                LegacyTLV(type: 1, value: Self.macRoman(group.name)),
+                                                LegacyTLV(type: 2, value: LegacyWire.uint32BE(articleID)),
+                                            ])
+            authenticatedSessions().forEach { recipient in
+                guard recipient !== session,
+                      !recipient.isLegacyTransport,
+                      let recipientAccount = recipient.account,
+                      canRead(group: group, account: recipientAccount) else { return }
+                try? recipient.sendAuthenticated(changedEvent)
+            }
             onNewsChanged?()
         } catch {
             try session.sendAuthenticated(Self.errorPacket(transactionID: packet.transactionID, code: 1))

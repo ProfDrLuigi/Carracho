@@ -189,6 +189,7 @@ enum LegacyControlEvent {
     case flatNewsPosted(Data)
     case flatNewsDeleted(UInt32)
     case flatNewsCleared
+    case newsReactionChanged(group: Data, articleID: UInt32)
     case bannerChanged
     case mediaDeleted(UUID)
     case fileLabelChanged(path: Data, label: LegacyFileLabel)
@@ -1205,7 +1206,13 @@ final class LegacyControlClient {
                     throw LegacyControlClientError.unexpectedCommand(expected: LegacyCommand.accountList, actual: packet.command)
                 }
                 guard let field = packet.firstField(type: 0x10) else { throw LegacyControlClientError.missingField(0x10) }
-                completion(.success(try LegacyPackedRecords.decodeCompactAccountList(field.value)))
+                var accounts = try LegacyPackedRecords.decodeCompactAccountList(field.value)
+                if let statisticsField = packet.firstField(type: LegacyAccountField.transferStatistics) {
+                    let statistics = try LegacyPackedRecords.decodeAccountTransferStatistics(statisticsField.value,
+                                                                                             expectedCount: accounts.count)
+                    for index in accounts.indices { accounts[index].transferStatistics = statistics[index] }
+                }
+                completion(.success(accounts))
             } catch { completion(.failure(error)) }
         }
     }
@@ -2111,6 +2118,13 @@ final class LegacyControlClient {
                 onEvent?(.flatNewsDeleted(try field.uint32BE()))
             case LegacyCommand.flatNewsClear:
                 onEvent?(.flatNewsCleared)
+            case LegacyCommand.forumArticleReactionChanged:
+                guard let group = packet.firstField(type: 1)?.value,
+                      !group.isEmpty, group.count <= LegacyNewsTransfer.maximumGroupNameLength,
+                      let article = packet.firstField(type: 2), article.value.count == 4 else {
+                    throw LegacyControlClientError.protocolFailure("invalid news-reaction-changed event")
+                }
+                onEvent?(.newsReactionChanged(group: group, articleID: try article.uint32BE()))
             case LegacyCommand.bannerChanged:
                 guard packet.fields.isEmpty else {
                     throw LegacyControlClientError.protocolFailure("Banner-Changed-Event enthält unerwartete Felder")

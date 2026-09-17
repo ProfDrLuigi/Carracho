@@ -62,6 +62,7 @@
 #define ACCOUNT_FIELD_COLOR_RGB 0xf0000011u
 #define ACCOUNT_FIELD_PICTURE 0xf0000012u
 #define ACCOUNT_FIELD_LOCAL_LOGIN_ONLY 0xf0000013u
+#define ACCOUNT_FIELD_TRANSFER_STATISTICS 0xf0000014u
 #define CMD_CHALLENGE 0x00000001u
 #define CMD_LOGIN 0x00000002u
 #define CMD_LOGIN_SUCCESS 0x00000003u
@@ -131,6 +132,7 @@
 #define CMD_FORUM_THREAD_ENTRIES 0xf0000201u
 #define CMD_FORUM_ARTICLE_REACTIONS 0xf0000202u
 #define CMD_FORUM_ARTICLE_REACTION_SET 0xf0000203u
+#define CMD_FORUM_ARTICLE_REACTION_CHANGED 0xf0000205u
 #define CMD_FORUM_ARTICLE_DELETE 0xf0000204u
 #define CMD_CHANGE_OWN_PASSWORD 0xf0000300u
 #define CMD_SERVER_LOG_REQUEST 0xf0000400u
@@ -2375,9 +2377,28 @@ static int handle_bot_test_rss_feed(cr_session*s,const cr_packet*p){
 
 static int handle_account_list(cr_session*s,const cr_packet*p){
     if(!account_perm(s,PERM_MANAGE_ACCOUNTS))return send_error(s,p->transaction_id,1);
-    cr_buffer b;cr_buffer_init(&b);
-    pthread_mutex_lock(&s->server->state.mutex);size_t count=s->server->state.account_count;int fail=cr_buffer_append_u32(&b,(uint32_t)count);for(size_t i=0;!fail&&i<count;i++)fail=encode_account_summary(&s->server->state.accounts[i],&b);pthread_mutex_unlock(&s->server->state.mutex);
-    if(fail||b.len>UINT16_MAX){cr_buffer_free(&b);return send_error(s,p->transaction_id,1);}cr_tlv_out f={0x10,b.data,(uint16_t)b.len};int rc=session_send(s,CMD_ACCOUNT_LIST,p->transaction_id,&f,1);cr_buffer_free(&b);return rc;
+    cr_buffer b,stats;cr_buffer_init(&b);cr_buffer_init(&stats);
+    pthread_mutex_lock(&s->server->state.mutex);
+    size_t count=s->server->state.account_count;
+    int fail=cr_buffer_append_u32(&b,(uint32_t)count);
+    int stats_fail=s->modern_transport?cr_buffer_append_u32(&stats,(uint32_t)count):0;
+    for(size_t i=0;!fail&&!stats_fail&&i<count;i++){
+        cr_account*a=&s->server->state.accounts[i];
+        fail=encode_account_summary(a,&b);
+        if(s->modern_transport){
+            uint64_t dc=0,db=0,uc=0,ub=0;
+            if(cr_sqlite_account_transfer_statistics(s->server->state.db,a->id,&dc,&db,&uc,&ub)||
+               cr_buffer_append_u64(&stats,dc)||cr_buffer_append_u64(&stats,db)||
+               cr_buffer_append_u64(&stats,uc)||cr_buffer_append_u64(&stats,ub))stats_fail=1;
+        }
+    }
+    pthread_mutex_unlock(&s->server->state.mutex);
+    if(fail||stats_fail||b.len>UINT16_MAX||stats.len>UINT16_MAX){cr_buffer_free(&stats);cr_buffer_free(&b);return send_error(s,p->transaction_id,1);}
+    cr_tlv_out fields[2];size_t n=0;
+    fields[n++]=(cr_tlv_out){0x10,b.data,(uint16_t)b.len};
+    if(s->modern_transport)fields[n++]=(cr_tlv_out){ACCOUNT_FIELD_TRANSFER_STATISTICS,stats.data,(uint16_t)stats.len};
+    int rc=session_send(s,CMD_ACCOUNT_LIST,p->transaction_id,fields,n);
+    cr_buffer_free(&stats);cr_buffer_free(&b);return rc;
 }
 static int handle_get_account(cr_session*s,const cr_packet*p){
     if(!account_perm(s,PERM_MANAGE_ACCOUNTS))return send_error(s,p->transaction_id,1);
@@ -3106,7 +3127,22 @@ static int handle_forum_article_reaction_set(cr_session*s,const cr_packet*p){
     uint32_t aid=cr_read_be32(article->value);cr_buffer b,users;cr_buffer_init(&b);cr_buffer_init(&users);
     if(cr_news_set_reaction(&s->server->news,g.id,aid,s->account_id,reaction->value[0],&b)||b.len>UINT16_MAX){cr_buffer_free(&b);cr_buffer_free(&users);return send_error(s,p->transaction_id,1);}
     int users_rc=encode_reaction_user_names(s,g.id,aid,&users);if(users_rc<0){cr_buffer_free(&b);cr_buffer_free(&users);return send_error(s,p->transaction_id,1);}
-    cr_tlv_out f[]={{1,b.data,(uint16_t)b.len},{2,users.data,(uint16_t)users.len}};int rc=session_send(s,CMD_FORUM_ARTICLE_REACTION_SET,p->transaction_id,f,users_rc==0?2:1);cr_buffer_free(&b);cr_buffer_free(&users);return rc;
+    cr_tlv_out f[]={{1,b.data,(uint16_t)b.len},{2,users.data,(uint16_t)users.len}};
+    int rc=session_send(s,CMD_FORUM_ARTICLE_REACTION_SET,p->transaction_id,f,users_rc==0?2:1);
+    if(!rc){
+        uint8_t group_wire[256];size_t group_wire_len=0;uint8_t article_wire[4];cr_write_be32(article_wire,aid);
+        if(!cr_utf8_to_macroman(g.name,group_wire,sizeof(group_wire),&group_wire_len)&&group_wire_len&&group_wire_len<=64){
+            cr_tlv_out changed[]={{1,group_wire,(uint16_t)group_wire_len},{2,article_wire,4}};
+            pthread_mutex_lock(&s->server->mutex);
+            for(size_t i=0;i<s->server->allocated_session_count;i++){
+                cr_session*x=s->server->sessions[i];
+                if(x&&x!=s&&x->modern_transport&&session_ready_for_async(x)&&group_can_read(&g,x->mode))
+                    session_send(x,CMD_FORUM_ARTICLE_REACTION_CHANGED,0,changed,2);
+            }
+            pthread_mutex_unlock(&s->server->mutex);
+        }
+    }
+    cr_buffer_free(&b);cr_buffer_free(&users);return rc;
 }
 
 static int handle_forum_article_delete(cr_session*s,const cr_packet*p){

@@ -2007,3 +2007,8 @@
 "Bot RSS feeds require a modern Carracho server." = "Bot RSS feeds require a modern Carracho server.";
 "This server does not support Bot RSS feeds." = "This server does not support Bot RSS feeds.";
 "RSS test article posted to Public." = "RSS test article posted to Public.";
+
+// Account transfer statistics
+"Download data" = "Download data";
+"Uploads" = "Uploads";
+"Upload data" = "Upload data";

@@ -8,11 +8,18 @@ extension ViewController {
     func makeAccountsAdminPage() -> NSView {
         let page = adminPage(title: L("Accounts"), subtitle: L("Manage logins, Classic account groups and per-user overrides"))
         configure(table: adminAccountTable, columns: [
-            ("name", "Name", 220), ("login", "Login", 180), ("status", "Group", 170), ("last", "Last login", 180),
+            ("name", "Name", 190), ("login", "Login", 150), ("status", "Group", 150), ("last", "Last login", 165),
+            ("downloads", "Downloads", 90), ("downloadBytes", "Download data", 120),
+            ("uploads", "Uploads", 90), ("uploadBytes", "Upload data", 120),
         ])
+        adminAccountTable.columnAutoresizingStyle = .noColumnAutoresizing
+        for identifier in ["downloads", "downloadBytes", "uploads", "uploadBytes"] {
+            adminAccountTable.tableColumn(withIdentifier: NSUserInterfaceItemIdentifier(identifier))?.headerCell.alignment = .right
+        }
         adminAccountTable.target = self
         adminAccountTable.doubleAction = #selector(modifySelectedAccount(_:))
         let scroll = tableScroll(adminAccountTable)
+        scroll.hasHorizontalScroller = true
         adminAccountNewButton.target = self
         adminAccountNewButton.action = #selector(showAccountEditor(_:))
         adminAccountModifyButton.target = self

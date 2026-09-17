@@ -672,6 +672,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
     var localServerRuntime: LegacyServerRuntime?
     var startServerWhenBackendLoads = false
     var localServerState: ServerState = .initial
+    var localAccountTransferStatistics: [UUID: LegacyAccountTransferStatistics] = [:]
     var currentWorkspace: Workspace = .overview
     var didRestoreMainWindowFrame = false
     var sidebarButtons: [Workspace: NSButton] = [:]
@@ -1810,6 +1811,15 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         channelMessageField.delegate = self
         channelMessageField.imageFileHandler = { [weak self] urls in self?.uploadChannelImages(urls: urls) }
         channelMessageField.imageDataHandler = { [weak self] data in self?.uploadChannelImage(data: data) }
+        channelMessageField.youTubeURLHandler = { [weak self] reference in
+            guard let self,
+                  self.client.isConnected,
+                  self.activeChannel != nil,
+                  self.lastLoginResult?.supportsYouTubeLinks == true,
+                  self.channelAttachmentStrip.youtubeCount < LegacyMediaTransfer.maximumYouTubeLinksPerChatMessage else { return false }
+            self.channelAttachmentStrip.addYouTube(reference)
+            return true
+        }
         channelMessageField.isRichText = false
         channelMessageField.allowsUndo = true
         channelMessageField.isAutomaticQuoteSubstitutionEnabled = false
@@ -1989,6 +1999,16 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         newsReplyTextView.toolTip = CarrachoHTMLText.editorHint
         newsReplyTextView.imageFileHandler = { [weak self] urls in self?.uploadInlineNewsReplyImages(urls: urls) }
         newsReplyTextView.imageDataHandler = { [weak self] data in self?.uploadInlineNewsReplyImage(data: data) }
+        newsReplyTextView.youTubeURLHandler = { [weak self] reference in
+            guard let self,
+                  self.currentNewsThreadID != nil,
+                  self.lastLoginResult?.supportsYouTubeLinks == true,
+                  self.newsReplyAttachments.youtubeCount < LegacyMediaTransfer.maximumYouTubeLinksPerNewsPost else { return false }
+            self.newsReplyAttachments.addYouTube(reference)
+            self.saveInlineNewsReplyDraft()
+            self.updateInlineNewsReplyState()
+            return true
+        }
 
         newsReplyAttachments.onRemoveImage = { [weak self] id in self?.deletePendingMedia(id) }
         newsReplyAttachments.onChange = { [weak self] in self?.updateInlineNewsReplyState() }
@@ -2083,6 +2103,10 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         if lhs < rhs { return .orderedAscending }
         if lhs > rhs { return .orderedDescending }
         return .orderedSame
+    }
+
+    static func accountTransferByteString(_ value: UInt64) -> String {
+        ByteCountFormatter.string(fromByteCount: Int64(clamping: value), countStyle: .file)
     }
 
     static func compareOptionalDate(_ lhs: Date?, _ rhs: Date?) -> ComparisonResult {
@@ -6573,6 +6597,19 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
             appendLine("\n" + LF("Flat News entry %@ was deleted.", String(index)))
         case .flatNewsCleared:
             appendLine("\n" + L("Flat News was cleared."))
+        case let .newsReactionChanged(group, articleID):
+            guard newsReactionsSupported,
+                  currentNewsCategory == group,
+                  currentNewsThreadPosts.contains(where: { $0.articleID == articleID }) else { break }
+            client.requestNewsReactions(group: group, articleID: articleID) { [weak self] result in
+                guard let self,
+                      self.currentNewsCategory == group,
+                      self.currentNewsThreadPosts.contains(where: { $0.articleID == articleID }) else { return }
+                if case let .success(summary) = result {
+                    self.currentNewsReactions[articleID] = summary
+                    self.reloadNewsViewPreservingArticleScrollPosition()
+                }
+            }
         case .bannerChanged:
             refreshRemoteBanner(logErrors: true)
         case let .mediaDeleted(id):
@@ -6822,6 +6859,10 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
                     } else { value = L("Unassigned") }
                 }
             case "last": value = Self.dateString(Date.fromLegacyMacTimestamp(account.lastLogin))
+            case "downloads": value = account.transferStatistics.map { String($0.downloadCount) } ?? "—"
+            case "downloadBytes": value = account.transferStatistics.map { Self.accountTransferByteString($0.downloadBytes) } ?? "—"
+            case "uploads": value = account.transferStatistics.map { String($0.uploadCount) } ?? "—"
+            case "uploadBytes": value = account.transferStatistics.map { Self.accountTransferByteString($0.uploadBytes) } ?? "—"
             default: value = ""
             }
         } else if tableView === adminAccountTable, row < displayedLocalAccounts.count {
@@ -6831,6 +6872,10 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
             case "login": value = account.login
             case "status": value = localServerState.accountGroup(for: account)?.name ?? L("Unassigned")
             case "last": value = Self.dateString(account.lastLoginAt)
+            case "downloads": value = localAccountTransferStatistics[account.id].map { String($0.downloadCount) } ?? "—"
+            case "downloadBytes": value = localAccountTransferStatistics[account.id].map { Self.accountTransferByteString($0.downloadBytes) } ?? "—"
+            case "uploads": value = localAccountTransferStatistics[account.id].map { String($0.uploadCount) } ?? "—"
+            case "uploadBytes": value = localAccountTransferStatistics[account.id].map { Self.accountTransferByteString($0.uploadBytes) } ?? "—"
             default: value = ""
             }
         } else if tableView === adminNewsgroupTable, row < displayedAdminNewsgroups.count {
@@ -6891,7 +6936,12 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         if tableView === fileTable { cellFontSize = filesFontSize }
         else if tableView === newsTable || tableView === newsArticleTable { cellFontSize = newsFontSize }
         else { cellFontSize = 12.5 }
-        return tableCell(text: value, image: icon, secondary: tableView === userTable && identifier == "state", fontSize: cellFontSize)
+        let numericAccountColumn = tableView === adminAccountTable
+            && ["downloads", "downloadBytes", "uploads", "uploadBytes"].contains(identifier)
+        return tableCell(text: value, image: icon,
+                         secondary: tableView === userTable && identifier == "state",
+                         fontSize: cellFontSize,
+                         alignment: numericAccountColumn ? .right : .left)
     }
 
     func symbolImage(_ name: String, fallback: String) -> NSImage? {
@@ -6901,8 +6951,10 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         return NSImage(named: fallback)
     }
 
-    func tableCell(text: String, image: NSImage?, secondary: Bool = false, fontSize: CGFloat = 12.5) -> NSView {
+    func tableCell(text: String, image: NSImage?, secondary: Bool = false, fontSize: CGFloat = 12.5,
+                   alignment: NSTextAlignment = .left) -> NSView {
         let field = NSTextField(labelWithString: text)
+        field.alignment = alignment
         field.lineBreakMode = .byTruncatingTail
         field.maximumNumberOfLines = 1
         field.font = NSFont.systemFont(ofSize: fontSize, weight: .regular)
@@ -7209,6 +7261,10 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
             case "login": return Self.compareText(Self.macRomanString(lhs.login), Self.macRomanString(rhs.login))
             case "status": return Self.compareText(groupName(lhs), groupName(rhs))
             case "last": return Self.compareNumber(lhs.lastLogin, rhs.lastLogin)
+            case "downloads": return Self.compareNumber(lhs.transferStatistics?.downloadCount ?? 0, rhs.transferStatistics?.downloadCount ?? 0)
+            case "downloadBytes": return Self.compareNumber(lhs.transferStatistics?.downloadBytes ?? 0, rhs.transferStatistics?.downloadBytes ?? 0)
+            case "uploads": return Self.compareNumber(lhs.transferStatistics?.uploadCount ?? 0, rhs.transferStatistics?.uploadCount ?? 0)
+            case "uploadBytes": return Self.compareNumber(lhs.transferStatistics?.uploadBytes ?? 0, rhs.transferStatistics?.uploadBytes ?? 0)
             default: return .orderedSame
             }
         }
@@ -7224,6 +7280,14 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
                 let right = self.localServerState.accountGroup(for: rhs)?.name ?? L("Unassigned")
                 return Self.compareText(left, right)
             case "last": return Self.compareOptionalDate(lhs.lastLoginAt, rhs.lastLoginAt)
+            case "downloads": return Self.compareNumber(self.localAccountTransferStatistics[lhs.id]?.downloadCount ?? 0,
+                                                          self.localAccountTransferStatistics[rhs.id]?.downloadCount ?? 0)
+            case "downloadBytes": return Self.compareNumber(self.localAccountTransferStatistics[lhs.id]?.downloadBytes ?? 0,
+                                                              self.localAccountTransferStatistics[rhs.id]?.downloadBytes ?? 0)
+            case "uploads": return Self.compareNumber(self.localAccountTransferStatistics[lhs.id]?.uploadCount ?? 0,
+                                                        self.localAccountTransferStatistics[rhs.id]?.uploadCount ?? 0)
+            case "uploadBytes": return Self.compareNumber(self.localAccountTransferStatistics[lhs.id]?.uploadBytes ?? 0,
+                                                            self.localAccountTransferStatistics[rhs.id]?.uploadBytes ?? 0)
             default: return .orderedSame
             }
         }

@@ -320,10 +320,50 @@ private enum CarrachoMediaPasteboard {
 
     static func bitmapData(from pasteboard: NSPasteboard) -> Data? {
         if let png = pasteboard.data(forType: .png) { return png }
-        guard let tiff = pasteboard.data(forType: .tiff), let image = NSImage(data: tiff),
-              let tiffData = image.tiffRepresentation,
-              let rep = NSBitmapImageRep(data: tiffData) else { return nil }
-        return rep.representation(using: .png, properties: [:])
+
+        // Preview and other AppKit applications do not necessarily expose copied artwork as
+        // a raw PNG/TIFF pasteboard item. Ask AppKit for the image first so PDF-backed,
+        // JPEG-backed and other image representations can use the normal NSImage paste path.
+        if let image = NSImage(pasteboard: pasteboard), let png = pngData(from: image) {
+            return png
+        }
+
+        // Keep the explicit TIFF path as a compatibility fallback for older producers.
+        if let tiff = pasteboard.data(forType: .tiff), let image = NSImage(data: tiff) {
+            return pngData(from: image)
+        }
+        return nil
+    }
+
+    private static func pngData(from image: NSImage) -> Data? {
+        guard image.size.width > 0, image.size.height > 0 else { return nil }
+        if let tiffData = image.tiffRepresentation,
+           let rep = NSBitmapImageRep(data: tiffData),
+           let png = rep.representation(using: .png, properties: [:]) {
+            return png
+        }
+
+        let width = max(1, Int(ceil(image.size.width)))
+        let height = max(1, Int(ceil(image.size.height)))
+        guard let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil,
+                                            pixelsWide: width,
+                                            pixelsHigh: height,
+                                            bitsPerSample: 8,
+                                            samplesPerPixel: 4,
+                                            hasAlpha: true,
+                                            isPlanar: false,
+                                            colorSpaceName: .deviceRGB,
+                                            bytesPerRow: 0,
+                                            bitsPerPixel: 0),
+              let context = NSGraphicsContext(bitmapImageRep: bitmap) else { return nil }
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = context
+        NSColor.clear.setFill()
+        NSRect(x: 0, y: 0, width: width, height: height).fill()
+        image.draw(in: NSRect(x: 0, y: 0, width: width, height: height),
+                   from: .zero, operation: .sourceOver, fraction: 1)
+        NSGraphicsContext.restoreGraphicsState()
+        return bitmap.representation(using: .png, properties: [:])
     }
 }
 
@@ -374,6 +414,7 @@ final class CarrachoMediaComposerTextField: NSTextField, NSTextFieldDelegate {
 final class CarrachoMediaComposerTextView: NSTextView {
     var imageFileHandler: (@MainActor ([URL]) -> Void)?
     var imageDataHandler: (@MainActor (Data) -> Void)?
+    var youTubeURLHandler: (@MainActor (LegacyYouTubeReference) -> Bool)?
     var mediaPastePayloadProvider: (() -> (urls: [URL], data: Data?))?
 
     // NSTextContainer only keeps a weak link back to its layout manager. Retain the
@@ -440,6 +481,12 @@ final class CarrachoMediaComposerTextView: NSTextView {
         if !urls.isEmpty { imageFileHandler?(urls); return imageFileHandler != nil }
         let data = payload?.data ?? CarrachoMediaPasteboard.bitmapData(from: pasteboard)
         if let data { imageDataHandler?(data); return imageDataHandler != nil }
+        if let value = pasteboard.string(forType: .string),
+           let reference = LegacyYouTubeReference(urlString: value),
+           let youTubeURLHandler,
+           youTubeURLHandler(reference) {
+            return true
+        }
         return false
     }
 }
@@ -454,14 +501,71 @@ extension NSAttributedString.Key {
     static let carrachoPostSeparator = NSAttributedString.Key("CarrachoPostSeparator")
 }
 
+private final class CarrachoInlineHoverCardView: NSView {
+    var mouseEnteredHandler: (() -> Void)?
+    var mouseExitedHandler: (() -> Void)?
+    private var hoverTrackingArea: NSTrackingArea?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        configureAppearance()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        configureAppearance()
+    }
+
+    private func configureAppearance() {
+        wantsLayer = true
+        layer?.cornerRadius = 7
+        layer?.borderWidth = 1
+        refreshAppearance()
+    }
+
+    private func refreshAppearance() {
+        layer?.backgroundColor = CarrachoTheme.cardColor(for: effectiveAppearance).cgColor
+        layer?.borderColor = NSColor.separatorColor.cgColor
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        refreshAppearance()
+    }
+
+    override func updateTrackingAreas() {
+        if let hoverTrackingArea { removeTrackingArea(hoverTrackingArea) }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        hoverTrackingArea = area
+        super.updateTrackingAreas()
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        mouseEnteredHandler?()
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        mouseExitedHandler?()
+    }
+}
+
 /// Read-only rich-content view that exposes owner deletion from the image's context menu.
 /// The server remains authoritative about ownership; a forged/foreign UUID is rejected there.
-final class CarrachoMediaDisplayTextView: NSTextView, NSTextViewDelegate, NSViewToolTipOwner {
+final class CarrachoMediaDisplayTextView: NSTextView, NSTextViewDelegate {
     var mediaDeleteHandler: ((UUID) -> Void)?
     private var youtubePlayers: [String: CarrachoYouTubeInlinePlayerView] = [:]
     private var youtubePlayerSyncScheduled = false
     private var inlineToolTipSyncScheduled = false
-    private var inlineToolTipsByTag: [NSView.ToolTipTag: String] = [:]
+    private var inlineHoverTrackingAreas: [NSTrackingArea] = []
+    private var inlineHoverWindow: NSPanel?
+    private var inlineHoverCloseWorkItem: DispatchWorkItem?
+    private var inlineHoverAnchorRect: NSRect?
     /// Handles app-private links embedded in rich display content. Returning true consumes the click;
     /// normal web links keep their standard NSTextView behavior.
     var appLinkHandler: ((Any) -> Bool)?
@@ -505,10 +609,13 @@ final class CarrachoMediaDisplayTextView: NSTextView, NSTextViewDelegate, NSView
     }
 
     private func syncInlineToolTips() {
-        removeAllToolTips()
-        inlineToolTipsByTag.removeAll(keepingCapacity: true)
+        for area in inlineHoverTrackingAreas { removeTrackingArea(area) }
+        inlineHoverTrackingAreas.removeAll(keepingCapacity: true)
         guard let storage = textStorage, storage.length > 0,
-              let layoutManager, let textContainer else { return }
+              let layoutManager, let textContainer else {
+            closeInlineHoverPopover()
+            return
+        }
         layoutManager.ensureLayout(for: textContainer)
         let origin = textContainerOrigin
         let fullRange = NSRange(location: 0, length: storage.length)
@@ -523,15 +630,146 @@ final class CarrachoMediaDisplayTextView: NSTextView, NSTextViewDelegate, NSView
             ) { rect, _ in
                 guard !rect.isEmpty else { return }
                 let viewRect = rect.offsetBy(dx: origin.x, dy: origin.y).insetBy(dx: -2, dy: -1)
-                let tag = self.addToolTip(viewRect, owner: self, userData: nil)
-                self.inlineToolTipsByTag[tag] = text
+                let area = NSTrackingArea(
+                    rect: viewRect,
+                    options: [.mouseEnteredAndExited, .activeInKeyWindow],
+                    owner: self,
+                    userInfo: ["carrachoInlineHoverText": text]
+                )
+                self.addTrackingArea(area)
+                self.inlineHoverTrackingAreas.append(area)
             }
         }
     }
 
-    func view(_ view: NSView, stringForToolTip tag: NSView.ToolTipTag, point: NSPoint,
-              userData data: UnsafeMutableRawPointer?) -> String {
-        inlineToolTipsByTag[tag] ?? ""
+    override func mouseEntered(with event: NSEvent) {
+        guard let area = event.trackingArea,
+              inlineHoverTrackingAreas.contains(where: { $0 === area }),
+              let text = area.userInfo?["carrachoInlineHoverText"] as? String,
+              !text.isEmpty else {
+            super.mouseEntered(with: event)
+            return
+        }
+        inlineHoverCloseWorkItem?.cancel()
+        inlineHoverCloseWorkItem = nil
+        showInlineHoverPopover(text: text, relativeTo: area.rect)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        guard let area = event.trackingArea,
+              inlineHoverTrackingAreas.contains(where: { $0 === area }) else {
+            super.mouseExited(with: event)
+            return
+        }
+        scheduleInlineHoverPopoverClose()
+    }
+
+    private func showInlineHoverPopover(text: String, relativeTo anchorRect: NSRect) {
+        inlineHoverAnchorRect = anchorRect
+        guard let parentWindow = window else { return }
+
+        let label = NSTextField(wrappingLabelWithString: text)
+        label.font = .systemFont(ofSize: 12)
+        label.textColor = .labelColor
+        label.maximumNumberOfLines = 0
+        label.translatesAutoresizingMaskIntoConstraints = false
+
+        let font = label.font ?? .systemFont(ofSize: 12)
+        let measured = (text as NSString).boundingRect(
+            with: NSSize(width: 280, height: CGFloat.greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: [.font: font]
+        )
+        let width = min(300, max(150, ceil(measured.width) + 20))
+        let height = max(34, ceil(measured.height) + 16)
+
+        let content = CarrachoInlineHoverCardView(frame: NSRect(x: 0, y: 0, width: width, height: height))
+        content.addSubview(label)
+        NSLayoutConstraint.activate([
+            label.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 10),
+            label.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -10),
+            label.topAnchor.constraint(equalTo: content.topAnchor, constant: 8),
+            label.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -8),
+        ])
+        content.mouseEnteredHandler = { [weak self] in
+            self?.inlineHoverCloseWorkItem?.cancel()
+            self?.inlineHoverCloseWorkItem = nil
+        }
+        content.mouseExitedHandler = { [weak self] in
+            self?.scheduleInlineHoverPopoverClose()
+        }
+
+        closeInlineHoverWindowOnly()
+        let panel = NSPanel(
+            contentRect: NSRect(x: 0, y: 0, width: width, height: height),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = true
+        panel.level = .popUpMenu
+        panel.hidesOnDeactivate = true
+        panel.isReleasedWhenClosed = false
+        panel.contentView = content
+        panel.collectionBehavior = [.transient, .ignoresCycle]
+
+        let anchorInWindow = convert(anchorRect, to: nil)
+        let anchorOnScreen = parentWindow.convertToScreen(anchorInWindow)
+        let visibleFrame = parentWindow.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? anchorOnScreen
+        let gap: CGFloat = 6
+        var x = anchorOnScreen.midX - width / 2
+        x = min(max(x, visibleFrame.minX + 4), visibleFrame.maxX - width - 4)
+
+        var y = anchorOnScreen.maxY + gap
+        if y + height > visibleFrame.maxY - 4 {
+            y = anchorOnScreen.minY - height - gap
+        }
+        y = min(max(y, visibleFrame.minY + 4), visibleFrame.maxY - height - 4)
+        panel.setFrameOrigin(NSPoint(x: x, y: y))
+
+        parentWindow.addChildWindow(panel, ordered: .above)
+        panel.orderFront(nil)
+        inlineHoverWindow = panel
+    }
+
+    private func scheduleInlineHoverPopoverClose() {
+        inlineHoverCloseWorkItem?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            guard !self.mouseIsOverInlineHoverAnchorOrPopover() else { return }
+            self.closeInlineHoverPopover()
+        }
+        inlineHoverCloseWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
+    }
+
+    private func mouseIsOverInlineHoverAnchorOrPopover() -> Bool {
+        let mouse = NSEvent.mouseLocation
+        if let anchorRect = inlineHoverAnchorRect, let window {
+            let inWindow = convert(anchorRect, to: nil)
+            if window.convertToScreen(inWindow).contains(mouse) { return true }
+        }
+        if let inlineHoverWindow, inlineHoverWindow.frame.contains(mouse) {
+            return true
+        }
+        return false
+    }
+
+    private func closeInlineHoverWindowOnly() {
+        guard let hoverWindow = inlineHoverWindow else { return }
+        hoverWindow.parent?.removeChildWindow(hoverWindow)
+        hoverWindow.orderOut(nil)
+        hoverWindow.close()
+        inlineHoverWindow = nil
+    }
+
+    private func closeInlineHoverPopover() {
+        inlineHoverCloseWorkItem?.cancel()
+        inlineHoverCloseWorkItem = nil
+        inlineHoverAnchorRect = nil
+        closeInlineHoverWindowOnly()
     }
 
     private func syncYouTubePlayers() {
@@ -643,6 +881,7 @@ final class CarrachoMediaDisplayTextView: NSTextView, NSTextViewDelegate, NSView
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         if delegate == nil { delegate = self }
+        if window == nil { closeInlineHoverPopover() }
         scheduleYouTubePlayerSync()
         scheduleInlineToolTipSync()
     }

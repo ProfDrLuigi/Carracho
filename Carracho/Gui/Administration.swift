@@ -247,15 +247,23 @@ extension ViewController {
                         if state.identity.bannerData == nil { state.identity.bannerData = defaultBannerPNG }
                     }
                 }
-                return backend
+                let transferStatistics = (try? backend.accountTransferStatistics()) ?? []
+                let statisticsByAccount = Dictionary(uniqueKeysWithValues: transferStatistics.map { value in
+                    (value.accountID, LegacyAccountTransferStatistics(downloadCount: value.downloadCount,
+                                                                      downloadBytes: value.downloadBytes,
+                                                                      uploadCount: value.uploadCount,
+                                                                      uploadBytes: value.uploadBytes))
+                })
+                return (backend, statisticsByAccount)
             }
             DispatchQueue.main.async {
                 guard let self else { return }
                 switch result {
-                case let .success(backend):
+                case let .success((backend, statisticsByAccount)):
                     self.localServerRuntime?.stop()
                     self.serverBackend = backend
                     self.localServerState = backend.snapshot()
+                    self.localAccountTransferStatistics = statisticsByAccount
                     self.installLocalServerRuntime(backend: backend)
                     self.refreshAdminControls()
                     self.appendLine("\n" + LF("Local server state: %@", url.path))
@@ -268,6 +276,7 @@ extension ViewController {
                     self.localServerRuntime = nil
                     self.serverBackend = nil
                     self.localServerState = .initial
+                    self.localAccountTransferStatistics = [:]
                     self.refreshAdminControls()
                     self.appendLine("\n" + LF("Local server state could not be loaded: %@", Self.displayMessage(for: error)))
                 }
