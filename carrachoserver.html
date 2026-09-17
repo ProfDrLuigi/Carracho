@@ -24,6 +24,21 @@
 </head>
     <body>
         
+        <p><span class="header" lang="en">New in 1.0.2</span></p>
+        <ul>
+            <span class="newstext">
+                <li>Added persistent Bot command rules with per-rule enable/disable state, configurable commands and responses, and {name} / {login} template expansion.</li>
+                <li>The local Bot can now respond inside the active Conference or directly by Private Message. Conference commands use #&lt;command&gt;, while direct messages to the Bot require no prefix.</li>
+                <li>The Bot automatically joins a target Conference when necessary, wakes before sending messages, and keeps normal Conference membership and permission semantics.</li>
+                <li>Added a full RSS 2.0 and Atom feed service for the local Bot, including multiple feeds, configurable target Conferences, polling intervals, summary lengths, and optional article images.</li>
+                <li>RSS state is persisted so existing articles are marked as seen during first initialization and are not reposted after a restart. Conditional HTTP requests use ETag and Last-Modified where available.</li>
+                <li>RSS article descriptions are cleaned and shortened before posting, common WordPress footer text is removed, and supported feed images are stored through the existing Carracho media system.</li>
+                <li>Added remote administration commands for saving Bot command rules, saving RSS feed configuration, and testing a feed. RSS tests post the fetched article into Public.</li>
+                <li>Hardened RSS fetching with HTTP/HTTPS validation, local and reserved network blocking, redirect checks, download limits, and timeouts.</li>
+                <li>Fixed the native Linux RSS test path that could reset the administrator connection during a feed test.</li>
+                <li>The native Linux server now uses libcurl and libxml2 for RSS/Atom support; Debian build instructions have been updated accordingly.</li>
+        </ul></span>
+
         <p><span class="header" lang="en">New in 1.0.1</span></p>
         <ul>
             <span class="newstext">
