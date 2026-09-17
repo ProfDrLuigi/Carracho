@@ -853,11 +853,18 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
     let adminBotGreetingSwitch = NSSwitch()
     let adminBotGreetingTemplateField = NSTextField(string: LegacyBotAdminStatus.defaultGreetingTemplate)
     let adminBotGreetingSaveButton = NSButton(title: L("Save Greeting"), target: nil, action: nil)
+    let adminBotCommandTable = NSTableView()
+    let adminBotCommandAddButton = NSButton(title: L("Add Rule"), target: nil, action: nil)
+    let adminBotCommandDeleteButton = NSButton(title: L("Remove Rule"), target: nil, action: nil)
+    let adminBotCommandSaveButton = NSButton(title: L("Save Rules"), target: nil, action: nil)
     let adminBotLoadingIndicator = NSProgressIndicator()
     var remoteBotStatus: LegacyBotAdminStatus?
     var remoteBotLoading = false
     var remoteBotMutationInProgress = false
     var remoteBotGreetingMutationInProgress = false
+    var remoteBotCommandMutationInProgress = false
+    var remoteBotCommandRulesDirty = false
+    var remoteBotCommandRuleDraft: [LegacyBotCommandRule] = []
     var remoteBotRefreshGeneration: UInt64 = 0
     var remoteAccountSummaries: [LegacyCompactAccountSummary] = []
     var remoteAccountGroups: [ServerAccountGroup] = []
@@ -6609,11 +6616,15 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         if tableView === adminAccountTable { return usesRemoteAccountAdministration ? displayedRemoteAccounts.count : displayedLocalAccounts.count }
         if tableView === adminNewsgroupTable { return displayedAdminNewsgroups.count }
         if tableView === adminTrackerTable { return displayedTrackers.count }
+        if tableView === adminBotCommandTable { return remoteBotCommandRuleDraft.count }
         return 0
     }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         guard let identifier = tableColumn?.identifier.rawValue else { return nil }
+        if tableView === adminBotCommandTable {
+            return botCommandRuleCell(identifier: identifier, row: row)
+        }
         if tableView === privateMessageConversationTable, identifier == "conversation", row < displayedMessageCenterRows.count {
             let content: NSView
             switch displayedMessageCenterRows[row] {
@@ -6941,6 +6952,10 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
 
     func tableViewSelectionDidChange(_ notification: Notification) {
         guard let table = notification.object as? NSTableView else { return }
+        if table === adminBotCommandTable {
+            updateBotCommandRuleButtons()
+            return
+        }
         if table === fileTable {
             let rows = visibleFileRows
             selectedFilePaths = Set(fileTable.selectedRowIndexes.compactMap { index in

@@ -28,6 +28,12 @@ extension ViewController {
         markAdvancedDirty(bandwidth: field === transferBandwidthField)
     }
 
+    func controlTextDidEndEditing(_ obj: Notification) {
+        guard let field = obj.object as? NSTextField,
+              field.identifier?.rawValue == "botRuleCommand" || field.identifier?.rawValue == "botRuleResponse" else { return }
+        botCommandRuleTextEdited(field)
+    }
+
     func textDidChange(_ notification: Notification) {
         guard let textView = notification.object as? NSTextView else { return }
         if textView === adminDescriptionView {

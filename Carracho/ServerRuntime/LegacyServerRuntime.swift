@@ -289,34 +289,57 @@ final class LegacyServerRuntime {
         log("Local Bot disconnected")
     }
 
-    /// Sends one terminal/FIFO line as the local Bot into the Public conference.
+    /// Sends one terminal/FIFO line into Public.
     func postLocalBotMessage(_ text: String, source: String = "fifo") throws {
+        try postLocalBotMessage(text, channelID: Self.publicChannelID, source: source)
+    }
+
+    /// Sends one line as the local Bot into a conference. The Bot joins a non-Public room on first
+    /// addressed use so its messages have normal conference membership semantics.
+    private func postLocalBotMessage(_ text: String, channelID: UInt32, source: String) throws {
         let normalized = text.replacingOccurrences(of: "\r\n", with: "\n")
             .replacingOccurrences(of: "\r", with: "\n")
         guard !normalized.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         let message = try CarrachoTextWire.encode(normalized, maximumBytes: 0x800)
 
         var recipients: [LegacyServerSession] = []
-        var session: LegacyServerSession?
+        var priorRecipients: [LegacyServerSession] = []
+        var botSession: LegacyServerSession?
         var userID: UInt32 = 0
+        var botMode: UInt8 = 0
         var canSpeak = false
+        var joinedRoom = false
         stateLock.lock()
-        if let bot = localBotSession, let id = bot.userID,
-           let channel = channels[Self.publicChannelID], let mode = channel.members[id] {
-            session = bot
+        if let bot = localBotSession, let id = bot.userID, var channel = channels[channelID],
+           bot.account?.permissions.contains(.joinChatRooms) == true {
+            botSession = bot
             userID = id
+            if let existingMode = channel.members[id] {
+                botMode = existingMode
+            } else {
+                priorRecipients = channel.members.keys.compactMap { authenticatedByUserID[$0] }
+                botMode = bot.account?.mode == .administrator ? Self.channelOperatorMode : 0
+                channel.members[id] = botMode
+                channels[channelID] = channel
+                joinedRoom = true
+            }
             canSpeak = (channel.flags & Self.channelRestrictedChatFlag) == 0 ||
-                (mode & (Self.channelOperatorMode | Self.channelSpeechMode)) != 0
+                (botMode & (Self.channelOperatorMode | Self.channelSpeechMode)) != 0
             recipients = channel.members.keys.compactMap { authenticatedByUserID[$0] }
         }
         stateLock.unlock()
 
-        guard let session else { throw LegacyServerRuntimeError.protocolFailure("Bot is not connected") }
-        guard session.account?.permissions.contains(.joinChatRooms) == true else {
-            throw LegacyServerRuntimeError.protocolFailure("Bot account no longer has chat permission")
+        guard let botSession else { throw LegacyServerRuntimeError.protocolFailure("Bot is not connected or conference does not exist") }
+        guard canSpeak else { throw LegacyServerRuntimeError.protocolFailure("Bot cannot speak in the restricted conference") }
+        if joinedRoom {
+            let joined = LegacyPacket(command: LegacyCommand.channelUserJoined, transactionID: 0, fields: [
+                LegacyTLV(type: LegacyChannelField.channelID, value: LegacyWire.uint32BE(channelID)),
+                LegacyTLV(type: LegacyChannelField.userID, value: LegacyWire.uint32BE(userID)),
+                LegacyTLV(type: LegacyChannelField.userMode, value: Data([botMode])),
+            ])
+            priorRecipients.forEach { try? $0.sendAuthenticated(joined) }
         }
-        guard canSpeak else { throw LegacyServerRuntimeError.protocolFailure("Bot cannot speak in the restricted Public conference") }
-        markUserActive(session)
+        markUserActive(botSession)
 
         var delivered = false
         for recipient in recipients {
@@ -329,18 +352,42 @@ final class LegacyServerRuntime {
                 wireMessage = message
             }
             let packet = LegacyPacket(command: LegacyCommand.channelChat, transactionID: 0, fields: [
-                LegacyTLV(type: LegacyChannelField.channelID, value: LegacyWire.uint32BE(Self.publicChannelID)),
+                LegacyTLV(type: LegacyChannelField.channelID, value: LegacyWire.uint32BE(channelID)),
                 LegacyTLV(type: LegacyChannelField.userID, value: LegacyWire.uint32BE(userID)),
                 LegacyTLV(type: LegacyChannelField.message, value: wireMessage),
                 LegacyTLV(type: LegacyChannelField.chatAttribute, value: Data([0])),
             ])
             do { try recipient.sendAuthenticated(packet); delivered = true }
             catch {
-                if recipient !== session { log("Bot message delivery failed: \(error.localizedDescription)") }
+                if recipient !== botSession { log("Bot message delivery failed: \(error.localizedDescription)") }
             }
         }
         if delivered { recordMessage() }
-        appendUserEvent(session: session, category: "chat", action: "message", detail: "channel=Public source=\(source)")
+        appendUserEvent(session: botSession, category: "chat", action: "message",
+                        detail: "channel=\(channelID) source=\(source)")
+    }
+
+    private func postLocalBotPrivateMessage(_ text: String, to recipient: LegacyServerSession, source: String) throws {
+        guard let bot = localBotSession, let botUserID = bot.userID else {
+            throw LegacyServerRuntimeError.protocolFailure("Bot is not connected")
+        }
+        let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return }
+        let message = try CarrachoTextWire.encode(normalized, maximumBytes: 0x8000)
+        let wireMessage: Data
+        if recipient.isLegacyTransport, CarrachoTextWire.isTaggedUTF8(message) {
+            guard let filtered = CarrachoTextWire.macRomanFilteringUnrepresentable(from: message), !filtered.isEmpty else { return }
+            wireMessage = filtered
+        } else {
+            wireMessage = message
+        }
+        markUserActive(bot)
+        try recipient.sendAuthenticated(LegacyPacket(command: LegacyCommand.privateMessage, transactionID: 0, fields: [
+            LegacyTLV(type: 1, value: LegacyWire.uint32BE(botUserID)),
+            LegacyTLV(type: 2, value: wireMessage),
+        ]))
+        recordMessage()
+        appendUserEvent(session: bot, category: "messages", action: "private-message", detail: "source=\(source)")
     }
 
     /// Pass port 0 in tests to request an ephemeral operating-system-selected control port.
@@ -810,6 +857,8 @@ final class LegacyServerRuntime {
             try handleBotSetEnabled(packet: packet, session: session)
         case LegacyCommand.botSetGreeting:
             try handleBotSetGreeting(packet: packet, session: session)
+        case LegacyCommand.botSetCommandRules:
+            try handleBotSetCommandRules(packet: packet, session: session)
 
         case LegacyCommand.requestServerSettings:
             try handleServerSettingsRequest(packet: packet, session: session)
@@ -1016,10 +1065,12 @@ final class LegacyServerRuntime {
                 LegacyTLV(type: 2, value: message),
             ]
             if !extra.isEmpty { fields.append(LegacyTLV(type: 3, value: extra)) }
+            let targetsLocalBot = target.isLocalOnly
             try target.sendAuthenticated(LegacyPacket(command: LegacyCommand.privateMessage,
                                                        transactionID: 0, fields: fields))
             try sendTaskCompleteIfRequested(packet, to: session)
             recordMessage()
+            if targetsLocalBot { respondToLocalBotPrivateCommandIfNeeded(message, from: session) }
         } catch {
             if packet.transactionID != 0 {
                 try session.sendAuthenticated(Self.errorPacket(transactionID: packet.transactionID, code: 1))
@@ -2048,6 +2099,100 @@ final class LegacyServerRuntime {
         try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
     }
 
+    private func localBotCommandRules() -> [LegacyBotCommandRule] {
+        guard let data = try? Data(contentsOf: localBotConfigurationURL),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let rawRules = object["commandRules"] as? [[String: Any]] else { return [] }
+        var rules: [LegacyBotCommandRule] = []
+        for raw in rawRules.prefix(LegacyBotCommandRule.maximumCount) {
+            guard let enabled = raw["enabled"] as? Bool,
+                  let command = raw["command"] as? String,
+                  let response = raw["response"] as? String,
+                  let rule = try? LegacyBotCommandRule(enabled: enabled, command: command, response: response).validated() else {
+                continue
+            }
+            rules.append(rule)
+        }
+        return rules
+    }
+
+    private func setLocalBotCommandRules(_ rules: [LegacyBotCommandRule]) throws {
+        guard rules.count <= LegacyBotCommandRule.maximumCount else {
+            throw ServerStateError.invalidValue("Too many Bot command rules.")
+        }
+        let validated = try rules.map { try $0.validated() }
+        let url = localBotConfigurationURL
+        var object: [String: Any] = [:]
+        if let data = try? Data(contentsOf: url),
+           let existing = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            object = existing
+        }
+        object["commandRules"] = validated.map { [
+            "enabled": $0.enabled,
+            "command": $0.command,
+            "response": $0.response,
+        ] }
+        let data = try JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys])
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try data.write(to: url, options: .atomic)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+    }
+
+    private func botCommandText(from wire: Data, addressed: Bool) -> String? {
+        let raw = CarrachoTextWire.string(from: wire).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !raw.isEmpty else { return nil }
+
+        stateLock.lock()
+        let bot = localBotSession
+        let nickname = bot.flatMap { String(data: $0.nickname, encoding: .macOSRoman) } ?? ""
+        let login = bot?.account?.login ?? ""
+        stateLock.unlock()
+
+        var aliases = ["Bot", nickname, login]
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        var seen = Set<String>()
+        aliases = aliases.filter { seen.insert($0.lowercased()).inserted }
+        for alias in aliases {
+            let prefix = alias + ":"
+            if raw.range(of: prefix, options: [.anchored, .caseInsensitive]) != nil {
+                let command = String(raw.dropFirst(prefix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+                return command.isEmpty ? nil : command
+            }
+        }
+        return addressed ? nil : raw
+    }
+
+    private func matchingLocalBotResponse(for wire: Data, from sender: LegacyServerSession, addressed: Bool) -> String? {
+        guard !sender.isLocalOnly, isLocalBotConnected,
+              let command = botCommandText(from: wire, addressed: addressed) else { return nil }
+        let key = command.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: Locale(identifier: "en_US_POSIX"))
+        guard let rule = localBotCommandRules().first(where: { rule in
+            guard rule.enabled else { return false }
+            let candidate = rule.command.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: Locale(identifier: "en_US_POSIX"))
+            return candidate == key
+        }) else { return nil }
+        return renderedLocalBotGreeting(for: sender, template: rule.response)
+    }
+
+    private func respondToLocalBotChannelCommandIfNeeded(_ wire: Data, from sender: LegacyServerSession, channelID: UInt32) {
+        guard let response = matchingLocalBotResponse(for: wire, from: sender, addressed: true) else { return }
+        do {
+            try postLocalBotMessage(response, channelID: channelID, source: "command")
+        } catch {
+            log("Local Bot command reply failed in channel \(channelID): \(error.localizedDescription)")
+        }
+    }
+
+    private func respondToLocalBotPrivateCommandIfNeeded(_ wire: Data, from sender: LegacyServerSession) {
+        guard let response = matchingLocalBotResponse(for: wire, from: sender, addressed: false) else { return }
+        do {
+            try postLocalBotPrivateMessage(response, to: sender, source: "command")
+        } catch {
+            log("Local Bot private command reply failed: \(error.localizedDescription)")
+        }
+    }
+
     private func renderedLocalBotGreeting(for session: LegacyServerSession, template: String) -> String {
         let nickname = String(data: session.nickname, encoding: .macOSRoman)?.trimmingCharacters(in: .whitespacesAndNewlines)
         let login = session.account?.login ?? ""
@@ -2086,6 +2231,7 @@ final class LegacyServerRuntime {
             try session.sendAuthenticated(Self.errorPacket(transactionID: packet.transactionID, code: 1)); return
         }
         let greeting = localBotGreetingConfiguration()
+        let commandRules = localBotCommandRules()
         var fields = [
             LegacyTLV(type: LegacyBotAdminField.desiredEnabled, value: Data([localBotDesiredEnabled() ? 1 : 0])),
             LegacyTLV(type: LegacyBotAdminField.connected, value: Data([isLocalBotConnected ? 1 : 0])),
@@ -2093,6 +2239,7 @@ final class LegacyServerRuntime {
             LegacyTLV(type: LegacyBotAdminField.name, value: Data(account.name.utf8)),
             LegacyTLV(type: LegacyBotAdminField.greetNewUsers, value: Data([greeting.enabled ? 1 : 0])),
             LegacyTLV(type: LegacyBotAdminField.greetingTemplate, value: Data(greeting.template.utf8)),
+            LegacyTLV(type: LegacyBotAdminField.commandRules, value: try LegacyBotCommandRule.encodeList(commandRules)),
         ]
         if let error = localBotLastError() {
             fields.append(LegacyTLV(type: LegacyBotAdminField.lastError, value: Data(error.utf8)))
@@ -2133,6 +2280,22 @@ final class LegacyServerRuntime {
                                                         transactionID: packet.transactionID, fields: []))
         } catch {
             log("Remote Bot greeting update failed: \(error.localizedDescription)")
+            try session.sendAuthenticated(Self.errorPacket(transactionID: packet.transactionID, code: 1))
+        }
+    }
+
+    private func handleBotSetCommandRules(packet: LegacyPacket, session: LegacyServerSession) throws {
+        guard !session.isLegacyTransport, has(.manageAccounts, session: session),
+              let field = packet.firstField(type: LegacyBotAdminField.commandRules) else {
+            try session.sendAuthenticated(Self.errorPacket(transactionID: packet.transactionID, code: 1)); return
+        }
+        do {
+            let rules = try LegacyBotCommandRule.decodeList(field.value)
+            try setLocalBotCommandRules(rules)
+            try session.sendAuthenticated(LegacyPacket(command: LegacyCommand.taskComplete,
+                                                        transactionID: packet.transactionID, fields: []))
+        } catch {
+            log("Remote Bot command-rule update failed: \(error.localizedDescription)")
             try session.sendAuthenticated(Self.errorPacket(transactionID: packet.transactionID, code: 1))
         }
     }
@@ -3161,6 +3324,7 @@ final class LegacyServerRuntime {
         ])
         recipients.forEach { try? $0.sendAuthenticated(broadcast) }
         recordMessage()
+        respondToLocalBotChannelCommandIfNeeded(message, from: session, channelID: id)
     }
 
     private func handleChannelSettings(packet: LegacyPacket, session: LegacyServerSession) throws {
@@ -3499,6 +3663,7 @@ final class LegacyServerRuntime {
         case LegacyCommand.setServerSettings: event = ("administration", "change-server-settings", "")
         case LegacyCommand.botSetEnabled: event = ("administration", "control-bot", "")
         case LegacyCommand.botSetGreeting: event = ("administration", "configure-bot-greeting", "")
+        case LegacyCommand.botSetCommandRules: event = ("administration", "configure-bot-commands", "")
         case LegacyCommand.rebuildSearchIndex: event = ("administration", "rebuild-search-index", "")
         case LegacyCommand.changeOwnPassword: event = ("account", "change-password", "")
         default: break

@@ -18,6 +18,8 @@ private struct CarrachoServerBotConfiguration: Codable {
     /// Optional for compatibility with bot configuration files created before greeting support.
     var greetNewUsers: Bool? = nil
     var greetingTemplate: String? = nil
+    /// Optional for compatibility with configuration files created before command rules.
+    var commandRules: [LegacyBotCommandRule]? = nil
 }
 
 enum CarrachoServerBotError: LocalizedError {

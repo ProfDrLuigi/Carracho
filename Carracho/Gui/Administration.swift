@@ -367,6 +367,10 @@ extension ViewController {
             remoteBotLoading = false
             remoteBotMutationInProgress = false
             remoteBotGreetingMutationInProgress = false
+            remoteBotCommandMutationInProgress = false
+            remoteBotCommandRulesDirty = false
+            remoteBotCommandRuleDraft = []
+            adminBotCommandTable.reloadData()
             remoteBotRefreshGeneration &+= 1
             updateBotAdministrationUI()
             adminAccountStatusLabel.stringValue = localServerState.accounts.count == 1 ? LF("%@ local account", String(localServerState.accounts.count)) : LF("%@ local accounts", String(localServerState.accounts.count))
@@ -482,6 +486,55 @@ extension ViewController {
         let greetingNote = infoLabel(L("The Bot sends the greeting once when a newly connected user first joins Public. Use {name} for the visible nickname and {login} for the account login."))
         greetingNote.maximumNumberOfLines = 3
 
+        let commandsTitle = sectionCaption(L("Bot commands"))
+        adminBotCommandTable.delegate = self
+        adminBotCommandTable.dataSource = self
+        adminBotCommandTable.usesAlternatingRowBackgroundColors = true
+        adminBotCommandTable.backgroundColor = CarrachoTheme.tableBackground
+        adminBotCommandTable.gridStyleMask = [.solidVerticalGridLineMask]
+        adminBotCommandTable.gridColor = NSColor.separatorColor.withAlphaComponent(0.35)
+        adminBotCommandTable.rowHeight = 30
+        adminBotCommandTable.intercellSpacing = NSSize(width: 6, height: 1)
+        adminBotCommandTable.allowsMultipleSelection = false
+        adminBotCommandTable.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
+        if #available(macOS 11.0, *) { adminBotCommandTable.style = .plain }
+        if adminBotCommandTable.tableColumns.isEmpty {
+            let enabledColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("botRuleEnabled"))
+            enabledColumn.title = L("On")
+            enabledColumn.width = 52
+            enabledColumn.minWidth = 52
+            enabledColumn.maxWidth = 52
+            adminBotCommandTable.addTableColumn(enabledColumn)
+
+            let commandColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("botRuleCommand"))
+            commandColumn.title = L("Command")
+            commandColumn.width = 190
+            commandColumn.minWidth = 130
+            adminBotCommandTable.addTableColumn(commandColumn)
+
+            let responseColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("botRuleResponse"))
+            responseColumn.title = L("Response")
+            responseColumn.width = 430
+            responseColumn.minWidth = 220
+            adminBotCommandTable.addTableColumn(responseColumn)
+        }
+        let commandScroll = tableScroll(adminBotCommandTable, tracksViewportWidth: true)
+        commandScroll.borderType = .bezelBorder
+        commandScroll.heightAnchor.constraint(equalToConstant: 190).isActive = true
+
+        adminBotCommandAddButton.target = self
+        adminBotCommandAddButton.action = #selector(addBotCommandRule(_:))
+        adminBotCommandAddButton.bezelStyle = .rounded
+        adminBotCommandDeleteButton.target = self
+        adminBotCommandDeleteButton.action = #selector(removeBotCommandRule(_:))
+        adminBotCommandDeleteButton.bezelStyle = .rounded
+        adminBotCommandSaveButton.target = self
+        adminBotCommandSaveButton.action = #selector(saveBotCommandRules(_:))
+        CarrachoTheme.applyPrimaryButtonStyle(adminBotCommandSaveButton)
+        let commandActions = horizontalStack([adminBotCommandAddButton, adminBotCommandDeleteButton, NSView(), adminBotCommandSaveButton], spacing: 8)
+        let commandNote = infoLabel(L("In conferences, address the Bot as “Bot: <command>”. In a private message to the Bot, <command> is enough. Responses can use {name} and {login}."))
+        commandNote.maximumNumberOfLines = 3
+
         adminBotLoadingIndicator.style = .spinning
         adminBotLoadingIndicator.controlSize = .small
         adminBotLoadingIndicator.isDisplayedWhenStopped = false
@@ -534,13 +587,18 @@ extension ViewController {
             greetingTextRow,
             greetingNote,
             botDivider(),
+            commandsTitle,
+            commandScroll,
+            commandActions,
+            commandNote,
+            botDivider(),
             accountRow,
             localhostNote,
             profileNote,
             flexibleSpace,
             botDivider(),
             actions,
-        ], to: page, minimumBodyHeight: 410)
+        ], to: page, minimumBodyHeight: 650)
         updateBotAdministrationUI()
         return page
     }
@@ -569,6 +627,10 @@ extension ViewController {
                 switch result {
                 case let .success(status):
                     self.remoteBotStatus = status
+                    if !self.remoteBotCommandRulesDirty && !self.remoteBotCommandMutationInProgress {
+                        self.remoteBotCommandRuleDraft = status.commandRules
+                        self.adminBotCommandTable.reloadData()
+                    }
                 case let .failure(error):
                     self.remoteBotStatus = nil
                     self.adminBotStatusLabel.stringValue = LF("Bot status could not be loaded: %@", Self.displayMessage(for: error))
@@ -641,6 +703,148 @@ extension ViewController {
         }
     }
 
+    var canEditBotCommandRules: Bool {
+        client.isConnected && !isConnectedToClassicServer && canManageRemoteAccounts
+            && remoteBotStatus?.commandRulesSupported == true
+            && !remoteBotLoading && !remoteBotMutationInProgress
+            && !remoteBotGreetingMutationInProgress && !remoteBotCommandMutationInProgress
+    }
+
+    func botCommandRuleCell(identifier: String, row: Int) -> NSView? {
+        guard row >= 0, row < remoteBotCommandRuleDraft.count else { return nil }
+        let rule = remoteBotCommandRuleDraft[row]
+        if identifier == "botRuleEnabled" {
+            let checkbox = NSButton(checkboxWithTitle: "", target: self, action: #selector(botCommandRuleEnabledChanged(_:)))
+            checkbox.tag = row
+            checkbox.state = rule.enabled ? .on : .off
+            checkbox.isEnabled = canEditBotCommandRules
+            return verticallyCenteredTableContent(checkbox)
+        }
+        guard identifier == "botRuleCommand" || identifier == "botRuleResponse" else { return nil }
+        let field = NSTextField(string: identifier == "botRuleCommand" ? rule.command : rule.response)
+        field.identifier = NSUserInterfaceItemIdentifier(identifier)
+        field.tag = row
+        field.font = .systemFont(ofSize: 12.5)
+        field.isBordered = false
+        field.drawsBackground = false
+        field.focusRingType = .none
+        field.lineBreakMode = .byTruncatingTail
+        field.isEditable = canEditBotCommandRules
+        field.isSelectable = canEditBotCommandRules
+        field.placeholderString = identifier == "botRuleCommand" ? "Hello" : "Hello {name} how are you?"
+        field.delegate = self
+        field.target = self
+        field.action = #selector(botCommandRuleTextEdited(_:))
+        return verticallyCenteredTableContent(field, fillWidth: true, leadingInset: 2, trailingInset: 2)
+    }
+
+    func markBotCommandRulesDirty() {
+        remoteBotCommandRulesDirty = true
+        updateBotCommandRuleButtons()
+    }
+
+    func updateBotCommandRuleButtons() {
+        let editable = canEditBotCommandRules
+        adminBotCommandAddButton.isEnabled = editable && remoteBotCommandRuleDraft.count < LegacyBotCommandRule.maximumCount
+        let row = adminBotCommandTable.selectedRow
+        adminBotCommandDeleteButton.isEnabled = editable && row >= 0 && row < remoteBotCommandRuleDraft.count
+        adminBotCommandSaveButton.isEnabled = editable && remoteBotCommandRulesDirty
+        adminBotCommandTable.isEnabled = editable
+    }
+
+    @objc func addBotCommandRule(_ sender: Any?) {
+        guard canEditBotCommandRules, remoteBotCommandRuleDraft.count < LegacyBotCommandRule.maximumCount else { return }
+        view.window?.makeFirstResponder(nil)
+        remoteBotCommandRuleDraft.append(LegacyBotCommandRule(enabled: true, command: "", response: ""))
+        markBotCommandRulesDirty()
+        adminBotCommandTable.reloadData()
+        let row = remoteBotCommandRuleDraft.count - 1
+        adminBotCommandTable.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        adminBotCommandTable.scrollRowToVisible(row)
+        if adminBotCommandTable.numberOfColumns > 1 { adminBotCommandTable.editColumn(1, row: row, with: nil, select: true) }
+    }
+
+    @objc func removeBotCommandRule(_ sender: Any?) {
+        guard canEditBotCommandRules else { return }
+        view.window?.makeFirstResponder(nil)
+        let row = adminBotCommandTable.selectedRow
+        guard row >= 0, row < remoteBotCommandRuleDraft.count else { return }
+        remoteBotCommandRuleDraft.remove(at: row)
+        markBotCommandRulesDirty()
+        adminBotCommandTable.reloadData()
+        if !remoteBotCommandRuleDraft.isEmpty {
+            let next = min(row, remoteBotCommandRuleDraft.count - 1)
+            adminBotCommandTable.selectRowIndexes(IndexSet(integer: next), byExtendingSelection: false)
+        }
+        updateBotCommandRuleButtons()
+    }
+
+    @objc func botCommandRuleEnabledChanged(_ sender: NSButton) {
+        guard canEditBotCommandRules, sender.tag >= 0, sender.tag < remoteBotCommandRuleDraft.count else { return }
+        remoteBotCommandRuleDraft[sender.tag].enabled = sender.state == .on
+        markBotCommandRulesDirty()
+    }
+
+    @objc func botCommandRuleTextEdited(_ sender: NSTextField) {
+        guard canEditBotCommandRules, sender.tag >= 0, sender.tag < remoteBotCommandRuleDraft.count else { return }
+        switch sender.identifier?.rawValue {
+        case "botRuleCommand": remoteBotCommandRuleDraft[sender.tag].command = sender.stringValue
+        case "botRuleResponse": remoteBotCommandRuleDraft[sender.tag].response = sender.stringValue
+        default: return
+        }
+        markBotCommandRulesDirty()
+    }
+
+    func validatedBotCommandRuleDraft() throws -> [LegacyBotCommandRule] {
+        guard remoteBotCommandRuleDraft.count <= LegacyBotCommandRule.maximumCount else {
+            throw ServerStateError.invalidValue(L("Too many Bot command rules."))
+        }
+        var result: [LegacyBotCommandRule] = []
+        var seen = Set<String>()
+        for (index, rule) in remoteBotCommandRuleDraft.enumerated() {
+            let validated: LegacyBotCommandRule
+            do { validated = try rule.validated() }
+            catch {
+                throw ServerStateError.invalidValue(LF("Bot rule %@ needs a non-empty command and response.", String(index + 1)))
+            }
+            let key = validated.command.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: Locale(identifier: "en_US_POSIX"))
+            guard seen.insert(key).inserted else {
+                throw ServerStateError.invalidValue(LF("The Bot command “%@” is defined more than once.", validated.command))
+            }
+            result.append(validated)
+        }
+        return result
+    }
+
+    @objc func saveBotCommandRules(_ sender: Any?) {
+        guard canEditBotCommandRules else { return }
+        view.window?.makeFirstResponder(nil)
+        let rules: [LegacyBotCommandRule]
+        do { rules = try validatedBotCommandRuleDraft() }
+        catch { showAdminError(error); return }
+        let source = client
+        remoteBotCommandMutationInProgress = true
+        updateBotAdministrationUI()
+        source.setBotAdministrationCommandRules(rules) { [weak self, weak source] result in
+            DispatchQueue.main.async {
+                guard let self, let source, self.client === source else { return }
+                self.remoteBotCommandMutationInProgress = false
+                switch result {
+                case .success:
+                    self.remoteBotCommandRuleDraft = rules
+                    self.remoteBotStatus?.commandRules = rules
+                    self.remoteBotCommandRulesDirty = false
+                    self.adminBotCommandTable.reloadData()
+                    self.showAdminSaved(L("Bot command rules saved."))
+                    self.updateBotAdministrationUI()
+                case let .failure(error):
+                    self.showAdminError(error)
+                    self.updateBotAdministrationUI()
+                }
+            }
+        }
+    }
+
     @objc func openBotAccountAdministration(_ sender: Any?) {
         guard canAccessAdministrativeWorkspace(.accounts) else { return }
         selectWorkspace(.accounts)
@@ -651,7 +855,7 @@ extension ViewController {
         if remoteBotLoading { adminBotLoadingIndicator.startAnimation(nil) }
         else { adminBotLoadingIndicator.stopAnimation(nil) }
 
-        let busy = remoteBotMutationInProgress || remoteBotGreetingMutationInProgress
+        let busy = remoteBotMutationInProgress || remoteBotGreetingMutationInProgress || remoteBotCommandMutationInProgress
         adminBotReloadButton.isEnabled = supported && !remoteBotLoading && !busy
         adminBotAccountsButton.isEnabled = canAccessAdministrativeWorkspace(.accounts) && !busy
         adminBotToggleButton.isEnabled = supported && remoteBotStatus != nil && !remoteBotLoading && !busy
@@ -659,6 +863,7 @@ extension ViewController {
         adminBotGreetingSwitch.isEnabled = greetingSupported && !remoteBotLoading && !busy
         adminBotGreetingTemplateField.isEnabled = greetingSupported && !remoteBotLoading && !busy
         adminBotGreetingSaveButton.isEnabled = greetingSupported && !remoteBotLoading && !busy
+        updateBotCommandRuleButtons()
 
         guard supported else {
             adminBotRuntimeLabel.stringValue = L("Unavailable")
@@ -672,6 +877,7 @@ extension ViewController {
             CarrachoTheme.setPrimaryButtonTitle(adminBotToggleButton, L("Connect Bot"))
             adminBotGreetingSwitch.state = .off
             adminBotGreetingTemplateField.stringValue = LegacyBotAdminStatus.defaultGreetingTemplate
+            adminBotCommandSaveButton.toolTip = L("Bot command rules require a modern Carracho server.")
             return
         }
 
@@ -689,6 +895,7 @@ extension ViewController {
             adminBotAccountLabel.stringValue = "—"
             adminBotGreetingSwitch.state = .off
             adminBotGreetingTemplateField.stringValue = LegacyBotAdminStatus.defaultGreetingTemplate
+            adminBotCommandSaveButton.toolTip = nil
             if !preserveExplicitError {
                 adminBotStatusLabel.stringValue = remoteBotLoading ? L("Loading Bot status…") : L("Bot status has not been loaded yet.")
                 adminBotStatusLabel.textColor = CarrachoTheme.secondaryText
@@ -709,6 +916,7 @@ extension ViewController {
             adminBotGreetingTemplateField.stringValue = LegacyBotAdminStatus.defaultGreetingTemplate
             adminBotGreetingSaveButton.toolTip = L("This server does not support Bot greeting administration.")
         }
+        adminBotCommandSaveButton.toolTip = status.commandRulesSupported ? nil : L("This server does not support Bot command rules.")
         if status.connected {
             adminBotRuntimeLabel.stringValue = L("Connected")
             adminBotRuntimeLabel.textColor = .systemGreen

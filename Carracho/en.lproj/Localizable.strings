@@ -1967,3 +1967,19 @@
 // News reaction tooltips
 "Reacted by:\n%@" = "Reacted by:\n%@";
 "Unknown user" = "Unknown user";
+
+// Bot command rules
+"Add Rule" = "Add Rule";
+"Remove Rule" = "Remove Rule";
+"Save Rules" = "Save Rules";
+"Bot commands" = "Bot commands";
+"On" = "On";
+"Command" = "Command";
+"Response" = "Response";
+"In conferences, address the Bot as “Bot: <command>”. In a private message to the Bot, <command> is enough. Responses can use {name} and {login}." = "In conferences, address the Bot as “Bot: <command>”. In a private message to the Bot, <command> is enough. Responses can use {name} and {login}.";
+"Too many Bot command rules." = "Too many Bot command rules.";
+"Bot rule %@ needs a non-empty command and response." = "Bot rule %@ needs a non-empty command and response.";
+"The Bot command “%@” is defined more than once." = "The Bot command “%@” is defined more than once.";
+"Bot command rules saved." = "Bot command rules saved.";
+"Bot command rules require a modern Carracho server." = "Bot command rules require a modern Carracho server.";
+"This server does not support Bot command rules." = "This server does not support Bot command rules.";

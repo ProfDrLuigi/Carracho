@@ -1553,6 +1553,14 @@ final class LegacyControlClient {
                     greetNewUsers = raw == 1
                     greetingTemplate = decoded
                 }
+                let commandRulesField = packet.firstField(type: LegacyBotAdminField.commandRules)
+                let commandRulesSupported = commandRulesField != nil
+                let commandRules: [LegacyBotCommandRule]
+                if let commandRulesField {
+                    commandRules = try LegacyBotCommandRule.decodeList(commandRulesField.value)
+                } else {
+                    commandRules = []
+                }
                 completion(.success(LegacyBotAdminStatus(
                     desiredEnabled: try flag(LegacyBotAdminField.desiredEnabled),
                     connected: try flag(LegacyBotAdminField.connected),
@@ -1561,7 +1569,9 @@ final class LegacyControlClient {
                     lastError: error,
                     greetingSupported: greetingSupported,
                     greetNewUsers: greetNewUsers,
-                    greetingTemplate: greetingTemplate)))
+                    greetingTemplate: greetingTemplate,
+                    commandRulesSupported: commandRulesSupported,
+                    commandRules: commandRules)))
             } catch { completion(.failure(error)) }
         }
     }
@@ -1585,6 +1595,18 @@ final class LegacyControlClient {
             LegacyTLV(type: LegacyBotAdminField.greetNewUsers, value: Data([enabled ? 1 : 0])),
             LegacyTLV(type: LegacyBotAdminField.greetingTemplate, value: Data(normalized.utf8)),
         ], completion: completion)
+    }
+
+    func setBotAdministrationCommandRules(_ rules: [LegacyBotCommandRule],
+                                              completion: @escaping (Result<Void, Error>) -> Void) {
+        do {
+            let encoded = try LegacyBotCommandRule.encodeList(rules)
+            sendTaskCompleteRequest(command: LegacyCommand.botSetCommandRules,
+                                    fields: [LegacyTLV(type: LegacyBotAdminField.commandRules, value: encoded)],
+                                    completion: completion)
+        } catch {
+            completion(.failure(error))
+        }
     }
 
     func requestServerSettings(fields: [UInt32],

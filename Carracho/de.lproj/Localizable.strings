@@ -1967,3 +1967,19 @@
 // News reaction tooltips
 "Reacted by:\n%@" = "Reagiert von:\n%@";
 "Unknown user" = "Unbekannter Benutzer";
+
+// Bot command rules
+"Add Rule" = "Regel hinzufügen";
+"Remove Rule" = "Regel entfernen";
+"Save Rules" = "Regeln speichern";
+"Bot commands" = "Bot-Befehle";
+"On" = "An";
+"Command" = "Befehl";
+"Response" = "Antwort";
+"In conferences, address the Bot as “Bot: <command>”. In a private message to the Bot, <command> is enough. Responses can use {name} and {login}." = "In Conferences den Bot mit „Bot: <Befehl>“ ansprechen. In einer privaten Nachricht an den Bot genügt <Befehl>. Antworten können {name} und {login} verwenden.";
+"Too many Bot command rules." = "Zu viele Bot-Befehlsregeln.";
+"Bot rule %@ needs a non-empty command and response." = "Bot-Regel %@ benötigt einen nicht leeren Befehl und eine Antwort.";
+"The Bot command “%@” is defined more than once." = "Der Bot-Befehl „%@“ ist mehrfach definiert.";
+"Bot command rules saved." = "Bot-Befehlsregeln gespeichert.";
+"Bot command rules require a modern Carracho server." = "Bot-Befehlsregeln erfordern einen modernen Carracho-Server.";
+"This server does not support Bot command rules." = "Dieser Server unterstützt keine Bot-Befehlsregeln.";

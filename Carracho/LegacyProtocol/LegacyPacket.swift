@@ -205,6 +205,7 @@ enum LegacyCommand {
     static let botStatusReply: UInt32 = 0xf0000701
     static let botSetEnabled: UInt32 = 0xf0000702
     static let botSetGreeting: UInt32 = 0xf0000703
+    static let botSetCommandRules: UInt32 = 0xf0000704
 }
 
 enum LegacyBotAdminField {
@@ -215,6 +216,68 @@ enum LegacyBotAdminField {
     static let lastError: UInt32 = 5
     static let greetNewUsers: UInt32 = 6
     static let greetingTemplate: UInt32 = 7
+    static let commandRules: UInt32 = 8
+}
+
+struct LegacyBotCommandRule: Equatable, Codable {
+    static let maximumCount = 64
+    static let maximumCommandBytes = 128
+    static let maximumResponseBytes = 512
+
+    var enabled: Bool
+    var command: String
+    var response: String
+
+    func validated() throws -> LegacyBotCommandRule {
+        let normalizedCommand = command.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedResponse = response.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedCommand.isEmpty, !normalizedResponse.isEmpty,
+              normalizedCommand.utf8.count <= Self.maximumCommandBytes,
+              normalizedResponse.utf8.count <= Self.maximumResponseBytes,
+              !normalizedCommand.contains("\n"), !normalizedCommand.contains("\r"),
+              !normalizedResponse.contains("\n"), !normalizedResponse.contains("\r") else {
+            throw LegacyProtocolError.invalidRecord("invalid Bot command rule")
+        }
+        return LegacyBotCommandRule(enabled: enabled, command: normalizedCommand, response: normalizedResponse)
+    }
+
+    static func encodeList(_ rules: [LegacyBotCommandRule]) throws -> Data {
+        guard rules.count <= maximumCount else {
+            throw LegacyProtocolError.invalidLength("too many Bot command rules")
+        }
+        var data = LegacyWire.uint16BE(UInt16(rules.count))
+        for rule in rules {
+            let rule = try rule.validated()
+            let command = Data(rule.command.utf8)
+            let response = Data(rule.response.utf8)
+            data.append(rule.enabled ? 1 : 0)
+            data.append(try LegacyWire.string16(command))
+            data.append(try LegacyWire.string16(response))
+        }
+        return data
+    }
+
+    static func decodeList(_ data: Data) throws -> [LegacyBotCommandRule] {
+        var cursor = LegacyByteCursor(data)
+        let count = Int(try cursor.readUInt16BE())
+        guard count <= maximumCount else { throw LegacyProtocolError.invalidRecord("too many Bot command rules") }
+        var rules: [LegacyBotCommandRule] = []
+        rules.reserveCapacity(count)
+        for _ in 0..<count {
+            let rawEnabled = try cursor.readUInt8()
+            guard rawEnabled <= 1 else { throw LegacyProtocolError.invalidRecord("invalid Bot command enabled flag") }
+            let commandData = try cursor.readString16()
+            let responseData = try cursor.readString16()
+            guard commandData.count <= maximumCommandBytes, responseData.count <= maximumResponseBytes,
+                  let command = String(data: commandData, encoding: .utf8),
+                  let response = String(data: responseData, encoding: .utf8) else {
+                throw LegacyProtocolError.invalidRecord("invalid Bot command text")
+            }
+            rules.append(try LegacyBotCommandRule(enabled: rawEnabled == 1, command: command, response: response).validated())
+        }
+        try cursor.requireEnd()
+        return rules
+    }
 }
 
 struct LegacyBotAdminStatus: Equatable {
@@ -228,6 +291,8 @@ struct LegacyBotAdminStatus: Equatable {
     var greetingSupported: Bool
     var greetNewUsers: Bool
     var greetingTemplate: String
+    var commandRulesSupported: Bool
+    var commandRules: [LegacyBotCommandRule]
 }
 
 enum LegacyUserInfoField {
