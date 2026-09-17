@@ -1188,6 +1188,31 @@ extension ViewController {
         let authorFont = NSFont.systemFont(ofSize: channelChatFontSize, weight: .semibold)
         let metaFont = NSFont.systemFont(ofSize: max(9.5, channelChatFontSize - 1))
         let systemFont = NSFont.systemFont(ofSize: max(10, channelChatFontSize - 1))
+        let viewportWidth = channelChatTextView.enclosingScrollView?.contentView.bounds.width ?? channelChatTextView.bounds.width
+        let lineFragmentPadding = channelChatTextView.textContainer?.lineFragmentPadding ?? 0
+        let dividerWidth = max(1, viewportWidth - (channelChatTextView.textContainerInset.width * 2) - (lineFragmentPadding * 2))
+        let backingScale = channelChatTextView.window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 1
+        let dividerThickness = max(1.0 / backingScale, 2.0 / backingScale)
+        let dividerImage = NSImage(size: NSSize(width: 1, height: dividerThickness))
+        dividerImage.lockFocus()
+        CarrachoTheme.hairline.setFill()
+        NSRect(x: 0, y: 0, width: 1, height: dividerThickness).fill()
+        dividerImage.unlockFocus()
+
+        func appendMessageDivider() {
+            let attachment = NSTextAttachment()
+            attachment.image = dividerImage
+            attachment.bounds = NSRect(x: 0, y: 0, width: dividerWidth, height: dividerThickness)
+            let line = NSMutableAttributedString(attachment: attachment)
+            let paragraph = NSMutableParagraphStyle()
+            paragraph.minimumLineHeight = dividerThickness
+            paragraph.maximumLineHeight = dividerThickness
+            paragraph.paragraphSpacing = 5
+            paragraph.paragraphSpacingBefore = 5
+            line.addAttribute(.paragraphStyle, value: paragraph, range: NSRange(location: 0, length: line.length))
+            output.append(line)
+            output.append(NSAttributedString(string: "\n"))
+        }
 
         if session.transcript.isEmpty {
             let name = Self.macRomanString(active.name)
@@ -1202,8 +1227,11 @@ extension ViewController {
             ))
             output.append(welcome)
         } else {
+            var messageStripeIndex = 0
             for (index, entry) in session.transcript.enumerated() {
                 let time = timeFormatter.string(from: entry.timestamp)
+                var messageStart: Int?
+                var messageAlternate = false
                 switch entry.kind {
                 case let .system(text):
                     let paragraph = NSMutableParagraphStyle()
@@ -1215,21 +1243,25 @@ extension ViewController {
                                      .paragraphStyle: paragraph]
                     ))
                 case let .message(senderUserID, message, attribute):
+                    messageStart = output.length
+                    messageAlternate = messageStripeIndex % 2 != 0
+                    messageStripeIndex += 1
                     let sender = liveUsers[senderUserID].map { Self.macRomanString($0.nickname) } ?? L("Unknown User")
                     let headerParagraph = NSMutableParagraphStyle()
                     headerParagraph.paragraphSpacing = 2
                     output.append(channelAvatarAttachment(userID: senderUserID))
-                    output.append(NSAttributedString(
-                        string: "  \(sender)",
-                        attributes: [.font: authorFont, .foregroundColor: NSColor.labelColor,
-                                     .paragraphStyle: headerParagraph]
-                    ))
                     let attributeSuffix = attribute == 0 ? "" : String(format: " · 0x%02X", attribute)
                     output.append(NSAttributedString(
-                        string: "  \(time)\(attributeSuffix)\n",
+                        string: "  \(time)\(attributeSuffix)  ",
                         attributes: [.font: metaFont, .foregroundColor: CarrachoTheme.secondaryText,
                                      .paragraphStyle: headerParagraph]
                     ))
+                    output.append(NSAttributedString(
+                        string: "\(sender)\n",
+                        attributes: [.font: authorFont, .foregroundColor: NSColor.labelColor,
+                                     .paragraphStyle: headerParagraph]
+                    ))
+                    appendMessageDivider()
                     let bodyParagraph = NSMutableParagraphStyle()
                     bodyParagraph.headIndent = 38
                     bodyParagraph.firstLineHeadIndent = 38
@@ -1249,6 +1281,12 @@ extension ViewController {
                 }
                 if index + 1 < session.transcript.count {
                     output.append(NSAttributedString(string: "\n\n"))
+                }
+                if let messageStart {
+                    let messageRange = NSRange(location: messageStart, length: output.length - messageStart)
+                    if messageRange.length > 0 {
+                        output.addAttribute(.carrachoPostBackground, value: messageAlternate, range: messageRange)
+                    }
                 }
             }
         }
