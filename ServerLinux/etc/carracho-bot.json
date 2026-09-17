@@ -1,0 +1,6 @@
+{
+  "enabled": false,
+  "avatarPath": "etc/carracho-bot-avatar.png",
+  "greetNewUsers": false,
+  "greetingTemplate": "Welcome, {name}! Nice to have you here."
+}

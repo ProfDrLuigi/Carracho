@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>SUFeedURL</key>
+	<string>https://wired.istation.pw/carrachoclient/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>IocWX96bR2E4UoPBgFT3KVRVWbut/1HjJVrfChE6l+s=</string>
+	<key>UTExportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>luigi.com.carracho.incomplete-transfer</string>
+			<key>UTTypeDescription</key>
+			<string>Carracho Incomplete Transfer</string>
+			<key>UTTypeIconFile</key>
+			<string>Incomplete.icns</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>carracho</string>
+				</array>
+			</dict>
+		</dict>
+	</array>
+</dict>
+</plist>

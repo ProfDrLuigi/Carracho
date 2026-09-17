@@ -1,0 +1,26 @@
+{
+  "serverName": "Carracho Dev Server",
+  "description": "Hopefully a new era of carracho",
+  "serverPort": 6700,
+  "filesRoot": "../Files",
+  "legacyFilesRoot": "../Files-Legacy",
+  "authenticationMode": "legacyCompatible",
+  "maxConnections": 100,
+  "maxConnectionsPerIP": 5,
+  "maxSimultaneousFileTransfers": 20,
+  "maxFileTransfersPerUser": 1,
+  "maxFolderDownloadDepth": 8,
+  "uploadBandwidthLimitBytesPerSecond": 0,
+  "searchIndexExclusions": [],
+  "newsExpirationHour": 0,
+  "newsExpirationMinute": 0,
+  "trackerRegistration": {
+    "enabled": false,
+    "private": false,
+    "bandwidthCode": 0,
+    "bandwidth": "T3",
+    "flags": 0,
+    "description": "Carracho Dev Server",
+    "trackers": []
+  }
+}

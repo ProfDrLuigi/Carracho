@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Scheme
+   LastUpgradeVersion = "2660"
+   version = "1.7">
+   <BuildAction
+      parallelizeBuildables = "YES"
+      buildImplicitDependencies = "YES"
+      buildArchitectures = "Automatic">
+      <PreActions>
+         <ExecutionAction
+            ActionType = "Xcode.IDEStandardExecutionActionsCore.ExecutionActionType.ShellScriptAction">
+            <ActionContent
+               title = "Run Script"
+               scriptText = "#!/bin/zsh&#10;&#10;# Xcode Clang Probe Watchdog&#10;#&#10;# Beendet ausschlie&#xdf;lich die bekannte h&#xe4;ngende Compiler-Probe:&#10;#&#10;#   clang -v -E -dM ... -c /dev/null&#10;#&#10;# Der W&#xe4;chter l&#xe4;uft nur kurz nach Buildstart und beendet sich anschlie&#xdf;end&#10;# automatisch.&#10;exit 0&#10;WATCH_SECONDS=120&#10;CHECK_INTERVAL=1&#10;&#10;LOG_PREFIX=&quot;[Xcode Probe Watchdog]&quot;&#10;&#10;kill_hanging_clang_probes() {&#10;    local pids&#10;&#10;    pids=&quot;$(&#10;        ps -axo pid=,user=,command= | awk -v current_user=&quot;$USER&quot; &apos;&#10;            $2 == current_user &amp;&amp;&#10;            /XcodeDefault\.xctoolchain\/usr\/bin\/clang/ &amp;&amp;&#10;            / -v -E -dM / &amp;&amp;&#10;            / -c \/dev\/null/ {&#10;                print $1&#10;            }&#10;        &apos;&#10;    )&quot;&#10;&#10;    if [[ -z &quot;$pids&quot; ]]; then&#10;        return&#10;    fi&#10;&#10;    for pid in ${(f)pids}; do&#10;        [[ -z &quot;$pid&quot; ]] &amp;&amp; continue&#10;&#10;        echo &quot;$LOG_PREFIX killing hanging clang probe PID $pid&quot;&#10;&#10;        kill -TERM &quot;$pid&quot; 2&gt;/dev/null || true&#10;&#10;        # Falls die Probe TERM ignoriert, kurz danach hart beenden.&#10;        sleep 0.2&#10;&#10;        if kill -0 &quot;$pid&quot; 2&gt;/dev/null; then&#10;            echo &quot;$LOG_PREFIX PID $pid ignored TERM; sending KILL&quot;&#10;            kill -KILL &quot;$pid&quot; 2&gt;/dev/null || true&#10;        fi&#10;    done&#10;}&#10;&#10;watch_clang_probes() {&#10;    local started_at=$SECONDS&#10;&#10;    echo &quot;$LOG_PREFIX started for ${WATCH_SECONDS}s&quot;&#10;&#10;    # Eventuell bereits vorhandene Probe direkt entfernen.&#10;    kill_hanging_clang_probes&#10;&#10;    while (( SECONDS - started_at &lt; WATCH_SECONDS )); do&#10;        sleep &quot;$CHECK_INTERVAL&quot;&#10;        kill_hanging_clang_probes&#10;    done&#10;&#10;    echo &quot;$LOG_PREFIX finished&quot;&#10;}&#10;&#10;# Wichtig: Hintergrundprozess, damit der eigentliche Build nicht blockiert.&#10;watch_clang_probes &gt;/tmp/xcode-clang-probe-watchdog.log 2&gt;&amp;1 &amp;&#10;&#10;exit 0&#10;">
+               <EnvironmentBuildable>
+                  <BuildableReference
+                     BuildableIdentifier = "primary"
+                     BlueprintIdentifier = "2AD52C513052E26B00CD47B6"
+                     BuildableName = "Carracho.app"
+                     BlueprintName = "Carracho"
+                     ReferencedContainer = "container:Carracho.xcodeproj">
+                  </BuildableReference>
+               </EnvironmentBuildable>
+            </ActionContent>
+         </ExecutionAction>
+      </PreActions>
+      <BuildActionEntries>
+         <BuildActionEntry
+            buildForTesting = "YES"
+            buildForRunning = "YES"
+            buildForProfiling = "YES"
+            buildForArchiving = "YES"
+            buildForAnalyzing = "YES">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "2AD52C513052E26B00CD47B6"
+               BuildableName = "Carracho.app"
+               BlueprintName = "Carracho"
+               ReferencedContainer = "container:Carracho.xcodeproj">
+            </BuildableReference>
+         </BuildActionEntry>
+      </BuildActionEntries>
+   </BuildAction>
+   <TestAction
+      buildConfiguration = "Debug"
+      selectedDebuggerIdentifier = "Xcode.DebuggerFoundation.Debugger.LLDB"
+      selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB"
+      shouldUseLaunchSchemeArgsEnv = "YES"
+      shouldAutocreateTestPlan = "YES">
+   </TestAction>
+   <LaunchAction
+      buildConfiguration = "Debug"
+      selectedDebuggerIdentifier = "Xcode.DebuggerFoundation.Debugger.LLDB"
+      selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB"
+      launchStyle = "0"
+      useCustomWorkingDirectory = "NO"
+      ignoresPersistentStateOnLaunch = "NO"
+      debugDocumentVersioning = "YES"
+      debugServiceExtension = "internal"
+      allowLocationSimulation = "YES"
+      queueDebuggingEnableBacktraceRecording = "Yes">
+      <PreActions>
+         <ExecutionAction
+            ActionType = "Xcode.IDEStandardExecutionActionsCore.ExecutionActionType.ShellScriptAction">
+            <ActionContent
+               title = "Run Script"
+               scriptText = "#!/bin/zsh&#10;&#10;# Xcode Clang Probe Watchdog&#10;#&#10;# Beendet ausschlie&#xdf;lich die bekannte h&#xe4;ngende Compiler-Probe:&#10;#&#10;#   clang -v -E -dM ... -c /dev/null&#10;#&#10;# Der W&#xe4;chter l&#xe4;uft nur kurz nach Buildstart und beendet sich anschlie&#xdf;end&#10;# automatisch.&#10;exit 0&#10;WATCH_SECONDS=120&#10;CHECK_INTERVAL=1&#10;&#10;LOG_PREFIX=&quot;[Xcode Probe Watchdog]&quot;&#10;&#10;kill_hanging_clang_probes() {&#10;    local pids&#10;&#10;    pids=&quot;$(&#10;        ps -axo pid=,user=,command= | awk -v current_user=&quot;$USER&quot; &apos;&#10;            $2 == current_user &amp;&amp;&#10;            /XcodeDefault\.xctoolchain\/usr\/bin\/clang/ &amp;&amp;&#10;            / -v -E -dM / &amp;&amp;&#10;            / -c \/dev\/null/ {&#10;                print $1&#10;            }&#10;        &apos;&#10;    )&quot;&#10;&#10;    if [[ -z &quot;$pids&quot; ]]; then&#10;        return&#10;    fi&#10;&#10;    for pid in ${(f)pids}; do&#10;        [[ -z &quot;$pid&quot; ]] &amp;&amp; continue&#10;&#10;        echo &quot;$LOG_PREFIX killing hanging clang probe PID $pid&quot;&#10;&#10;        kill -TERM &quot;$pid&quot; 2&gt;/dev/null || true&#10;&#10;        # Falls die Probe TERM ignoriert, kurz danach hart beenden.&#10;        sleep 0.2&#10;&#10;        if kill -0 &quot;$pid&quot; 2&gt;/dev/null; then&#10;            echo &quot;$LOG_PREFIX PID $pid ignored TERM; sending KILL&quot;&#10;            kill -KILL &quot;$pid&quot; 2&gt;/dev/null || true&#10;        fi&#10;    done&#10;}&#10;&#10;watch_clang_probes() {&#10;    local started_at=$SECONDS&#10;&#10;    echo &quot;$LOG_PREFIX started for ${WATCH_SECONDS}s&quot;&#10;&#10;    # Eventuell bereits vorhandene Probe direkt entfernen.&#10;    kill_hanging_clang_probes&#10;&#10;    while (( SECONDS - started_at &lt; WATCH_SECONDS )); do&#10;        sleep &quot;$CHECK_INTERVAL&quot;&#10;        kill_hanging_clang_probes&#10;    done&#10;&#10;    echo &quot;$LOG_PREFIX finished&quot;&#10;}&#10;&#10;# Wichtig: Hintergrundprozess, damit der eigentliche Build nicht blockiert.&#10;watch_clang_probes &gt;/tmp/xcode-clang-probe-watchdog.log 2&gt;&amp;1 &amp;&#10;&#10;exit 0&#10;"
+               shellToInvoke = "/bin/zsh">
+               <EnvironmentBuildable>
+                  <BuildableReference
+                     BuildableIdentifier = "primary"
+                     BlueprintIdentifier = "2AD52C513052E26B00CD47B6"
+                     BuildableName = "Carracho.app"
+                     BlueprintName = "Carracho"
+                     ReferencedContainer = "container:Carracho.xcodeproj">
+                  </BuildableReference>
+               </EnvironmentBuildable>
+            </ActionContent>
+         </ExecutionAction>
+      </PreActions>
+      <BuildableProductRunnable
+         runnableDebuggingMode = "0">
+         <BuildableReference
+            BuildableIdentifier = "primary"
+            BlueprintIdentifier = "2AD52C513052E26B00CD47B6"
+            BuildableName = "Carracho.app"
+            BlueprintName = "Carracho"
+            ReferencedContainer = "container:Carracho.xcodeproj">
+         </BuildableReference>
+      </BuildableProductRunnable>
+   </LaunchAction>
+   <ProfileAction
+      buildConfiguration = "Release"
+      shouldUseLaunchSchemeArgsEnv = "YES"
+      savedToolIdentifier = ""
+      useCustomWorkingDirectory = "NO"
+      debugDocumentVersioning = "YES">
+      <BuildableProductRunnable
+         runnableDebuggingMode = "0">
+         <BuildableReference
+            BuildableIdentifier = "primary"
+            BlueprintIdentifier = "2AD52C513052E26B00CD47B6"
+            BuildableName = "Carracho.app"
+            BlueprintName = "Carracho"
+            ReferencedContainer = "container:Carracho.xcodeproj">
+         </BuildableReference>
+      </BuildableProductRunnable>
+   </ProfileAction>
+   <AnalyzeAction
+      buildConfiguration = "Debug">
+   </AnalyzeAction>
+   <ArchiveAction
+      buildConfiguration = "Release"
+      revealArchiveInOrganizer = "YES">
+   </ArchiveAction>
+</Scheme>
