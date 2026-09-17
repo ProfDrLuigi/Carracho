@@ -181,6 +181,7 @@ The current administration workspaces include:
 - **Trackers** — publication, tracker targets, privacy and advertised bandwidth class;
 - **Server Log** — protocol and runtime activity;
 - **Events** — user activity audit trail;
+- **Bot** — local Bot runtime, automatic greeting, command rules and RSS/Atom feeds;
 - **Advanced** — limits, file/search settings, IP rules, authentication mode and storage-related options;
 - **Agreement** — login agreement text;
 - **Statistics** — server and transfer counters.
@@ -188,6 +189,57 @@ The current administration workspaces include:
 The permission model also includes new account-level rights such as **Post News**, allowing modern server features to be controlled independently and extended over time.
 
 <img width="1636" height="980" alt="image" src="https://github.com/user-attachments/assets/cfa13d7b-afac-4bbc-b87a-d27c9a8e7922" />
+
+### Server Bot
+
+Modern Carracho servers include a **local server Bot** that runs as a server-owned session rather than as a normal network login. Administrators can control it from the **Bot** page in the client without editing configuration files by hand.
+
+The Bot administration page provides:
+
+- enable/disable control for the local Bot;
+- an optional automatic greeting for newly connected users;
+- configurable greeting text with **`{name}`** and **`{login}`** placeholders;
+- persistent command/response rules, each with its own enable/disable switch;
+- RSS/Atom feed management with per-feed target room, polling interval, summary length and image setting;
+- a feed test action that publishes the fetched article into **Public** using the same rendering path as a normal RSS post.
+
+#### Bot commands
+
+Command rules are simple server-side responses rather than a scripting language. A rule can map a command such as `Hello` to a response such as `Hello {name}, how are you?`.
+
+In a Conference the Bot is addressed with `#` at the beginning of the message:
+
+```text
+#Hello
+```
+
+A direct Private Message to the Bot does not need the prefix:
+
+```text
+Hello
+```
+
+The Bot replies in the **same Conference** in which it was addressed, or directly to the sender for a Private Message. If necessary it joins the target Conference first and follows the normal speaking permissions of that room. Sending a Bot message also wakes the Bot from its sleeping presence state.
+
+#### RSS and Atom feeds
+
+The Bot can monitor multiple **RSS 2.0** and **Atom** feeds and publish newly discovered articles into configured Conferences. Each feed can independently define:
+
+- enabled/disabled state;
+- display name;
+- RSS/Atom URL;
+- target Conference;
+- polling interval;
+- maximum summary length;
+- whether an article image should be included when the feed provides one.
+
+MacRumors and Tarnkappe are available as convenient presets in the administration UI, but feeds are not provider-specific and arbitrary compatible RSS/Atom URLs can be added.
+
+For each new article the Bot publishes the headline, a cleaned and shortened description, the original article link and, when enabled and available, an image stored through the normal Carracho media system. Common feed boilerplate such as WordPress “appeared first on” footers is removed from the summary.
+
+Feed state is persistent. On the first successful poll of a newly configured feed, existing items are recorded as already seen instead of being dumped into a room as an old backlog. Later polls publish only unseen items, and servers use `ETag` / `Last-Modified` conditional requests when the feed origin supports them.
+
+RSS fetching is deliberately restricted to HTTP/HTTPS and rejects local or reserved network destinations, unsafe redirects, oversized responses and stalled requests. This allows administrators to add external feeds without turning the Bot into an accidental internal-network fetch proxy.
 
 ### Settings, appearance and notifications
 
@@ -274,10 +326,12 @@ The normal layout is:
 ```text
 Server/
 ├── etc/
-│   └── carracho-server.json
+│   ├── carracho-server.json
+│   └── carracho-bot.json
 ├── db/
 │   ├── server.db
-│   └── file-index.db
+│   ├── file-index.db
+│   └── bot-rss.db
 ├── logs/
 │   └── carracho-server.log
 └── ...
@@ -302,10 +356,12 @@ The resulting binaries are written to `.build/linux/`:
 ├── carracho-server
 ├── carracho-tracker
 ├── etc/
-│   └── carracho-server.json
+│   ├── carracho-server.json
+│   └── carracho-bot.json
 ├── db/
 │   ├── server.db
-│   └── file-index.db
+│   ├── file-index.db
+│   └── bot-rss.db
 └── logs/
 ```
 
@@ -319,6 +375,27 @@ A fresh server database contains two initial accounts:
 - `anonymous` — restricted guest account, initially with an empty password.
 
 Change the administrator password before exposing a new server to an untrusted network.
+
+### Bot configuration and persistence
+
+The Bot has its own persistent configuration in `etc/carracho-bot.json`. The macOS and native Linux server implementations use the same conceptual settings so Bot administration behaves consistently on both platforms.
+
+A minimal configuration looks like this:
+
+```json
+{
+  "enabled": false,
+  "avatarPath": "etc/carracho-bot-avatar.png",
+  "greetNewUsers": false,
+  "greetingTemplate": "Welcome, {name}! Nice to have you here.",
+  "commandRules": [],
+  "rssFeeds": []
+}
+```
+
+Normal administration should be done through the Carracho client's **Administration → Bot** page. The JSON file remains useful for deployment, backups and headless server provisioning.
+
+Command rules and RSS feed definitions are stored in this Bot configuration. RSS polling state and seen-item tracking are stored separately in `db/bot-rss.db`, so restarting the server does not cause previously seen articles to be published again.
 
 The main runtime configuration lives in `etc/carracho-server.json`. A typical configuration contains the server name, description, port, published file roots, authentication mode, connection/transfer limits, search exclusions, news expiration settings and tracker publication settings.
 
