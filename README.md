@@ -285,13 +285,13 @@ Server/
 
 ### Native Linux server
 
-`ServerLinux/` contains a native C implementation intended for headless deployment. It does not require a Swift runtime and uses OpenSSL, json-c and SQLite.
+`ServerLinux/` contains a native C implementation intended for headless deployment. It does not require a Swift runtime and uses OpenSSL, json-c, SQLite, libcurl and libxml2.
 
 On Debian 13:
 
 ```sh
 sudo apt update
-sudo apt install build-essential pkg-config libssl-dev libjson-c-dev libsqlite3-dev
+sudo apt install build-essential pkg-config libssl-dev libjson-c-dev libsqlite3-dev libcurl4-openssl-dev libxml2-dev
 make native-werror
 ```
 

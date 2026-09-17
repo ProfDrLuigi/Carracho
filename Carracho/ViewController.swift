@@ -857,6 +857,11 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
     let adminBotCommandAddButton = NSButton(title: L("Add Rule"), target: nil, action: nil)
     let adminBotCommandDeleteButton = NSButton(title: L("Remove Rule"), target: nil, action: nil)
     let adminBotCommandSaveButton = NSButton(title: L("Save Rules"), target: nil, action: nil)
+    let adminBotRSSTable = NSTableView()
+    let adminBotRSSAddButton = NSButton(title: L("Add Feed"), target: nil, action: nil)
+    let adminBotRSSDeleteButton = NSButton(title: L("Remove Feed"), target: nil, action: nil)
+    let adminBotRSSTestButton = NSButton(title: L("Test Feed"), target: nil, action: nil)
+    let adminBotRSSSaveButton = NSButton(title: L("Save Feeds"), target: nil, action: nil)
     let adminBotLoadingIndicator = NSProgressIndicator()
     var remoteBotStatus: LegacyBotAdminStatus?
     var remoteBotLoading = false
@@ -865,6 +870,10 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
     var remoteBotCommandMutationInProgress = false
     var remoteBotCommandRulesDirty = false
     var remoteBotCommandRuleDraft: [LegacyBotCommandRule] = []
+    var remoteBotRSSMutationInProgress = false
+    var remoteBotRSSTestInProgress = false
+    var remoteBotRSSFeedsDirty = false
+    var remoteBotRSSFeedDraft: [LegacyBotRSSFeed] = []
     var remoteBotRefreshGeneration: UInt64 = 0
     var remoteAccountSummaries: [LegacyCompactAccountSummary] = []
     var remoteAccountGroups: [ServerAccountGroup] = []
@@ -6617,6 +6626,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         if tableView === adminNewsgroupTable { return displayedAdminNewsgroups.count }
         if tableView === adminTrackerTable { return displayedTrackers.count }
         if tableView === adminBotCommandTable { return remoteBotCommandRuleDraft.count }
+        if tableView === adminBotRSSTable { return remoteBotRSSFeedDraft.count }
         return 0
     }
 
@@ -6624,6 +6634,9 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         guard let identifier = tableColumn?.identifier.rawValue else { return nil }
         if tableView === adminBotCommandTable {
             return botCommandRuleCell(identifier: identifier, row: row)
+        }
+        if tableView === adminBotRSSTable {
+            return botRSSFeedCell(identifier: identifier, row: row)
         }
         if tableView === privateMessageConversationTable, identifier == "conversation", row < displayedMessageCenterRows.count {
             let content: NSView
@@ -6954,6 +6967,10 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         guard let table = notification.object as? NSTableView else { return }
         if table === adminBotCommandTable {
             updateBotCommandRuleButtons()
+            return
+        }
+        if table === adminBotRSSTable {
+            updateBotRSSButtons()
             return
         }
         if table === fileTable {

@@ -206,6 +206,9 @@ enum LegacyCommand {
     static let botSetEnabled: UInt32 = 0xf0000702
     static let botSetGreeting: UInt32 = 0xf0000703
     static let botSetCommandRules: UInt32 = 0xf0000704
+    static let botSetRSSFeeds: UInt32 = 0xf0000705
+    static let botTestRSSFeed: UInt32 = 0xf0000706
+    static let botRSSFeedTestReply: UInt32 = 0xf0000707
 }
 
 enum LegacyBotAdminField {
@@ -217,6 +220,113 @@ enum LegacyBotAdminField {
     static let greetNewUsers: UInt32 = 6
     static let greetingTemplate: UInt32 = 7
     static let commandRules: UInt32 = 8
+    static let rssFeeds: UInt32 = 9
+    static let rssPreview: UInt32 = 10
+}
+
+struct LegacyBotRSSFeed: Equatable, Codable, Identifiable {
+    static let maximumCount = 16
+    static let maximumNameBytes = 96
+    static let maximumURLBytes = 2048
+    static let minimumPollMinutes = 5
+    static let maximumPollMinutes = 1440
+    static let minimumSummaryCharacters = 80
+    static let maximumSummaryCharacters = 1000
+
+    var id: UUID
+    var enabled: Bool
+    var name: String
+    var url: String
+    var channelID: UInt32
+    var pollIntervalMinutes: Int
+    var includeImage: Bool
+    var summaryCharacters: Int
+
+    func validated() throws -> LegacyBotRSSFeed {
+        let cleanName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanURL = url.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanName.isEmpty, cleanName.utf8.count <= Self.maximumNameBytes,
+              !cleanName.contains("\n"), !cleanName.contains("\r"),
+              !cleanURL.isEmpty, cleanURL.utf8.count <= Self.maximumURLBytes,
+              !cleanURL.contains("\n"), !cleanURL.contains("\r"),
+              let components = URLComponents(string: cleanURL),
+              let scheme = components.scheme?.lowercased(), ["http", "https"].contains(scheme),
+              components.host != nil, components.user == nil, components.password == nil,
+              channelID > 0,
+              (Self.minimumPollMinutes...Self.maximumPollMinutes).contains(pollIntervalMinutes),
+              (Self.minimumSummaryCharacters...Self.maximumSummaryCharacters).contains(summaryCharacters) else {
+            throw LegacyProtocolError.invalidRecord("invalid Bot RSS feed")
+        }
+        return LegacyBotRSSFeed(id: id, enabled: enabled, name: cleanName, url: cleanURL, channelID: channelID,
+                                pollIntervalMinutes: pollIntervalMinutes, includeImage: includeImage,
+                                summaryCharacters: summaryCharacters)
+    }
+
+    static func encodeList(_ feeds: [LegacyBotRSSFeed]) throws -> Data {
+        guard feeds.count <= maximumCount else { throw LegacyProtocolError.invalidLength("too many Bot RSS feeds") }
+        var data = LegacyWire.uint16BE(UInt16(feeds.count))
+        for feed in feeds {
+            let feed = try feed.validated()
+            data.append(feed.enabled ? 1 : 0)
+            data.append(feed.includeImage ? 1 : 0)
+            data.append(LegacyWire.uint32BE(feed.channelID))
+            data.append(LegacyWire.uint16BE(UInt16(feed.pollIntervalMinutes)))
+            data.append(LegacyWire.uint16BE(UInt16(feed.summaryCharacters)))
+            data.append(try LegacyWire.string16(Data(feed.id.uuidString.lowercased().utf8)))
+            data.append(try LegacyWire.string16(Data(feed.name.utf8)))
+            data.append(try LegacyWire.string16(Data(feed.url.utf8)))
+        }
+        return data
+    }
+
+    static func decodeList(_ data: Data) throws -> [LegacyBotRSSFeed] {
+        var cursor = LegacyByteCursor(data)
+        let count = Int(try cursor.readUInt16BE())
+        guard count <= maximumCount else { throw LegacyProtocolError.invalidRecord("too many Bot RSS feeds") }
+        var feeds: [LegacyBotRSSFeed] = []
+        feeds.reserveCapacity(count)
+        for _ in 0..<count {
+            let enabled = try cursor.readUInt8(), image = try cursor.readUInt8()
+            guard enabled <= 1, image <= 1 else { throw LegacyProtocolError.invalidRecord("invalid Bot RSS flags") }
+            let channelID = try cursor.readUInt32BE()
+            let poll = Int(try cursor.readUInt16BE())
+            let summary = Int(try cursor.readUInt16BE())
+            let idData = try cursor.readString16(), nameData = try cursor.readString16(), urlData = try cursor.readString16()
+            guard let idString = String(data: idData, encoding: .utf8), let id = UUID(uuidString: idString),
+                  let name = String(data: nameData, encoding: .utf8), let url = String(data: urlData, encoding: .utf8) else {
+                throw LegacyProtocolError.invalidRecord("invalid Bot RSS text")
+            }
+            feeds.append(try LegacyBotRSSFeed(id: id, enabled: enabled == 1, name: name, url: url, channelID: channelID,
+                                               pollIntervalMinutes: poll, includeImage: image == 1, summaryCharacters: summary).validated())
+        }
+        try cursor.requireEnd()
+        return feeds
+    }
+}
+
+struct LegacyBotRSSPreview: Equatable {
+    var title: String
+    var summary: String
+    var link: String
+    var imageURL: String?
+
+    func encode() throws -> Data {
+        var data = Data()
+        for value in [title, summary, link, imageURL ?? ""] { data.append(try LegacyWire.string16(Data(value.utf8))) }
+        return data
+    }
+
+    static func decode(_ data: Data) throws -> LegacyBotRSSPreview {
+        var cursor = LegacyByteCursor(data)
+        var values: [String] = []
+        for _ in 0..<4 {
+            let raw = try cursor.readString16()
+            guard let text = String(data: raw, encoding: .utf8) else { throw LegacyProtocolError.invalidRecord("invalid Bot RSS preview") }
+            values.append(text)
+        }
+        try cursor.requireEnd()
+        return LegacyBotRSSPreview(title: values[0], summary: values[1], link: values[2], imageURL: values[3].isEmpty ? nil : values[3])
+    }
 }
 
 struct LegacyBotCommandRule: Equatable, Codable {
@@ -293,6 +403,8 @@ struct LegacyBotAdminStatus: Equatable {
     var greetingTemplate: String
     var commandRulesSupported: Bool
     var commandRules: [LegacyBotCommandRule]
+    var rssFeedsSupported: Bool
+    var rssFeeds: [LegacyBotRSSFeed]
 }
 
 enum LegacyUserInfoField {

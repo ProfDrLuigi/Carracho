@@ -371,6 +371,11 @@ extension ViewController {
             remoteBotCommandRulesDirty = false
             remoteBotCommandRuleDraft = []
             adminBotCommandTable.reloadData()
+            remoteBotRSSMutationInProgress = false
+            remoteBotRSSTestInProgress = false
+            remoteBotRSSFeedsDirty = false
+            remoteBotRSSFeedDraft = []
+            adminBotRSSTable.reloadData()
             remoteBotRefreshGeneration &+= 1
             updateBotAdministrationUI()
             adminAccountStatusLabel.stringValue = localServerState.accounts.count == 1 ? LF("%@ local account", String(localServerState.accounts.count)) : LF("%@ local accounts", String(localServerState.accounts.count))
@@ -532,8 +537,9 @@ extension ViewController {
         adminBotCommandSaveButton.action = #selector(saveBotCommandRules(_:))
         CarrachoTheme.applyPrimaryButtonStyle(adminBotCommandSaveButton)
         let commandActions = horizontalStack([adminBotCommandAddButton, adminBotCommandDeleteButton, NSView(), adminBotCommandSaveButton], spacing: 8)
-        let commandNote = infoLabel(L("In conferences, address the Bot as “Bot: <command>”. In a private message to the Bot, <command> is enough. Responses can use {name} and {login}."))
+        let commandNote = infoLabel(L("In conferences, address the Bot with “#<command>”. In a private message to the Bot, <command> is enough. Responses can use {name} and {login}."))
         commandNote.maximumNumberOfLines = 3
+        let rssSection = makeBotRSSAdministrationSection()
 
         adminBotLoadingIndicator.style = .spinning
         adminBotLoadingIndicator.controlSize = .small
@@ -578,27 +584,14 @@ extension ViewController {
         // surplus height so dividers remain hairlines and the status/actions stay at the bottom.
         let flexibleSpace = NSView()
 
-        appendAdminContent([
-            runtimeTitle,
-            runtimeRow,
-            botDivider(),
-            greetingTitle,
-            greetingToggleRow,
-            greetingTextRow,
-            greetingNote,
-            botDivider(),
-            commandsTitle,
-            commandScroll,
-            commandActions,
-            commandNote,
-            botDivider(),
-            accountRow,
-            localhostNote,
-            profileNote,
-            flexibleSpace,
-            botDivider(),
-            actions,
-        ], to: page, minimumBodyHeight: 650)
+        let botContent: [NSView] = [
+            runtimeTitle, runtimeRow, botDivider(),
+            greetingTitle, greetingToggleRow, greetingTextRow, greetingNote, botDivider(),
+            commandsTitle, commandScroll, commandActions, commandNote, botDivider(),
+        ] + rssSection + [
+            botDivider(), accountRow, localhostNote, profileNote, flexibleSpace, botDivider(), actions,
+        ]
+        appendAdminContent(botContent, to: page, minimumBodyHeight: 920)
         updateBotAdministrationUI()
         return page
     }
@@ -630,6 +623,10 @@ extension ViewController {
                     if !self.remoteBotCommandRulesDirty && !self.remoteBotCommandMutationInProgress {
                         self.remoteBotCommandRuleDraft = status.commandRules
                         self.adminBotCommandTable.reloadData()
+                    }
+                    if !self.remoteBotRSSFeedsDirty && !self.remoteBotRSSMutationInProgress && !self.remoteBotRSSTestInProgress {
+                        self.remoteBotRSSFeedDraft = status.rssFeeds
+                        self.adminBotRSSTable.reloadData()
                     }
                 case let .failure(error):
                     self.remoteBotStatus = nil
@@ -708,6 +705,7 @@ extension ViewController {
             && remoteBotStatus?.commandRulesSupported == true
             && !remoteBotLoading && !remoteBotMutationInProgress
             && !remoteBotGreetingMutationInProgress && !remoteBotCommandMutationInProgress
+            && !remoteBotRSSMutationInProgress && !remoteBotRSSTestInProgress
     }
 
     func botCommandRuleCell(identifier: String, row: Int) -> NSView? {
@@ -856,6 +854,7 @@ extension ViewController {
         else { adminBotLoadingIndicator.stopAnimation(nil) }
 
         let busy = remoteBotMutationInProgress || remoteBotGreetingMutationInProgress || remoteBotCommandMutationInProgress
+            || remoteBotRSSMutationInProgress || remoteBotRSSTestInProgress
         adminBotReloadButton.isEnabled = supported && !remoteBotLoading && !busy
         adminBotAccountsButton.isEnabled = canAccessAdministrativeWorkspace(.accounts) && !busy
         adminBotToggleButton.isEnabled = supported && remoteBotStatus != nil && !remoteBotLoading && !busy
@@ -864,6 +863,7 @@ extension ViewController {
         adminBotGreetingTemplateField.isEnabled = greetingSupported && !remoteBotLoading && !busy
         adminBotGreetingSaveButton.isEnabled = greetingSupported && !remoteBotLoading && !busy
         updateBotCommandRuleButtons()
+        updateBotRSSButtons()
 
         guard supported else {
             adminBotRuntimeLabel.stringValue = L("Unavailable")
@@ -878,6 +878,7 @@ extension ViewController {
             adminBotGreetingSwitch.state = .off
             adminBotGreetingTemplateField.stringValue = LegacyBotAdminStatus.defaultGreetingTemplate
             adminBotCommandSaveButton.toolTip = L("Bot command rules require a modern Carracho server.")
+            adminBotRSSSaveButton.toolTip = L("Bot RSS feeds require a modern Carracho server.")
             return
         }
 
@@ -896,6 +897,7 @@ extension ViewController {
             adminBotGreetingSwitch.state = .off
             adminBotGreetingTemplateField.stringValue = LegacyBotAdminStatus.defaultGreetingTemplate
             adminBotCommandSaveButton.toolTip = nil
+            adminBotRSSSaveButton.toolTip = nil
             if !preserveExplicitError {
                 adminBotStatusLabel.stringValue = remoteBotLoading ? L("Loading Bot status…") : L("Bot status has not been loaded yet.")
                 adminBotStatusLabel.textColor = CarrachoTheme.secondaryText
@@ -917,6 +919,7 @@ extension ViewController {
             adminBotGreetingSaveButton.toolTip = L("This server does not support Bot greeting administration.")
         }
         adminBotCommandSaveButton.toolTip = status.commandRulesSupported ? nil : L("This server does not support Bot command rules.")
+        adminBotRSSSaveButton.toolTip = status.rssFeedsSupported ? nil : L("This server does not support Bot RSS feeds.")
         if status.connected {
             adminBotRuntimeLabel.stringValue = L("Connected")
             adminBotRuntimeLabel.textColor = .systemGreen

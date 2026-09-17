@@ -135,6 +135,13 @@ final class LegacyServerRuntime {
     private let presenceTimerLock = NSLock()
     private var automaticSleepTimer: DispatchSourceTimer?
     private let automaticSleepAfter: TimeInterval
+    private lazy var botRSSService = LegacyBotRSSService(
+        configURL: localBotConfigurationURL,
+        databaseURL: fileMetadataDatabaseURL.deletingLastPathComponent().appendingPathComponent("bot-rss.db"),
+        canPublish: { [weak self] in self?.isLocalBotConnected == true },
+        articleHandler: { [weak self] feed, article in self?.publishLocalBotRSSArticle(feed: feed, article: article) ?? false },
+        logHandler: { [weak self] message in self?.log(message) }
+    )
 
     init(backend: ModernServerBackend, storageRoot: URL? = nil, newsRoot: URL? = nil,
          supportRoot: URL? = nil, databaseRoot: URL? = nil,
@@ -446,10 +453,12 @@ final class LegacyServerRuntime {
         scheduleNextNewsExpiration()
         refreshTrackerConfiguration()
         scheduleAutomaticSleepMonitor()
+        botRSSService.start()
         return pair.controlPort
     }
 
     func stop() {
+        botRSSService.stop()
         disconnectLocalBot()
         let clients: [LegacyServerSession]
         let fd: Int32
@@ -859,6 +868,10 @@ final class LegacyServerRuntime {
             try handleBotSetGreeting(packet: packet, session: session)
         case LegacyCommand.botSetCommandRules:
             try handleBotSetCommandRules(packet: packet, session: session)
+        case LegacyCommand.botSetRSSFeeds:
+            try handleBotSetRSSFeeds(packet: packet, session: session)
+        case LegacyCommand.botTestRSSFeed:
+            try handleBotTestRSSFeed(packet: packet, session: session)
 
         case LegacyCommand.requestServerSettings:
             try handleServerSettingsRequest(packet: packet, session: session)
@@ -2142,25 +2155,12 @@ final class LegacyServerRuntime {
         let raw = CarrachoTextWire.string(from: wire).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !raw.isEmpty else { return nil }
 
-        stateLock.lock()
-        let bot = localBotSession
-        let nickname = bot.flatMap { String(data: $0.nickname, encoding: .macOSRoman) } ?? ""
-        let login = bot?.account?.login ?? ""
-        stateLock.unlock()
-
-        var aliases = ["Bot", nickname, login]
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-        var seen = Set<String>()
-        aliases = aliases.filter { seen.insert($0.lowercased()).inserted }
-        for alias in aliases {
-            let prefix = alias + ":"
-            if raw.range(of: prefix, options: [.anchored, .caseInsensitive]) != nil {
-                let command = String(raw.dropFirst(prefix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
-                return command.isEmpty ? nil : command
-            }
+        if addressed {
+            guard raw.hasPrefix("#") else { return nil }
+            let command = String(raw.dropFirst()).trimmingCharacters(in: .whitespacesAndNewlines)
+            return command.isEmpty ? nil : command
         }
-        return addressed ? nil : raw
+        return raw
     }
 
     private func matchingLocalBotResponse(for wire: Data, from sender: LegacyServerSession, addressed: Bool) -> String? {
@@ -2218,6 +2218,58 @@ final class LegacyServerRuntime {
         }
     }
 
+    private func publishLocalBotRSSArticle(feed: LegacyBotRSSFeed, article: LegacyBotRSSArticle) -> Bool {
+        guard isLocalBotConnected else { return false }
+        var mediaToken = ""
+        if feed.includeImage, let imageData = article.imageData, !imageData.isEmpty {
+            do {
+                let filename = article.imageFilename ?? "rss-image.jpg"
+                let object = try mediaStore.storePending(ownerAccountID: ServerState.localBotAccountID,
+                                                         filename: filename, data: imageData)
+                let messageID = UUID().uuidString.lowercased()
+                try mediaStore.bind(ids: [object.id], ownerAccountID: ServerState.localBotAccountID,
+                                    kind: .chat, scope: String(feed.channelID), messageID: messageID,
+                                    expiresAt: Date().addingTimeInterval(LegacyMediaTransfer.chatLifetime))
+                mediaToken = LegacyMediaReference.token(for: object.id) + "\n"
+            } catch {
+                log("Bot RSS image for \(feed.name) was skipped: \(error.localizedDescription)")
+            }
+        }
+
+        let title = Self.escapeBotRSSHTML(article.title)
+        let link = Self.escapeBotRSSHTMLAttribute(article.link)
+        var summary = article.summary
+        for _ in 0..<8 {
+            let escapedSummary = Self.escapeBotRSSHTML(summary)
+            let linkLine = link.isEmpty ? "" : "\n<a href=\"\(link)\">\(Self.escapeBotRSSHTML(article.link))</a>"
+            let body = mediaToken + "<b>\(title)</b>" + (escapedSummary.isEmpty ? "" : "\n\(escapedSummary)") + linkLine
+            if (try? CarrachoTextWire.encode(body, maximumBytes: 0x800)) != nil {
+                do {
+                    try postLocalBotMessage(body, channelID: feed.channelID, source: "rss:\(feed.name)")
+                    log("Bot RSS \(feed.name) posted: \(article.title)")
+                    return true
+                } catch {
+                    log("Bot RSS \(feed.name) could not post: \(error.localizedDescription)")
+                    return false
+                }
+            }
+            guard summary.count > 80 else { break }
+            summary = String(summary.prefix(max(80, summary.count * 3 / 4))).trimmingCharacters(in: .whitespacesAndNewlines) + "…"
+        }
+        log("Bot RSS \(feed.name) article was too large for a conference message")
+        return false
+    }
+
+    private static func escapeBotRSSHTML(_ value: String) -> String {
+        value.replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+    }
+
+    private static func escapeBotRSSHTMLAttribute(_ value: String) -> String {
+        escapeBotRSSHTML(value).replacingOccurrences(of: "\"", with: "&quot;")
+    }
+
     private func localBotLastError() -> String? {
         guard let data = try? Data(contentsOf: localBotStatusURL),
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -2232,6 +2284,7 @@ final class LegacyServerRuntime {
         }
         let greeting = localBotGreetingConfiguration()
         let commandRules = localBotCommandRules()
+        let rssFeeds = botRSSService.loadFeeds()
         var fields = [
             LegacyTLV(type: LegacyBotAdminField.desiredEnabled, value: Data([localBotDesiredEnabled() ? 1 : 0])),
             LegacyTLV(type: LegacyBotAdminField.connected, value: Data([isLocalBotConnected ? 1 : 0])),
@@ -2240,6 +2293,7 @@ final class LegacyServerRuntime {
             LegacyTLV(type: LegacyBotAdminField.greetNewUsers, value: Data([greeting.enabled ? 1 : 0])),
             LegacyTLV(type: LegacyBotAdminField.greetingTemplate, value: Data(greeting.template.utf8)),
             LegacyTLV(type: LegacyBotAdminField.commandRules, value: try LegacyBotCommandRule.encodeList(commandRules)),
+            LegacyTLV(type: LegacyBotAdminField.rssFeeds, value: try LegacyBotRSSFeed.encodeList(rssFeeds)),
         ]
         if let error = localBotLastError() {
             fields.append(LegacyTLV(type: LegacyBotAdminField.lastError, value: Data(error.utf8)))
@@ -2296,6 +2350,51 @@ final class LegacyServerRuntime {
                                                         transactionID: packet.transactionID, fields: []))
         } catch {
             log("Remote Bot command-rule update failed: \(error.localizedDescription)")
+            try session.sendAuthenticated(Self.errorPacket(transactionID: packet.transactionID, code: 1))
+        }
+    }
+
+    private func handleBotSetRSSFeeds(packet: LegacyPacket, session: LegacyServerSession) throws {
+        guard !session.isLegacyTransport, has(.manageAccounts, session: session),
+              let field = packet.firstField(type: LegacyBotAdminField.rssFeeds) else {
+            try session.sendAuthenticated(Self.errorPacket(transactionID: packet.transactionID, code: 1)); return
+        }
+        do {
+            let feeds = try LegacyBotRSSFeed.decodeList(field.value)
+            try botRSSService.saveFeeds(feeds)
+            try session.sendAuthenticated(LegacyPacket(command: LegacyCommand.taskComplete,
+                                                        transactionID: packet.transactionID, fields: []))
+            log("Remote Bot RSS feed configuration updated: \(feeds.count) feed(s)")
+        } catch {
+            log("Remote Bot RSS feed update failed: \(error.localizedDescription)")
+            try session.sendAuthenticated(Self.errorPacket(transactionID: packet.transactionID, code: 1))
+        }
+    }
+
+    private func handleBotTestRSSFeed(packet: LegacyPacket, session: LegacyServerSession) throws {
+        guard !session.isLegacyTransport, has(.manageAccounts, session: session),
+              let field = packet.firstField(type: LegacyBotAdminField.rssFeeds) else {
+            try session.sendAuthenticated(Self.errorPacket(transactionID: packet.transactionID, code: 1)); return
+        }
+        do {
+            let feeds = try LegacyBotRSSFeed.decodeList(field.value)
+            guard feeds.count == 1 else { throw LegacyServerRuntimeError.protocolFailure("RSS test requires exactly one feed") }
+            var testFeed = feeds[0]
+            testFeed.channelID = Self.publicChannelID
+            let article = try botRSSService.testArticle(testFeed)
+            let preview = LegacyBotRSSPreview(title: article.title, summary: article.summary,
+                                              link: article.link, imageURL: article.imageURL?.absoluteString)
+            // Complete the administration request before emitting the asynchronous Public chat event.
+            // This keeps the request/reply control stream deterministic even when the RSS post contains media.
+            try session.sendAuthenticated(LegacyPacket(command: LegacyCommand.botRSSFeedTestReply,
+                                                        transactionID: packet.transactionID,
+                                                        fields: [LegacyTLV(type: LegacyBotAdminField.rssPreview,
+                                                                           value: try preview.encode())]))
+            if !publishLocalBotRSSArticle(feed: testFeed, article: article) {
+                log("Remote Bot RSS test fetched an article but could not post it to Public")
+            }
+        } catch {
+            log("Remote Bot RSS test failed: \(error.localizedDescription)")
             try session.sendAuthenticated(Self.errorPacket(transactionID: packet.transactionID, code: 1))
         }
     }
@@ -3664,6 +3763,8 @@ final class LegacyServerRuntime {
         case LegacyCommand.botSetEnabled: event = ("administration", "control-bot", "")
         case LegacyCommand.botSetGreeting: event = ("administration", "configure-bot-greeting", "")
         case LegacyCommand.botSetCommandRules: event = ("administration", "configure-bot-commands", "")
+        case LegacyCommand.botSetRSSFeeds: event = ("administration", "configure-bot-rss", "")
+        case LegacyCommand.botTestRSSFeed: event = ("administration", "test-bot-rss", "")
         case LegacyCommand.rebuildSearchIndex: event = ("administration", "rebuild-search-index", "")
         case LegacyCommand.changeOwnPassword: event = ("account", "change-password", "")
         default: break

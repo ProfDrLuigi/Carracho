@@ -20,6 +20,8 @@ private struct CarrachoServerBotConfiguration: Codable {
     var greetingTemplate: String? = nil
     /// Optional for compatibility with configuration files created before command rules.
     var commandRules: [LegacyBotCommandRule]? = nil
+    /// Optional for compatibility with configuration files created before RSS support.
+    var rssFeeds: [LegacyBotRSSFeed]? = nil
 }
 
 enum CarrachoServerBotError: LocalizedError {

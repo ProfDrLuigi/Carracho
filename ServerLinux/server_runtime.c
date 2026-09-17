@@ -9,6 +9,7 @@
 #include "news_store.h"
 #include "flat_news_store.h"
 #include "media_store.h"
+#include "bot_rss.h"
 
 #include <arpa/inet.h>
 #include <dirent.h>
@@ -145,6 +146,9 @@
 #define CMD_BOT_SET_ENABLED 0xf0000702u
 #define CMD_BOT_SET_GREETING 0xf0000703u
 #define CMD_BOT_SET_COMMAND_RULES 0xf0000704u
+#define CMD_BOT_SET_RSS_FEEDS 0xf0000705u
+#define CMD_BOT_TEST_RSS_FEED 0xf0000706u
+#define CMD_BOT_RSS_FEED_TEST_REPLY 0xf0000707u
 #define FILE_LABEL_FIELD 0xf0000600u
 #define DIRECTORY_LABELS_FIELD 0xf0000601u
 #define LOGIN_FIELD_MEDIA_CAPABILITIES 0xf0000200u
@@ -360,11 +364,14 @@ struct cr_server {
     cr_session *bot_session;
     pthread_t bot_thread;
     int bot_thread_started;
+    pthread_t bot_rss_thread;
+    int bot_rss_thread_started;
     int bot_fd;
     char bot_config_path[PATH_MAX];
     char bot_status_path[PATH_MAX];
     char bot_pipe_path[PATH_MAX];
     char bot_avatar_path[PATH_MAX];
+    char bot_rss_db_path[PATH_MAX];
     char bot_last_error[512];
     pthread_t transfer_thread;
     pthread_cond_t transfer_cond;
@@ -388,6 +395,7 @@ static void free_joined_session(cr_session *x);
 static int validate_youtube_tokens(const uint8_t *data, size_t len, size_t maximum);
 static void disconnect_local_bot(cr_server *s);
 static void *bot_thread_main(void *opaque);
+static void *bot_rss_thread_main(void *opaque);
 static void broadcast_presence_state_locked(cr_server *server, uint32_t user_id, uint8_t state);
 
 typedef struct accepted_ctx { cr_server *server; int fd; char peer[INET_ADDRSTRLEN]; } accepted_ctx;
@@ -1061,6 +1069,57 @@ static int bot_encode_command_rules(const cr_bot_configuration*cfg,cr_buffer*out
     return 0;
 }
 
+static int bot_read_string16_utf8(const uint8_t*data,size_t len,size_t*off,char*out,size_t cap,int allow_empty){
+    if(!data||!off||!out||*off+2>len)return-1;
+    uint16_t n=cr_read_be16(data+*off);*off+=2;
+    if((!allow_empty&&!n)||n>=cap||*off+n>len)return-1;
+    if(n&&(!valid_utf8_bytes(data+*off,n)||memchr(data+*off,0,n)||memchr(data+*off,'\n',n)||memchr(data+*off,'\r',n)))return-1;
+    memcpy(out,data+*off,n);out[n]=0;*off+=n;return 0;
+}
+
+static int bot_decode_rss_feeds(const uint8_t*data,size_t len,cr_bot_rss_feed*out,size_t*out_count){
+    if(!data||len<2||!out||!out_count)return-1;
+    size_t off=0;uint16_t count=cr_read_be16(data);off=2;
+    if(count>CR_BOT_RSS_MAX_FEEDS)return-1;
+    for(uint16_t i=0;i<count;i++){
+        if(off+10>len)return-1;
+        cr_bot_rss_feed f;memset(&f,0,sizeof(f));
+        f.enabled=data[off++];f.include_image=data[off++];
+        f.channel_id=cr_read_be32(data+off);off+=4;
+        f.poll_interval_minutes=cr_read_be16(data+off);off+=2;
+        f.summary_characters=cr_read_be16(data+off);off+=2;
+        if(bot_read_string16_utf8(data,len,&off,f.id,sizeof(f.id),0)||
+           bot_read_string16_utf8(data,len,&off,f.name,sizeof(f.name),0)||
+           bot_read_string16_utf8(data,len,&off,f.url,sizeof(f.url),0)||
+           !cr_bot_rss_feed_valid(&f))return-1;
+        out[i]=f;
+    }
+    if(off!=len) return -1;
+    *out_count=count;
+    return 0;
+}
+
+static int bot_encode_rss_feeds(const cr_bot_rss_feed*feeds,size_t count,cr_buffer*out){
+    if(!out||(!feeds&&count)||count>CR_BOT_RSS_MAX_FEEDS)return-1;
+    cr_buffer_init(out);if(cr_buffer_append_u16(out,(uint16_t)count))return-1;
+    for(size_t i=0;i<count;i++){
+        const cr_bot_rss_feed*f=&feeds[i];size_t idn=strlen(f->id),nn=strlen(f->name),un=strlen(f->url);
+        if(!cr_bot_rss_feed_valid(f)||cr_buffer_append_u8(out,(uint8_t)f->enabled)||cr_buffer_append_u8(out,(uint8_t)f->include_image)||
+           cr_buffer_append_u32(out,f->channel_id)||cr_buffer_append_u16(out,f->poll_interval_minutes)||cr_buffer_append_u16(out,f->summary_characters)||
+           cr_buffer_append_string16(out,(const uint8_t*)f->id,idn)||cr_buffer_append_string16(out,(const uint8_t*)f->name,nn)||
+           cr_buffer_append_string16(out,(const uint8_t*)f->url,un)){cr_buffer_free(out);return-1;}
+    }
+    return 0;
+}
+
+static int bot_encode_rss_preview(const cr_bot_rss_article*a,cr_buffer*out){
+    if(!a||!out) return -1;
+    cr_buffer_init(out);
+    const char*values[4]={a->title,a->summary,a->link,a->image_url};
+    for(size_t i=0;i<4;i++){size_t n=strlen(values[i]);if(n>UINT16_MAX||cr_buffer_append_string16(out,(const uint8_t*)values[i],n)){cr_buffer_free(out);return-1;}}
+    return 0;
+}
+
 static int bot_store_command_rules(cr_server*s,const uint8_t*data,size_t len){
     if(!s||!s->bot_config_path[0]) return -1;
 
@@ -1493,38 +1552,24 @@ static char*bot_trim_ascii(char*s){
     return s;
 }
 
-static const char*bot_extract_command(cr_server*s,const uint8_t*wire,size_t wire_len,int require_prefix,char*storage,size_t cap){
+static const char*bot_extract_command(const uint8_t*wire,size_t wire_len,int require_prefix,char*storage,size_t cap){
     if(bot_decode_wire_text(wire,wire_len,storage,cap)) return NULL;
     char*text=bot_trim_ascii(storage);
     if(!*text) return NULL;
 
-    char nickname[1024]="";
-    char login[256]="";
-    pthread_mutex_lock(&s->mutex);
-    cr_session*bot=s->bot_session;
-    if(bot){
-        (void)cr_macroman_to_utf8(bot->nickname,bot->nickname_len,nickname,sizeof(nickname));
-        snprintf(login,sizeof(login),"%s",bot->login);
+    if(require_prefix){
+        if(*text!='#') return NULL;
+        char*command=bot_trim_ascii(text+1);
+        return *command?command:NULL;
     }
-    pthread_mutex_unlock(&s->mutex);
-
-    const char*aliases[3]={"Bot",nickname,login};
-    for(size_t i=0;i<3;i++){
-        size_t n=strlen(aliases[i]);
-        if(!n) continue;
-        if(!strncasecmp(text,aliases[i],n)&&text[n]==':'){
-            char*command=bot_trim_ascii(text+n+1);
-            return *command?command:NULL;
-        }
-    }
-    return require_prefix?NULL:text;
+    return text;
 }
 
 static int bot_match_command(cr_server*s,cr_session*sender,const uint8_t*wire,size_t wire_len,int require_prefix,char*out,size_t cap,size_t*out_len){
     if(!s||!sender||sender->local_only||!bot_connected(s)) return 0;
 
     char input[0x8001];
-    const char*command=bot_extract_command(s,wire,wire_len,require_prefix,input,sizeof(input));
+    const char*command=bot_extract_command(wire,wire_len,require_prefix,input,sizeof(input));
     if(!command) return 0;
 
     cr_bot_configuration cfg;
@@ -1645,6 +1690,70 @@ static int extract_media_ids(const uint8_t*data,size_t len,char ids[][37],size_t
     *out_count=count;return 0;
 }
 static int media_message_id(char out[33]){uint8_t b[16];if(RAND_bytes(b,sizeof(b))!=1)return-1;for(size_t i=0;i<16;i++)snprintf(out+i*2,3,"%02x",b[i]);return 0;}
+
+static int bot_rss_html_escape(const char*src,char*out,size_t cap,int attribute){
+    if(!src||!out||!cap) return -1;
+    size_t used=0;
+    for(const unsigned char*p=(const unsigned char*)src;*p;p++){
+        const char*replacement=NULL;
+        if(*p=='&')replacement="&amp;";else if(*p=='<')replacement="&lt;";else if(*p=='>')replacement="&gt;";else if(attribute&&*p=='\"')replacement="&quot;";
+        if(replacement){size_t n=strlen(replacement);if(used+n>=cap)return-1;memcpy(out+used,replacement,n);used+=n;}
+        else{if(used+1>=cap)return-1;out[used++]=(char)*p;}
+    }
+    out[used]=0;return 0;
+}
+
+static void bot_rss_shorten_utf8(char*s){
+    if(!s||!*s) return;
+    size_t n=strlen(s),target=n*3/4;
+    if(target<80) target=n>80?80:n;
+    while(target&&(((unsigned char)s[target]&0xc0u)==0x80u))target--;
+    s[target]=0;if(target&&target+3<CR_BOT_RSS_SUMMARY_MAX*4)strcat(s,"…");
+}
+
+static int bot_publish_rss_article_to_server(cr_server*s,const cr_bot_rss_feed*feed,const cr_bot_rss_article*article){
+    if(!s||!feed||!article||!bot_connected(s))return-1;
+    char media_token[96]="";
+    if(feed->include_image&&article->image_data&&article->image_len){
+        char media_id[37],scope[32],message_id[33];snprintf(scope,sizeof(scope),"%u",feed->channel_id);
+        if(!cr_media_store_pending(&s->media,CR_LOCAL_BOT_ACCOUNT_ID,article->image_filename[0]?article->image_filename:"rss-image",article->image_data,article->image_len,media_id)&&
+           !media_message_id(message_id)&&
+           !cr_media_store_bind(&s->media,media_id,CR_LOCAL_BOT_ACCOUNT_ID,CR_MEDIA_KIND_CHAT,scope,message_id,time(NULL)+7*24*60*60)){
+            snprintf(media_token,sizeof(media_token),"[[carracho-image:%s]]\n",media_id);
+        }
+    }
+    char title[CR_BOT_RSS_TITLE_MAX*8+64],link_text[CR_BOT_RSS_URL_MAX*6+64],link_attr[CR_BOT_RSS_URL_MAX*6+64];
+    if(bot_rss_html_escape(article->title,title,sizeof(title),0)||bot_rss_html_escape(article->link,link_text,sizeof(link_text),0)||bot_rss_html_escape(article->link,link_attr,sizeof(link_attr),1))return-1;
+    char summary[sizeof(article->summary)];snprintf(summary,sizeof(summary),"%s",article->summary);
+    for(int attempt=0;attempt<10;attempt++){
+        char escaped_summary[CR_BOT_RSS_SUMMARY_MAX*8+64];if(bot_rss_html_escape(summary,escaped_summary,sizeof(escaped_summary),0))return-1;
+        char message[0x801];int n=snprintf(message,sizeof(message),"%s<b>%s</b>%s%s\n<a href=\"%s\">%s</a>",media_token,title,*escaped_summary?"\n":"",escaped_summary,link_attr,link_text);
+        if(n>0&&n<=0x800){int rc=bot_post_channel_message(s,feed->channel_id,(const uint8_t*)message,(size_t)n,"rss");if(!rc)log_msg("Bot RSS %s posted: %s",feed->name,article->title);return rc;}
+        if(!*summary) break;
+        if(strlen(summary)<=80) summary[0]=0;
+        else bot_rss_shorten_utf8(summary);
+    }
+    log_msg("Bot RSS %s article was too large for a conference message",feed->name);return-1;
+}
+
+static int bot_publish_rss_article(void*opaque,const cr_bot_rss_feed*feed,const cr_bot_rss_article*article){
+    return bot_publish_rss_article_to_server((cr_server*)opaque,feed,article);
+}
+
+static void bot_rss_log_callback(void*opaque,const char*message){(void)opaque;if(message&&*message)log_msg("%s",message);}
+
+static void *bot_rss_thread_main(void*opaque){
+    cr_server*s=opaque;time_t next=time(NULL)+5;
+    while(!s->stop){
+        time_t now=time(NULL);
+        if(now>=next){
+            if(bot_connected(s)&&cr_bot_rss_poll(s->bot_config_path,s->bot_rss_db_path,bot_publish_rss_article,bot_rss_log_callback,s))log_msg("Bot RSS poll failed");
+            next=now+30;
+        }
+        sleep_seconds(1.0);
+    }
+    return NULL;
+}
 static int validate_youtube_tokens(const uint8_t*data,size_t len,size_t maximum){
     static const char prefix[]="[[carracho-youtube:";const size_t pn=sizeof(prefix)-1;size_t count=0;
     for(size_t i=0;i+pn<=len;i++){
@@ -2200,9 +2309,13 @@ static int handle_bot_status(cr_session*s,const cr_packet*p){
     pthread_mutex_unlock(&s->server->state.mutex);if(!found)return send_error(s,p->transaction_id,1);
     uint8_t desired=(uint8_t)(cfg.enabled?1:0),connected=(uint8_t)(bot_connected(s->server)?1:0),greet=(uint8_t)(cfg.greet_new_users?1:0);
     cr_buffer rules;if(bot_encode_command_rules(&cfg,&rules)||rules.len>UINT16_MAX){cr_buffer_free(&rules);return send_error(s,p->transaction_id,1);}
+    cr_bot_rss_feed feeds[CR_BOT_RSS_MAX_FEEDS];size_t feed_count=0;cr_buffer rss;cr_buffer_init(&rss);
+    if(cr_bot_rss_load_feeds(s->server->bot_config_path,feeds,CR_BOT_RSS_MAX_FEEDS,&feed_count)||
+       bot_encode_rss_feeds(feeds,feed_count,&rss)||rss.len>UINT16_MAX){cr_buffer_free(&rules);cr_buffer_free(&rss);return send_error(s,p->transaction_id,1);}
     cr_tlv_out fields[]={{1,&desired,1},{2,&connected,1},{3,(const uint8_t*)login,(uint16_t)strlen(login)},{4,(const uint8_t*)name,(uint16_t)strlen(name)},
-                         {6,&greet,1},{7,(const uint8_t*)cfg.greeting_template,(uint16_t)strlen(cfg.greeting_template)},{8,rules.data,(uint16_t)rules.len}};
-    int rc=session_send(s,CMD_BOT_STATUS_REPLY,p->transaction_id,fields,7);cr_buffer_free(&rules);return rc;
+                         {6,&greet,1},{7,(const uint8_t*)cfg.greeting_template,(uint16_t)strlen(cfg.greeting_template)},{8,rules.data,(uint16_t)rules.len},
+                         {9,rss.data,(uint16_t)rss.len}};
+    int rc=session_send(s,CMD_BOT_STATUS_REPLY,p->transaction_id,fields,8);cr_buffer_free(&rules);cr_buffer_free(&rss);return rc;
 }
 static int handle_bot_set_enabled(cr_session*s,const cr_packet*p){
     if(!s->modern_transport||!account_perm(s,PERM_MANAGE_ACCOUNTS))return send_error(s,p->transaction_id,1);
@@ -2226,6 +2339,38 @@ static int handle_bot_set_command_rules(cr_session*s,const cr_packet*p){
     const cr_tlv*rules=cr_packet_field(p,8);if(!rules||rules->length<2)return send_error(s,p->transaction_id,1);
     if(bot_store_command_rules(s->server,rules->value,rules->length))return send_error(s,p->transaction_id,1);
     log_msg("Bot command rules updated remotely");return send_task_complete(s,p->transaction_id);
+}
+
+static int handle_bot_set_rss_feeds(cr_session*s,const cr_packet*p){
+    if(!s->modern_transport||!account_perm(s,PERM_MANAGE_ACCOUNTS))return send_error(s,p->transaction_id,1);
+    const cr_tlv*field=cr_packet_field(p,9);if(!field||field->length<2)return send_error(s,p->transaction_id,1);
+    cr_bot_rss_feed feeds[CR_BOT_RSS_MAX_FEEDS];size_t count=0;
+    if(bot_decode_rss_feeds(field->value,field->length,feeds,&count)||
+       cr_bot_rss_store_feeds(s->server->bot_config_path,feeds,count))return send_error(s,p->transaction_id,1);
+    log_msg("Bot RSS feeds updated remotely: %zu feed(s)",count);
+    return send_task_complete(s,p->transaction_id);
+}
+
+static int handle_bot_test_rss_feed(cr_session*s,const cr_packet*p){
+    if(!s->modern_transport||!account_perm(s,PERM_MANAGE_ACCOUNTS))return send_error(s,p->transaction_id,1);
+    const cr_tlv*field=cr_packet_field(p,9);if(!field||field->length<2)return send_error(s,p->transaction_id,1);
+    cr_bot_rss_feed feeds[CR_BOT_RSS_MAX_FEEDS];size_t count=0;
+    if(bot_decode_rss_feeds(field->value,field->length,feeds,&count)||count!=1)return send_error(s,p->transaction_id,1);
+    cr_bot_rss_feed test_feed=feeds[0];test_feed.channel_id=1;
+    cr_bot_rss_article article;memset(&article,0,sizeof(article));
+    if(cr_bot_rss_test_feed(&test_feed,&article))return send_error(s,p->transaction_id,1);
+    cr_buffer preview;int fail=bot_encode_rss_preview(&article,&preview);
+    if(fail||preview.len>UINT16_MAX){cr_buffer_free(&preview);cr_bot_rss_article_free(&article);return send_error(s,p->transaction_id,1);}
+    cr_tlv_out response={10,preview.data,(uint16_t)preview.len};
+    int rc=session_send(s,CMD_BOT_RSS_FEED_TEST_REPLY,p->transaction_id,&response,1);
+    cr_buffer_free(&preview);
+    if(rc){cr_bot_rss_article_free(&article);return rc;}
+    /* Reply first, then emit the asynchronous conference event. A failed RSS test post is
+       not a fatal control-session error and must never disconnect the administrator. */
+    if(bot_publish_rss_article_to_server(s->server,&test_feed,&article))
+        log_msg("Bot RSS test fetched an article but could not post it to Public");
+    cr_bot_rss_article_free(&article);
+    return 0;
 }
 
 static int handle_account_list(cr_session*s,const cr_packet*p){
@@ -2992,7 +3137,7 @@ static void record_request_event(cr_session*s,const cr_packet*p){
         case CMD_FLAT_NEWS_LIST:cat="news";action="read-flat-news";break;case CMD_FLAT_NEWS_POST:cat="news";action="post-flat-news";break;
         case CMD_CHANNEL_JOIN:cat="chat";action="join";break;case CMD_CHANNEL_LEAVE:cat="chat";action="leave";break;case CMD_CHANNEL_CHAT:cat="chat";action="message";break;
         case CMD_PRIVATE_MESSAGE:cat="messages";action="private-message";break;case CMD_OFFLINE_MESSAGE_SEND:cat="messages";action="offline-message";break;case CMD_BROADCAST:cat="messages";action="broadcast";break;
-        case CMD_ACCOUNT_SAVE:cat="administration";action="save-account";break;case CMD_ACCOUNT_DELETE:cat="administration";action="delete-account";break;case CMD_SET_SERVER_SETTINGS:cat="administration";action="change-server-settings";break;case CMD_BOT_SET_ENABLED:cat="administration";action="control-bot";break;case CMD_BOT_SET_GREETING:cat="administration";action="configure-bot-greeting";break;case CMD_BOT_SET_COMMAND_RULES:cat="administration";action="configure-bot-commands";break;case CMD_REBUILD_SEARCH_INDEX:cat="administration";action="rebuild-search-index";break;case CMD_CHANGE_OWN_PASSWORD:cat="account";action="change-password";break;
+        case CMD_ACCOUNT_SAVE:cat="administration";action="save-account";break;case CMD_ACCOUNT_DELETE:cat="administration";action="delete-account";break;case CMD_SET_SERVER_SETTINGS:cat="administration";action="change-server-settings";break;case CMD_BOT_SET_ENABLED:cat="administration";action="control-bot";break;case CMD_BOT_SET_GREETING:cat="administration";action="configure-bot-greeting";break;case CMD_BOT_SET_COMMAND_RULES:cat="administration";action="configure-bot-commands";break;case CMD_BOT_SET_RSS_FEEDS:cat="administration";action="configure-bot-rss";break;case CMD_BOT_TEST_RSS_FEED:cat="administration";action="test-bot-rss";break;case CMD_REBUILD_SEARCH_INDEX:cat="administration";action="rebuild-search-index";break;case CMD_CHANGE_OWN_PASSWORD:cat="account";action="change-password";break;
         default:break;
     }
     if(cat)event_msg(s,cat,action,detail);
@@ -3008,7 +3153,7 @@ case CMD_FLAT_NEWS_POST:return handle_flat_news_post(s,p);case CMD_FLAT_NEWS_LIS
 case CMD_TRANSFER_INFO:return handle_transfer_info(s,p);
 case CMD_REQUEST_SERVER_SETTINGS:return handle_server_settings_request(s,p);case CMD_SET_SERVER_SETTINGS:return handle_server_settings_update(s,p);
 case CMD_SERVER_LOG_REQUEST:return handle_server_log_request(s,p);case CMD_SERVER_LOG_CLEAR:return handle_server_log_clear(s,p);case CMD_EVENT_LOG_REQUEST:return handle_event_log_request(s,p);case CMD_EVENT_LOG_CLEAR:return handle_event_log_clear(s,p);case CMD_REBUILD_SEARCH_INDEX:return handle_rebuild_search_index(s,p);
-case CMD_ACCOUNT_LIST:return handle_account_list(s,p);case CMD_GET_ACCOUNT:return handle_get_account(s,p);case CMD_ACCOUNT_SAVE:return handle_account_save(s,p);case CMD_ACCOUNT_DELETE:return handle_account_delete(s,p);case CMD_CHANGE_OWN_PASSWORD:return handle_change_own_password(s,p);case CMD_BOT_STATUS_REQUEST:return handle_bot_status(s,p);case CMD_BOT_SET_ENABLED:return handle_bot_set_enabled(s,p);case CMD_BOT_SET_GREETING:return handle_bot_set_greeting(s,p);case CMD_BOT_SET_COMMAND_RULES:return handle_bot_set_command_rules(s,p);
+case CMD_ACCOUNT_LIST:return handle_account_list(s,p);case CMD_GET_ACCOUNT:return handle_get_account(s,p);case CMD_ACCOUNT_SAVE:return handle_account_save(s,p);case CMD_ACCOUNT_DELETE:return handle_account_delete(s,p);case CMD_CHANGE_OWN_PASSWORD:return handle_change_own_password(s,p);case CMD_BOT_STATUS_REQUEST:return handle_bot_status(s,p);case CMD_BOT_SET_ENABLED:return handle_bot_set_enabled(s,p);case CMD_BOT_SET_GREETING:return handle_bot_set_greeting(s,p);case CMD_BOT_SET_COMMAND_RULES:return handle_bot_set_command_rules(s,p);case CMD_BOT_SET_RSS_FEEDS:return handle_bot_set_rss_feeds(s,p);case CMD_BOT_TEST_RSS_FEED:return handle_bot_test_rss_feed(s,p);
 case CMD_ADMIN_NEWSGROUP_LIST:return handle_admin_newsgroup_list(s,p);case CMD_NEWSGROUP_CREATE:return handle_newsgroup_admin_mutation(s,p,0);case CMD_NEWSGROUP_MODIFY:return handle_newsgroup_admin_mutation(s,p,1);case CMD_NEWSGROUP_DELETE:return handle_newsgroup_admin_mutation(s,p,2);
 case CMD_ARTICLE_READ:return handle_article_read(s,p);case CMD_FORUM_THREAD_LIST:return handle_forum_thread_list(s,p);case CMD_FORUM_THREAD_ENTRIES:return handle_forum_thread_entries(s,p);case CMD_FORUM_ARTICLE_REACTIONS:return handle_forum_article_reactions(s,p);case CMD_FORUM_ARTICLE_REACTION_SET:return handle_forum_article_reaction_set(s,p);case CMD_FORUM_ARTICLE_DELETE:return handle_forum_article_delete(s,p);case CMD_ARTICLE_DELETE:return handle_article_delete(s,p);
 case CMD_BROADCAST:return handle_broadcast(s,p);case CMD_CHANNEL_LIST:return handle_channel_list(s,p);case CMD_NEWSGROUP_LIST:return handle_newsgroups(s,p);
@@ -3993,6 +4138,9 @@ int cr_server_init(cr_server **out, const cr_server_config *config) {
     if (cr_state_open_at_root(&s->state, config->state_path, config->instance_root)) {
         pthread_cond_destroy(&s->transfer_cond); pthread_mutex_destroy(&s->mutex); free(s); return -1;
     }
+    if(join_path_component(s->bot_rss_db_path,sizeof(s->bot_rss_db_path),s->state.database_dir,"bot-rss.db")){
+        cr_state_close(&s->state);pthread_cond_destroy(&s->transfer_cond);pthread_mutex_destroy(&s->mutex);free(s);return-1;
+    }
 
     unsigned reconciled = 0;
     if (cr_state_reconcile_startup_settings(&s->state, &config->persistent, &reconciled)) {
@@ -4078,7 +4226,9 @@ void cr_server_request_stop(cr_server*s){if(!s)return;s->stop=1;if(s->listener_f
 int cr_server_run(cr_server *s) {
     if (pthread_create(&s->bot_thread, NULL, bot_thread_main, s) != 0) return -1;
     s->bot_thread_started=1;
-    if (pthread_create(&s->transfer_thread, NULL, transfer_accept_main, s) != 0) {s->stop=1;pthread_join(s->bot_thread,NULL);s->bot_thread_started=0;return -1;}
+    if (pthread_create(&s->bot_rss_thread, NULL, bot_rss_thread_main, s) != 0) {s->stop=1;pthread_join(s->bot_thread,NULL);s->bot_thread_started=0;return -1;}
+    s->bot_rss_thread_started=1;
+    if (pthread_create(&s->transfer_thread, NULL, transfer_accept_main, s) != 0) {s->stop=1;pthread_join(s->bot_rss_thread,NULL);s->bot_rss_thread_started=0;pthread_join(s->bot_thread,NULL);s->bot_thread_started=0;return -1;}
     log_msg("Carracho C server ready: control=%u transfer=%u state=%s", s->port, s->transfer_port, s->state.path);
     start_file_search_index_rebuild(s);
     while (!s->stop) {
@@ -4159,6 +4309,7 @@ int cr_server_run(cr_server *s) {
     cr_server_request_stop(s);
     pthread_join(s->transfer_thread, NULL);
     if(s->bot_thread_started){pthread_join(s->bot_thread,NULL);s->bot_thread_started=0;}
+    if(s->bot_rss_thread_started){pthread_join(s->bot_rss_thread,NULL);s->bot_rss_thread_started=0;}
     pthread_mutex_lock(&s->mutex);
     while (s->active_transfer_connections) pthread_cond_wait(&s->transfer_cond,&s->mutex);
     pthread_mutex_unlock(&s->mutex);
@@ -4170,6 +4321,7 @@ void cr_server_destroy(cr_server *s) {
     if (!s) return;
     cr_server_request_stop(s);
     if(s->bot_thread_started){pthread_join(s->bot_thread,NULL);s->bot_thread_started=0;}
+    if(s->bot_rss_thread_started){pthread_join(s->bot_rss_thread,NULL);s->bot_rss_thread_started=0;}
     disconnect_local_bot(s);bot_fifo_stop(s);
     join_all_sessions(s);
     if (s->listener_fd >= 0) close(s->listener_fd);

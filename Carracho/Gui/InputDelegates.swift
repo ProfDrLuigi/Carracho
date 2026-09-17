@@ -29,9 +29,14 @@ extension ViewController {
     }
 
     func controlTextDidEndEditing(_ obj: Notification) {
-        guard let field = obj.object as? NSTextField,
-              field.identifier?.rawValue == "botRuleCommand" || field.identifier?.rawValue == "botRuleResponse" else { return }
-        botCommandRuleTextEdited(field)
+        guard let field = obj.object as? NSTextField, let identifier = field.identifier?.rawValue else { return }
+        if identifier == "botRuleCommand" || identifier == "botRuleResponse" {
+            botCommandRuleTextEdited(field)
+            return
+        }
+        if ["botRSSName", "botRSSURL", "botRSSInterval", "botRSSSummary"].contains(identifier) {
+            botRSSFeedTextEdited(field)
+        }
     }
 
     func textDidChange(_ notification: Notification) {

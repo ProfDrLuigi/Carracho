@@ -1976,10 +1976,34 @@
 "On" = "An";
 "Command" = "Befehl";
 "Response" = "Antwort";
-"In conferences, address the Bot as “Bot: <command>”. In a private message to the Bot, <command> is enough. Responses can use {name} and {login}." = "In Conferences den Bot mit „Bot: <Befehl>“ ansprechen. In einer privaten Nachricht an den Bot genügt <Befehl>. Antworten können {name} und {login} verwenden.";
+"In conferences, address the Bot with “#<command>”. In a private message to the Bot, <command> is enough. Responses can use {name} and {login}." = "In Conferences den Bot mit „#<Befehl>“ ansprechen. In einer privaten Nachricht an den Bot genügt <Befehl>. Antworten können {name} und {login} verwenden.";
 "Too many Bot command rules." = "Zu viele Bot-Befehlsregeln.";
 "Bot rule %@ needs a non-empty command and response." = "Bot-Regel %@ benötigt einen nicht leeren Befehl und eine Antwort.";
 "The Bot command “%@” is defined more than once." = "Der Bot-Befehl „%@“ ist mehrfach definiert.";
 "Bot command rules saved." = "Bot-Befehlsregeln gespeichert.";
 "Bot command rules require a modern Carracho server." = "Bot-Befehlsregeln erfordern einen modernen Carracho-Server.";
 "This server does not support Bot command rules." = "Dieser Server unterstützt keine Bot-Befehlsregeln.";
+
+// Bot RSS feeds
+"RSS feeds" = "RSS-Feeds";
+"Add Feed" = "Feed hinzufügen";
+"Remove Feed" = "Feed entfernen";
+"Test Feed" = "Feed testen";
+"Save Feeds" = "Feeds speichern";
+"Target" = "Ziel";
+"Minutes" = "Minuten";
+"Summary" = "Kurztext";
+"RSS URL" = "RSS-URL";
+"Feed name" = "Feed-Name";
+"Feed %@" = "Feed %@";
+"Only articles that appear after a feed is initialized are posted. Existing articles are marked as seen. RSS 2.0 and Atom are supported; images are optional and are stored through Carracho media." = "Nur Artikel, die nach der Initialisierung eines Feeds erscheinen, werden gepostet. Vorhandene Artikel werden als gesehen markiert. RSS 2.0 und Atom werden unterstützt; Bilder sind optional und werden über Carracho-Medien gespeichert.";
+"Too many Bot RSS feeds." = "Zu viele Bot-RSS-Feeds.";
+"RSS feed %@ has invalid settings." = "RSS-Feed %@ hat ungültige Einstellungen.";
+"Each RSS feed needs a unique identifier." = "Jeder RSS-Feed benötigt eine eindeutige Kennung.";
+"The RSS feed URL “%@” is configured more than once." = "Die RSS-Feed-URL „%@“ ist mehrfach konfiguriert.";
+"Bot RSS feeds saved." = "Bot-RSS-Feeds gespeichert.";
+"The selected RSS feed has invalid settings." = "Der ausgewählte RSS-Feed hat ungültige Einstellungen.";
+"Image: %@" = "Bild: %@";
+"Bot RSS feeds require a modern Carracho server." = "Bot-RSS-Feeds erfordern einen modernen Carracho-Server.";
+"This server does not support Bot RSS feeds." = "Dieser Server unterstützt keine Bot-RSS-Feeds.";
+"RSS test article posted to Public." = "RSS-Testartikel wurde in Public gepostet.";

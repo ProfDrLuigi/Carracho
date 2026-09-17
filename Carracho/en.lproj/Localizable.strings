@@ -1976,10 +1976,34 @@
 "On" = "On";
 "Command" = "Command";
 "Response" = "Response";
-"In conferences, address the Bot as “Bot: <command>”. In a private message to the Bot, <command> is enough. Responses can use {name} and {login}." = "In conferences, address the Bot as “Bot: <command>”. In a private message to the Bot, <command> is enough. Responses can use {name} and {login}.";
+"In conferences, address the Bot with “#<command>”. In a private message to the Bot, <command> is enough. Responses can use {name} and {login}." = "In conferences, address the Bot with “#<command>”. In a private message to the Bot, <command> is enough. Responses can use {name} and {login}.";
 "Too many Bot command rules." = "Too many Bot command rules.";
 "Bot rule %@ needs a non-empty command and response." = "Bot rule %@ needs a non-empty command and response.";
 "The Bot command “%@” is defined more than once." = "The Bot command “%@” is defined more than once.";
 "Bot command rules saved." = "Bot command rules saved.";
 "Bot command rules require a modern Carracho server." = "Bot command rules require a modern Carracho server.";
 "This server does not support Bot command rules." = "This server does not support Bot command rules.";
+
+// Bot RSS feeds
+"RSS feeds" = "RSS feeds";
+"Add Feed" = "Add Feed";
+"Remove Feed" = "Remove Feed";
+"Test Feed" = "Test Feed";
+"Save Feeds" = "Save Feeds";
+"Target" = "Target";
+"Minutes" = "Minutes";
+"Summary" = "Summary";
+"RSS URL" = "RSS URL";
+"Feed name" = "Feed name";
+"Feed %@" = "Feed %@";
+"Only articles that appear after a feed is initialized are posted. Existing articles are marked as seen. RSS 2.0 and Atom are supported; images are optional and are stored through Carracho media." = "Only articles that appear after a feed is initialized are posted. Existing articles are marked as seen. RSS 2.0 and Atom are supported; images are optional and are stored through Carracho media.";
+"Too many Bot RSS feeds." = "Too many Bot RSS feeds.";
+"RSS feed %@ has invalid settings." = "RSS feed %@ has invalid settings.";
+"Each RSS feed needs a unique identifier." = "Each RSS feed needs a unique identifier.";
+"The RSS feed URL “%@” is configured more than once." = "The RSS feed URL “%@” is configured more than once.";
+"Bot RSS feeds saved." = "Bot RSS feeds saved.";
+"The selected RSS feed has invalid settings." = "The selected RSS feed has invalid settings.";
+"Image: %@" = "Image: %@";
+"Bot RSS feeds require a modern Carracho server." = "Bot RSS feeds require a modern Carracho server.";
+"This server does not support Bot RSS feeds." = "This server does not support Bot RSS feeds.";
+"RSS test article posted to Public." = "RSS test article posted to Public.";

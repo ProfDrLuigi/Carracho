@@ -1967,6 +1967,8 @@ extension ViewController {
         let name = NSTextField(labelWithString: user.map { Self.macRomanString($0.nickname) } ?? L("Unknown User"))
         name.font = .systemFont(ofSize: 12, weight: .semibold)
         name.lineBreakMode = .byTruncatingTail
+        name.toolTip = name.stringValue
+        name.setContentHuggingPriority(.defaultLow, for: .horizontal)
         name.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         if let rgb = userGroupColors[member.userID] { name.textColor = Self.colorFromRGB(rgb) }
 
@@ -1978,7 +1980,7 @@ extension ViewController {
         roleLabel.font = .systemFont(ofSize: 9.5, weight: .semibold)
         roleLabel.textColor = member.mode & Self.channelOperatorMode != 0 ? CarrachoTheme.selection : CarrachoTheme.secondaryText
         roleLabel.setContentHuggingPriority(.required, for: .horizontal)
-        let nameRow = horizontalStack([name, roleLabel], spacing: 6)
+        roleLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
 
         let sleeping = sleepingUsers.contains(member.userID) || ((user?.flags ?? 0) & 0x0100) != 0
         let statusText = Self.macRomanString(userStatusMessages[member.userID] ?? Data())
@@ -1987,6 +1989,9 @@ extension ViewController {
         status.textColor = sleeping ? CarrachoTheme.secondaryText : (statusText.isEmpty ? CarrachoTheme.success : CarrachoTheme.secondaryText)
         status.lineBreakMode = .byTruncatingTail
         status.toolTip = status.stringValue
+        status.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        status.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        let nameRow = horizontalStack([name, NSView(), roleLabel], spacing: 6)
         let labels = verticalStack([nameRow, status], spacing: 2)
         labels.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         let row = horizontalStack([avatar, labels], spacing: 8)

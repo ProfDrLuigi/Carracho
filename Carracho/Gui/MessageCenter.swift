@@ -812,6 +812,21 @@ extension ViewController {
         return row
     }
 
+    func leftAlignedMessageTranscriptRow(_ card: NSView) -> NSView {
+        let row = NSView()
+        row.translatesAutoresizingMaskIntoConstraints = false
+        card.translatesAutoresizingMaskIntoConstraints = false
+        row.addSubview(card)
+        NSLayoutConstraint.activate([
+            card.leadingAnchor.constraint(equalTo: row.leadingAnchor),
+            card.topAnchor.constraint(equalTo: row.topAnchor),
+            card.bottomAnchor.constraint(equalTo: row.bottomAnchor),
+            card.trailingAnchor.constraint(lessThanOrEqualTo: row.trailingAnchor),
+            card.widthAnchor.constraint(lessThanOrEqualTo: row.widthAnchor, multiplier: 0.72),
+        ])
+        return row
+    }
+
     func privateMessageTranscriptCard(_ entry: PrivateMessageEntry,
                                               conversation: PrivateMessageConversation) -> NSView {
         let card = CarrachoCardView()
@@ -865,7 +880,9 @@ extension ViewController {
             } else {
                 privateMessageEmptyLabel.isHidden = true
                 for message in offlineMessageCenterMessages {
-                    privateMessageTranscriptStack.addArrangedSubview(offlineMessageTranscriptCard(message))
+                    privateMessageTranscriptStack.addArrangedSubview(
+                        leftAlignedMessageTranscriptRow(offlineMessageTranscriptCard(message))
+                    )
                 }
             }
         } else if let userID = selectedPrivateConversationID,
@@ -878,7 +895,9 @@ extension ViewController {
             } else {
                 privateMessageEmptyLabel.isHidden = true
                 for entry in conversation.entries {
-                    privateMessageTranscriptStack.addArrangedSubview(privateMessageTranscriptCard(entry, conversation: conversation))
+                    privateMessageTranscriptStack.addArrangedSubview(
+                        leftAlignedMessageTranscriptRow(privateMessageTranscriptCard(entry, conversation: conversation))
+                    )
                 }
             }
         } else {

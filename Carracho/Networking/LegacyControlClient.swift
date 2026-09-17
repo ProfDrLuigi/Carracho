@@ -1561,6 +1561,9 @@ final class LegacyControlClient {
                 } else {
                     commandRules = []
                 }
+                let rssFeedsField = packet.firstField(type: LegacyBotAdminField.rssFeeds)
+                let rssFeedsSupported = rssFeedsField != nil
+                let rssFeeds = try rssFeedsField.map { try LegacyBotRSSFeed.decodeList($0.value) } ?? []
                 completion(.success(LegacyBotAdminStatus(
                     desiredEnabled: try flag(LegacyBotAdminField.desiredEnabled),
                     connected: try flag(LegacyBotAdminField.connected),
@@ -1571,7 +1574,9 @@ final class LegacyControlClient {
                     greetNewUsers: greetNewUsers,
                     greetingTemplate: greetingTemplate,
                     commandRulesSupported: commandRulesSupported,
-                    commandRules: commandRules)))
+                    commandRules: commandRules,
+                    rssFeedsSupported: rssFeedsSupported,
+                    rssFeeds: rssFeeds)))
             } catch { completion(.failure(error)) }
         }
     }
@@ -1607,6 +1612,34 @@ final class LegacyControlClient {
         } catch {
             completion(.failure(error))
         }
+    }
+
+    func setBotAdministrationRSSFeeds(_ feeds: [LegacyBotRSSFeed],
+                                      completion: @escaping (Result<Void, Error>) -> Void) {
+        do {
+            let encoded = try LegacyBotRSSFeed.encodeList(feeds)
+            sendTaskCompleteRequest(command: LegacyCommand.botSetRSSFeeds,
+                                    fields: [LegacyTLV(type: LegacyBotAdminField.rssFeeds, value: encoded)],
+                                    completion: completion)
+        } catch { completion(.failure(error)) }
+    }
+
+    func testBotAdministrationRSSFeed(_ feed: LegacyBotRSSFeed,
+                                      completion: @escaping (Result<LegacyBotRSSPreview, Error>) -> Void) {
+        do {
+            let encoded = try LegacyBotRSSFeed.encodeList([feed])
+            sendRequest(command: LegacyCommand.botTestRSSFeed,
+                        fields: [LegacyTLV(type: LegacyBotAdminField.rssFeeds, value: encoded)]) { result in
+                do {
+                    let packet = try result.get()
+                    guard packet.command == LegacyCommand.botRSSFeedTestReply,
+                          let field = packet.firstField(type: LegacyBotAdminField.rssPreview) else {
+                        throw LegacyControlClientError.protocolFailure("ungültige Bot-RSS-Testantwort")
+                    }
+                    completion(.success(try LegacyBotRSSPreview.decode(field.value)))
+                } catch { completion(.failure(error)) }
+            }
+        } catch { completion(.failure(error)) }
     }
 
     func requestServerSettings(fields: [UInt32],
