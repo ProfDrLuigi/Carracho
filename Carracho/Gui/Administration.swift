@@ -339,6 +339,7 @@ extension ViewController {
                 adminMaxTransfersField.stringValue = String(advanced.maxSimultaneousFileTransfers)
                 adminMaxTransfersPerUserField.stringValue = String(advanced.maxFileTransfersPerUser)
                 adminMaxFolderDepthField.stringValue = String(advanced.maxFolderDownloadDepth)
+                adminSearchIndexRebuildIntervalField.stringValue = String(localServerState.runtime.searchIndexRebuildIntervalHours)
                 adminAuthenticationModePopup.selectItem(at: localServerState.authentication.mode == .modernOnly ? 1 : 0)
             }
         }

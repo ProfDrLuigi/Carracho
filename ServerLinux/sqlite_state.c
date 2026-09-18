@@ -180,6 +180,7 @@ int cr_sqlite_state_save(sqlite3 *db, json_object *root) {
             json_object_object_add(runtime, "legacyFilesRoot", json_object_new_string(""));
             json_object_object_add(runtime, "uploadBandwidthLimitBytesPerSecond", json_object_new_int64(0));
             json_object_object_add(runtime, "searchIndexExclusions", json_object_new_array());
+            json_object_object_add(runtime, "searchIndexRebuildIntervalHours", json_object_new_int(0));
             json_object_object_add(root, "runtime", runtime);
         }
         if (insert_json_setting(db, "runtime", runtime)) { failed = 1; break; }
@@ -605,6 +606,7 @@ json_object *cr_sqlite_state_load(sqlite3 *db) {
         json_object_object_add(runtime, "filesRoot", json_object_new_string(""));
         json_object_object_add(runtime, "uploadBandwidthLimitBytesPerSecond", json_object_new_int64(0));
         json_object_object_add(runtime, "searchIndexExclusions", json_object_new_array());
+        json_object_object_add(runtime, "searchIndexRebuildIntervalHours", json_object_new_int(0));
     }
     json_object_object_add(root, "runtime", runtime);
 

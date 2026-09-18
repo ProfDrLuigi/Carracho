@@ -50,6 +50,7 @@
 #define SETTING_ACCOUNT_GROUPS 0xf0000004u
 #define SETTING_LEGACY_FILES_ROOT 0xf0000005u
 #define SETTING_AUTHENTICATION_MODE 0xf0000006u
+#define SETTING_SEARCH_INDEX_REBUILD_INTERVAL 0xf0000007u
 #define USER_FIELD_GROUP_COLOR 0xf0000003u
 #define USER_FIELD_LEGACY_TRANSPORT 0xf0000004u
 #define CLIENT_FIELD_OPERATING_SYSTEM 0xf1000000u
@@ -350,6 +351,8 @@ struct cr_server {
     char trash_root[PATH_MAX];
     char config_path[PATH_MAX];
     cr_search_index_exclusions search_index_exclusions;
+    uint32_t search_index_rebuild_interval_hours;
+    time_t last_file_index_schedule_check;
     pthread_mutex_t mutex;
     int listener_fd;
     int transfer_listener_fd;
@@ -392,6 +395,7 @@ struct cr_server {
 };
 
 static void repair_file_search_index(cr_server *s);
+static void invalidate_file_search_index(cr_server *s,const char *reason);
 static int file_search_index_incremental_available(cr_server *s);
 static void refresh_connected_account_state(cr_server *server);
 static void free_joined_session(cr_session *x);
@@ -2292,12 +2296,12 @@ static int unique_trash_path(cr_server*s,const char*source,char*out,size_t cap){
 
 static int handle_create_folder(cr_session*s,const cr_packet*p){
     if(!account_perm(s,PERM_CREATE_FOLDERS))return send_error(s,p->transaction_id,1);
-    const cr_tlv*parent=cr_packet_field(p,1),*flagsf=cr_packet_field(p,2),*name=cr_packet_field(p,3);if(!flagsf||flagsf->length!=2||!name||validate_legacy_leaf(name->value,name->length,0xfa))return send_error(s,p->transaction_id,1);const uint8_t*pp=parent?parent->value:NULL;size_t pl=parent?parent->length:0;char parent_fs[PATH_MAX];if(resolve_legacy_path_ex(s->server,s,pp,pl,parent_fs,sizeof(parent_fs),1))return send_error(s,p->transaction_id,1);int folder=0;if(resource_kind(parent_fs,&folder,NULL,NULL)||!folder)return send_error(s,p->transaction_id,1);uint8_t child[4096];size_t cl=0;if(build_legacy_child(pp,pl,name->value,name->length,child,&cl))return send_error(s,p->transaction_id,1);char target[PATH_MAX];if(resolve_legacy_path_ex(s->server,s,child,cl,target,sizeof(target),0)||mkdir(target,0755))return send_error(s,p->transaction_id,1);cr_file_metadata m;cr_file_metadata_init(&m);m.flags=cr_read_be16(flagsf->value)&~DIR_FLAG_FOLDER;cr_now_iso8601(m.created_at);m.has_created_at=1;if(cr_file_metadata_set(session_metadata_store(s->server,s),child,cl,&m)){rmdir(target);return send_error(s,p->transaction_id,1);}if(file_search_index_incremental_available(s->server)&&!session_uses_legacy_files_root(s->server,s)&&!s->files_root_path[0]&&cr_file_search_index_upsert_subtree(&s->server->file_index,target,child,cl,&s->server->metadata,&s->server->search_index_exclusions)){log_msg("File-search index update failed for created folder; rebuilding cache");repair_file_search_index(s->server);}log_msg("Folder created: %s",target);return send_task_complete(s,p->transaction_id);
+    const cr_tlv*parent=cr_packet_field(p,1),*flagsf=cr_packet_field(p,2),*name=cr_packet_field(p,3);if(!flagsf||flagsf->length!=2||!name||validate_legacy_leaf(name->value,name->length,0xfa))return send_error(s,p->transaction_id,1);const uint8_t*pp=parent?parent->value:NULL;size_t pl=parent?parent->length:0;char parent_fs[PATH_MAX];if(resolve_legacy_path_ex(s->server,s,pp,pl,parent_fs,sizeof(parent_fs),1))return send_error(s,p->transaction_id,1);int folder=0;if(resource_kind(parent_fs,&folder,NULL,NULL)||!folder)return send_error(s,p->transaction_id,1);uint8_t child[4096];size_t cl=0;if(build_legacy_child(pp,pl,name->value,name->length,child,&cl))return send_error(s,p->transaction_id,1);char target[PATH_MAX];if(resolve_legacy_path_ex(s->server,s,child,cl,target,sizeof(target),0)||mkdir(target,0755))return send_error(s,p->transaction_id,1);cr_file_metadata m;cr_file_metadata_init(&m);m.flags=cr_read_be16(flagsf->value)&~DIR_FLAG_FOLDER;cr_now_iso8601(m.created_at);m.has_created_at=1;if(cr_file_metadata_set(session_metadata_store(s->server,s),child,cl,&m)){rmdir(target);return send_error(s,p->transaction_id,1);}if(file_search_index_incremental_available(s->server)&&!session_uses_legacy_files_root(s->server,s)&&!s->files_root_path[0]&&cr_file_search_index_upsert_subtree(&s->server->file_index,target,child,cl,&s->server->metadata,&s->server->search_index_exclusions)){log_msg("File-search index update failed for created folder");invalidate_file_search_index(s->server,"incremental folder update failure");}log_msg("Folder created: %s",target);return send_task_complete(s,p->transaction_id);
 }
-static int handle_delete_file(cr_session*s,const cr_packet*p){const cr_tlv*pf=cr_packet_field(p,1);if(!pf||!pf->length)return send_error(s,p->transaction_id,1);if(!account_perm(s,PERM_VIEW_DROPBOXES)&&path_is_inside_dropbox(s->server,s,pf->value,pf->length))return send_error(s,p->transaction_id,1);char source[PATH_MAX];if(resolve_legacy_path_ex(s->server,s,pf->value,pf->length,source,sizeof(source),1))return send_error(s,p->transaction_id,1);int folder=0;if(resource_kind(source,&folder,NULL,NULL)||!can_delete(s,folder))return send_error(s,p->transaction_id,1);if(mkdir(s->server->trash_root,0755)&&errno!=EEXIST)return send_error(s,p->transaction_id,1);char dest[PATH_MAX];if(unique_trash_path(s->server,source,dest,sizeof(dest))||rename(source,dest))return send_error(s,p->transaction_id,1);if(cr_file_metadata_remove(session_metadata_store(s->server,s),pf->value,pf->length,folder)){rename(dest,source);return send_error(s,p->transaction_id,1);}if(file_search_index_incremental_available(s->server)&&!session_uses_legacy_files_root(s->server,s)&&!s->files_root_path[0]&&cr_file_search_index_remove_subtree(&s->server->file_index,pf->value,pf->length)){log_msg("File-search index delete failed; rebuilding cache");repair_file_search_index(s->server);}return send_task_complete(s,p->transaction_id);}
+static int handle_delete_file(cr_session*s,const cr_packet*p){const cr_tlv*pf=cr_packet_field(p,1);if(!pf||!pf->length)return send_error(s,p->transaction_id,1);if(!account_perm(s,PERM_VIEW_DROPBOXES)&&path_is_inside_dropbox(s->server,s,pf->value,pf->length))return send_error(s,p->transaction_id,1);char source[PATH_MAX];if(resolve_legacy_path_ex(s->server,s,pf->value,pf->length,source,sizeof(source),1))return send_error(s,p->transaction_id,1);int folder=0;if(resource_kind(source,&folder,NULL,NULL)||!can_delete(s,folder))return send_error(s,p->transaction_id,1);if(mkdir(s->server->trash_root,0755)&&errno!=EEXIST)return send_error(s,p->transaction_id,1);char dest[PATH_MAX];if(unique_trash_path(s->server,source,dest,sizeof(dest))||rename(source,dest))return send_error(s,p->transaction_id,1);if(cr_file_metadata_remove(session_metadata_store(s->server,s),pf->value,pf->length,folder)){rename(dest,source);return send_error(s,p->transaction_id,1);}if(file_search_index_incremental_available(s->server)&&!session_uses_legacy_files_root(s->server,s)&&!s->files_root_path[0]&&cr_file_search_index_remove_subtree(&s->server->file_index,pf->value,pf->length)){log_msg("File-search index delete failed");invalidate_file_search_index(s->server,"incremental delete failure");}return send_task_complete(s,p->transaction_id);}
 static int handle_file_info(cr_session*s,const cr_packet*p){const cr_tlv*pf=cr_packet_field(p,1);if(!pf||!pf->length)return send_error(s,p->transaction_id,1);if(!account_perm(s,PERM_VIEW_DROPBOXES)&&path_is_inside_dropbox(s->server,s,pf->value,pf->length))return send_error(s,p->transaction_id,1);char path[PATH_MAX];struct stat st;int folder=0;if(resolve_legacy_path_ex(s->server,s,pf->value,pf->length,path,sizeof(path),1)||resource_kind(path,&folder,NULL,&st))return send_error(s,p->transaction_id,1);cr_file_metadata m;int found=0;if(cr_file_metadata_get(session_metadata_store(s->server,s),pf->value,pf->length,&m,&found))return send_error(s,p->transaction_id,1);uint8_t meta[30];memset(meta,0,sizeof(meta));cr_write_be16(meta,(uint16_t)(m.flags|(folder?DIR_FLAG_FOLDER:0)));uint64_t sz=folder?0:(uint64_t)(st.st_size<0?0:st.st_size);cr_write_be32(meta+2,sz>UINT32_MAX?UINT32_MAX:(uint32_t)sz);cr_write_be32(meta+6,m.has_created_at?cr_iso8601_to_mac_timestamp(m.created_at):stat_mac_time(st.st_mtime));cr_write_be32(meta+10,stat_mac_time(st.st_mtime));memcpy(meta+14,m.finder_info,16);const uint8_t*leaf=NULL;size_t ll=0;if(legacy_leaf(pf->value,pf->length,&leaf,&ll)){cr_file_metadata_free(&m);return send_error(s,p->transaction_id,1);}cr_tlv_out f[5];size_t n=0;f[n++]=(cr_tlv_out){1,pf->value,pf->length};f[n++]=(cr_tlv_out){2,leaf,(uint16_t)ll};f[n++]=(cr_tlv_out){3,meta,30};f[n++]=(cr_tlv_out){4,m.comment,(uint16_t)m.comment_len};if(s->modern_transport)f[n++]=(cr_tlv_out){FILE_LABEL_FIELD,&m.label,1};int rc=session_send(s,CMD_MOVE_FILE,p->transaction_id,f,n);cr_file_metadata_free(&m);return rc;}
 static int handle_set_file_info(cr_session*s,const cr_packet*p){const cr_tlv*pf=cr_packet_field(p,1),*name=cr_packet_field(p,2),*flagsf=cr_packet_field(p,3),*comment=cr_packet_field(p,4),*labelf=s->modern_transport?cr_packet_field(p,FILE_LABEL_FIELD):NULL;if(!pf||!pf->length||!name||validate_legacy_leaf(name->value,name->length,0x200)||!flagsf||flagsf->length!=2||!comment||comment->length>255||(labelf&&(labelf->length!=1||labelf->value[0]>7)))return send_error(s,p->transaction_id,1);if(!account_perm(s,PERM_VIEW_DROPBOXES)&&path_is_inside_dropbox(s->server,s,pf->value,pf->length))return send_error(s,p->transaction_id,1);char source[PATH_MAX];int folder=0;struct stat st;if(resolve_legacy_path_ex(s->server,s,pf->value,pf->length,source,sizeof(source),1)||resource_kind(source,&folder,NULL,&st))return send_error(s,p->transaction_id,1);cr_file_metadata m;int found=0;if(cr_file_metadata_get(session_metadata_store(s->server,s),pf->value,pf->length,&m,&found))return send_error(s,p->transaction_id,1);const uint8_t*oldleaf=NULL;size_t oldlen=0;if(legacy_leaf(pf->value,pf->length,&oldleaf,&oldlen)){cr_file_metadata_free(&m);return send_error(s,p->transaction_id,1);}uint16_t requested=(uint16_t)(cr_read_be16(flagsf->value)&~DIR_FLAG_FOLDER),oldflags=(uint16_t)(m.flags&~DIR_FLAG_FOLDER);int rename_req=oldlen!=name->length||memcmp(oldleaf,name->value,oldlen),comment_req=m.comment_len!=comment->length||(m.comment_len&&memcmp(m.comment,comment->value,m.comment_len)),flags_req=folder&&requested!=oldflags,label_req=labelf&&m.label!=labelf->value[0];if((rename_req&&!can_rename(s,folder))||(comment_req&&!can_comment(s,folder))||(label_req&&!can_comment(s,folder))||(flags_req&&!account_perm(s,PERM_CHANGE_FOLDER_MODE))){cr_file_metadata_free(&m);return send_error(s,p->transaction_id,1);}uint8_t final_path[4096];size_t final_len=pf->length;memcpy(final_path,pf->value,pf->length);char final_fs[PATH_MAX];strcpy(final_fs,source);if(rename_req){size_t parent_len=legacy_parent_length(pf->value,pf->length);if(build_legacy_child(pf->value,parent_len,name->value,name->length,final_path,&final_len)||resolve_legacy_path_ex(s->server,s,final_path,final_len,final_fs,sizeof(final_fs),0)||rename(source,final_fs)){cr_file_metadata_free(&m);return send_error(s,p->transaction_id,1);}if(cr_file_metadata_move(session_metadata_store(s->server,s),pf->value,pf->length,final_path,final_len,folder)){rename(final_fs,source);cr_file_metadata_free(&m);return send_error(s,p->transaction_id,1);}}
-    cr_file_metadata_free(&m);if(cr_file_metadata_get(session_metadata_store(s->server,s),final_path,final_len,&m,&found)){if(rename_req)rename(final_fs,source);return send_error(s,p->transaction_id,1);}free(m.comment);m.comment=NULL;m.comment_len=comment->length;if(comment->length){m.comment=malloc(comment->length);if(!m.comment){cr_file_metadata_free(&m);return send_error(s,p->transaction_id,1);}memcpy(m.comment,comment->value,comment->length);}if(folder)m.flags=requested;if(labelf)m.label=labelf->value[0];if(!m.has_created_at){cr_now_iso8601(m.created_at);m.has_created_at=1;}if(cr_file_metadata_set(session_metadata_store(s->server,s),final_path,final_len,&m)){cr_file_metadata_free(&m);return send_error(s,p->transaction_id,1);}cr_file_metadata_free(&m);if(file_search_index_incremental_available(s->server)&&!session_uses_legacy_files_root(s->server,s)&&!s->files_root_path[0]){int irc=rename_req?cr_file_search_index_move_subtree(&s->server->file_index,pf->value,pf->length,final_path,final_len,final_fs,&s->server->metadata,&s->server->search_index_exclusions):cr_file_search_index_upsert_subtree(&s->server->file_index,final_fs,final_path,final_len,&s->server->metadata,&s->server->search_index_exclusions);if(irc){log_msg("File-search index metadata/rename update failed; rebuilding cache");repair_file_search_index(s->server);}}return send_task_complete(s,p->transaction_id);}
+    cr_file_metadata_free(&m);if(cr_file_metadata_get(session_metadata_store(s->server,s),final_path,final_len,&m,&found)){if(rename_req)rename(final_fs,source);return send_error(s,p->transaction_id,1);}free(m.comment);m.comment=NULL;m.comment_len=comment->length;if(comment->length){m.comment=malloc(comment->length);if(!m.comment){cr_file_metadata_free(&m);return send_error(s,p->transaction_id,1);}memcpy(m.comment,comment->value,comment->length);}if(folder)m.flags=requested;if(labelf)m.label=labelf->value[0];if(!m.has_created_at){cr_now_iso8601(m.created_at);m.has_created_at=1;}if(cr_file_metadata_set(session_metadata_store(s->server,s),final_path,final_len,&m)){cr_file_metadata_free(&m);return send_error(s,p->transaction_id,1);}cr_file_metadata_free(&m);if(file_search_index_incremental_available(s->server)&&!session_uses_legacy_files_root(s->server,s)&&!s->files_root_path[0]){int irc=rename_req?cr_file_search_index_move_subtree(&s->server->file_index,pf->value,pf->length,final_path,final_len,final_fs,&s->server->metadata,&s->server->search_index_exclusions):cr_file_search_index_upsert_subtree(&s->server->file_index,final_fs,final_path,final_len,&s->server->metadata,&s->server->search_index_exclusions);if(irc){log_msg("File-search index metadata/rename update failed");invalidate_file_search_index(s->server,"incremental metadata/rename failure");}}return send_task_complete(s,p->transaction_id);}
 static int handle_set_file_label(cr_session*s,const cr_packet*p){
     const cr_tlv*pf=cr_packet_field(p,1),*labelf=cr_packet_field(p,FILE_LABEL_FIELD);
     if(!s->modern_transport||!pf||!pf->length||!labelf||labelf->length!=1||labelf->value[0]>7)return send_error(s,p->transaction_id,1);
@@ -2306,7 +2310,7 @@ static int handle_set_file_label(cr_session*s,const cr_packet*p){
     cr_file_metadata m;int found=0;if(cr_file_metadata_get(session_metadata_store(s->server,s),pf->value,pf->length,&m,&found))return send_error(s,p->transaction_id,1);m.label=labelf->value[0];if(cr_file_metadata_set(session_metadata_store(s->server,s),pf->value,pf->length,&m)){cr_file_metadata_free(&m);return send_error(s,p->transaction_id,1);}cr_file_metadata_free(&m);log_msg("File label updated: %s -> %u",path,(unsigned)labelf->value[0]);return send_task_complete(s,p->transaction_id);
 }
 
-static int handle_move_file(cr_session*s,const cr_packet*p){const cr_tlv*src=cr_packet_field(p,1),*dst=cr_packet_field(p,2);if(!src||!src->length||!dst||!dst->length||(src->length==dst->length&&!memcmp(src->value,dst->value,src->length)))return send_error(s,p->transaction_id,1);if(!account_perm(s,PERM_VIEW_DROPBOXES)&&path_is_inside_dropbox(s->server,s,src->value,src->length))return send_error(s,p->transaction_id,1);char source[PATH_MAX],dest[PATH_MAX];int folder=0;if(resolve_legacy_path_ex(s->server,s,src->value,src->length,source,sizeof(source),1)||resource_kind(source,&folder,NULL,NULL)||!can_move(s,folder))return send_error(s,p->transaction_id,1);if(folder&&dst->length>src->length&&!memcmp(dst->value,src->value,src->length)&&dst->value[src->length]==1)return send_error(s,p->transaction_id,1);const uint8_t*leaf=NULL;size_t ll=0;if(legacy_leaf(dst->value,dst->length,&leaf,&ll)||validate_legacy_leaf(leaf,ll,0x200)||resolve_legacy_path_ex(s->server,s,dst->value,dst->length,dest,sizeof(dest),0))return send_error(s,p->transaction_id,1);size_t parent_len=legacy_parent_length(dst->value,dst->length);char parent[PATH_MAX];int parent_folder=0;if(resolve_legacy_path_ex(s->server,s,dst->value,parent_len,parent,sizeof(parent),1)||resource_kind(parent,&parent_folder,NULL,NULL)||!parent_folder||rename(source,dest))return send_error(s,p->transaction_id,1);if(cr_file_metadata_move(session_metadata_store(s->server,s),src->value,src->length,dst->value,dst->length,folder)){rename(dest,source);return send_error(s,p->transaction_id,1);}if(file_search_index_incremental_available(s->server)&&!session_uses_legacy_files_root(s->server,s)&&!s->files_root_path[0]&&cr_file_search_index_move_subtree(&s->server->file_index,src->value,src->length,dst->value,dst->length,dest,&s->server->metadata,&s->server->search_index_exclusions)){log_msg("File-search index move failed; rebuilding cache");repair_file_search_index(s->server);}return send_task_complete(s,p->transaction_id);}
+static int handle_move_file(cr_session*s,const cr_packet*p){const cr_tlv*src=cr_packet_field(p,1),*dst=cr_packet_field(p,2);if(!src||!src->length||!dst||!dst->length||(src->length==dst->length&&!memcmp(src->value,dst->value,src->length)))return send_error(s,p->transaction_id,1);if(!account_perm(s,PERM_VIEW_DROPBOXES)&&path_is_inside_dropbox(s->server,s,src->value,src->length))return send_error(s,p->transaction_id,1);char source[PATH_MAX],dest[PATH_MAX];int folder=0;if(resolve_legacy_path_ex(s->server,s,src->value,src->length,source,sizeof(source),1)||resource_kind(source,&folder,NULL,NULL)||!can_move(s,folder))return send_error(s,p->transaction_id,1);if(folder&&dst->length>src->length&&!memcmp(dst->value,src->value,src->length)&&dst->value[src->length]==1)return send_error(s,p->transaction_id,1);const uint8_t*leaf=NULL;size_t ll=0;if(legacy_leaf(dst->value,dst->length,&leaf,&ll)||validate_legacy_leaf(leaf,ll,0x200)||resolve_legacy_path_ex(s->server,s,dst->value,dst->length,dest,sizeof(dest),0))return send_error(s,p->transaction_id,1);size_t parent_len=legacy_parent_length(dst->value,dst->length);char parent[PATH_MAX];int parent_folder=0;if(resolve_legacy_path_ex(s->server,s,dst->value,parent_len,parent,sizeof(parent),1)||resource_kind(parent,&parent_folder,NULL,NULL)||!parent_folder||rename(source,dest))return send_error(s,p->transaction_id,1);if(cr_file_metadata_move(session_metadata_store(s->server,s),src->value,src->length,dst->value,dst->length,folder)){rename(dest,source);return send_error(s,p->transaction_id,1);}if(file_search_index_incremental_available(s->server)&&!session_uses_legacy_files_root(s->server,s)&&!s->files_root_path[0]&&cr_file_search_index_move_subtree(&s->server->file_index,src->value,src->length,dst->value,dst->length,dest,&s->server->metadata,&s->server->search_index_exclusions)){log_msg("File-search index move failed");invalidate_file_search_index(s->server,"incremental move failure");}return send_task_complete(s,p->transaction_id);}
 static int handle_empty_trash(cr_session*s,const cr_packet*p){if(!account_perm(s,PERM_EMPTY_TRASH))return send_error(s,p->transaction_id,1);DIR*d=opendir(s->server->trash_root);if(!d){if(errno==ENOENT){if(mkdir(s->server->trash_root,0755))return send_error(s,p->transaction_id,1);}else return send_error(s,p->transaction_id,1);}else{struct dirent*de;int fail=0;while((de=readdir(d))){if(de->d_name[0]=='.'&&(!de->d_name[1]||(de->d_name[1]=='.'&&!de->d_name[2])))continue;char child[PATH_MAX];if(join_path_component(child,sizeof(child),s->server->trash_root,de->d_name)||recursive_remove_path(child)){fail=1;break;}}closedir(d);if(fail)return send_error(s,p->transaction_id,1);}return send_task_complete(s,p->transaction_id);}
 static int handle_rebuild_search_index(cr_session*s,const cr_packet*p){
     if(!account_perm(s,PERM_EDIT_ADVANCED)||!s->server->file_index.ready)return send_error(s,p->transaction_id,1);
@@ -3162,7 +3166,7 @@ static int server_setting_permission(uint32_t field,int write){
         case 0x05:case 0x06:case 0x07:case 0x08:return PERM_EDIT_SERVER_INFO;
         case 0x0c:return PERM_MANAGE_NEWSGROUPS;
         case SETTING_ACCOUNT_GROUPS:return PERM_MANAGE_ACCOUNTS;
-        case 0x09:case 0x20:case 0x21:case 0x22:case 0x23:case 0x35:case 0x2f:case SETTING_SEARCH_INDEX_EXCLUSIONS:case SETTING_LEGACY_FILES_ROOT:case SETTING_AUTHENTICATION_MODE:return PERM_EDIT_ADVANCED;
+        case 0x09:case 0x20:case 0x21:case 0x22:case 0x23:case 0x35:case 0x2f:case SETTING_SEARCH_INDEX_EXCLUSIONS:case SETTING_LEGACY_FILES_ROOT:case SETTING_AUTHENTICATION_MODE:case SETTING_SEARCH_INDEX_REBUILD_INTERVAL:return PERM_EDIT_ADVANCED;
         case 0x30:case 0x32:case 0x33:return PERM_EDIT_TRACKERS;
         case 0x24:case 0x25:case 0x26:case 0x27:case 0x28:case 0x29:case 0x2a:case 0x2b:case 0x2c:case 0x2d:case 0x2e:case 0x34:return write?-1:PERM_VIEW_STATISTICS;
         case 0x36:return write?-1:PERM_EDIT_ADVANCED;
@@ -3234,6 +3238,8 @@ static int persist_startup_configuration_config(cr_server*s){
     if(json_object_object_get_ex(s->state.root,"runtime",&runtime)&&json_object_is_type(runtime,json_type_object)){
         if(json_object_object_get_ex(runtime,"uploadBandwidthLimitBytesPerSecond",&v)&&json_object_is_type(v,json_type_int))
             json_object_object_add(root,"uploadBandwidthLimitBytesPerSecond",json_object_new_int64(json_object_get_int64(v)));
+        if(json_object_object_get_ex(runtime,"searchIndexRebuildIntervalHours",&v)&&json_object_is_type(v,json_type_int))
+            json_object_object_add(root,"searchIndexRebuildIntervalHours",json_object_new_int64(json_object_get_int64(v)));
         json_object*ex=NULL;if(json_object_object_get_ex(runtime,"searchIndexExclusions",&ex)&&json_object_is_type(ex,json_type_array)){
             json_object*copy=json_object_new_array();
             if(!copy){pthread_mutex_unlock(&s->state.mutex);json_object_put(root);return-1;}
@@ -3376,6 +3382,7 @@ static int setting_value_locked(cr_server*s,uint32_t field,cr_buffer*b){
         case SETTING_ACCOUNT_GROUPS:return append_account_groups_locked(st,b);
         case SETTING_LEGACY_FILES_ROOT:{json_object*runtime=NULL,*v=NULL;const char*path="";if(json_object_object_get_ex(st->root,"runtime",&runtime)&&json_object_is_type(runtime,json_type_object)&&json_object_object_get_ex(runtime,"legacyFilesRoot",&v)&&json_object_is_type(v,json_type_string))path=json_object_get_string(v);return cr_buffer_append(b,path?path:"",path?strlen(path):0);}
         case SETTING_AUTHENTICATION_MODE:return cr_buffer_append_u8(b,st->legacy_compatible?0:1);
+        case SETTING_SEARCH_INDEX_REBUILD_INTERVAL:{json_object*runtime=NULL,*v=NULL;uint32_t hours=0;if(json_object_object_get_ex(st->root,"runtime",&runtime)&&json_object_is_type(runtime,json_type_object)&&json_object_object_get_ex(runtime,"searchIndexRebuildIntervalHours",&v)&&json_object_is_type(v,json_type_int)){int64_t x=json_object_get_int64(v);if(x>0)hours=x>UINT32_MAX?UINT32_MAX:(uint32_t)x;}return cr_buffer_append_u32(b,hours);}
         case SETTING_SEARCH_INDEX_EXCLUSIONS:{json_object*runtime=NULL,*arr=NULL;cr_search_index_exclusions x;memset(&x,0,sizeof(x));if(json_object_object_get_ex(st->root,"runtime",&runtime)&&json_object_is_type(runtime,json_type_object)&&json_object_object_get_ex(runtime,"searchIndexExclusions",&arr)&&json_object_is_type(arr,json_type_array)){size_t count=json_object_array_length(arr);if(count>CR_MAX_SEARCH_INDEX_EXCLUSIONS)return-1;for(size_t i=0;i<count;i++){json_object*v=json_object_array_get_idx(arr,i);if(!v||!json_object_is_type(v,json_type_string))return-1;const char*p=json_object_get_string(v);if(!p||!*p||strlen(p)>=CR_MAX_SEARCH_INDEX_PATTERN)return-1;snprintf(x.patterns[i],sizeof(x.patterns[i]),"%s",p);}x.count=count;}return append_search_index_exclusions(b,&x);}
         case 0x2f:{if(cr_buffer_append_u32(b,(uint32_t)st->ip_restriction_count))return-1;for(size_t i=0;i<st->ip_restriction_count;i++){cr_ip_restriction*r=&st->ip_restrictions[i];if(cr_buffer_append(b,r->network,4)||cr_buffer_append(b,r->mask,4)||cr_buffer_append_u8(b,r->deny?1:0)||cr_buffer_append_u8(b,r->reserved))return-1;}return 0;}
         case 0x30:{
@@ -3399,7 +3406,7 @@ static int handle_server_settings_request(cr_session*s,const cr_packet*p){
     for(uint16_t i=0;i<p->field_count&&!fail;i++){const cr_tlv*r=&p->fields[i];if(r->length){fail=1;break;}int perm=server_setting_permission(r->type,0);if(perm<0||!account_perm(s,(unsigned)perm))continue;if(setting_value_locked(s->server,r->type,&values[n])||values[n].len>UINT16_MAX){fail=1;break;}out[n]=(cr_tlv_out){r->type,values[n].data,(uint16_t)values[n].len};n++;}
     pthread_mutex_unlock(&s->server->state.mutex);int rc=fail?send_error(s,p->transaction_id,1):session_send(s,CMD_SERVER_SETTINGS_REPLY,p->transaction_id,out,n);for(size_t i=0;i<CR_MAX_TLVS;i++)cr_buffer_free(&values[i]);return rc;
 }
-static int validate_setting_field(cr_session*s,const cr_tlv*f){int perm=server_setting_permission(f->type,1);if(perm<0||!account_perm(s,(unsigned)perm))return-1;switch(f->type){case 0x04:{if(f->length<1||f->length>0xfc00||f->value[0]>1)return-1;if(f->length==1)return 0;if(f->length<9)return-1;uint32_t tn=cr_read_be32(f->value+1);if((size_t)tn+9>f->length)return-1;size_t pos=5u+tn;uint32_t sn=cr_read_be32(f->value+pos);return pos+4u+sn==f->length?0:-1;}case 0x05:return f->length>0&&f->length<=255?0:-1;case 0x06:case 0x07:return f->length<=255?0:-1;case 0x08:return f->length<=16384?0:-1;case 0x09:case 0x0c:case 0x20:case 0x21:case 0x22:case 0x23:case 0x35:return f->length==2?0:-1;case 0x2f:{if(f->length<4)return-1;uint32_t count=cr_read_be32(f->value);return count<=4096&&4u+(size_t)count*10u==f->length?0:-1;}case 0x30:{if(f->length<2)return-1;size_t pos=2;uint16_t count=cr_read_be16(f->value);for(uint16_t i=0;i<count;i++){if(pos+2>f->length)return-1;uint16_t a=cr_read_be16(f->value+pos);pos+=2;if(a>32||pos+a+2>f->length)return-1;pos+=a;uint16_t b=cr_read_be16(f->value+pos);pos+=2;if(!b||b>64||pos+b+2>f->length)return-1;pos+=b;uint16_t c=cr_read_be16(f->value+pos);pos+=2;if(c>16||pos+c+4>f->length)return-1;pos+=c+4;}return pos==f->length?0:-1;}case 0x32:return f->length==4?0:-1;case 0x33:return f->length<=255?0:-1;case SETTING_ACCOUNT_GROUPS:{cr_account_group*groups=calloc(CR_MAX_ACCOUNT_GROUPS,sizeof(*groups));if(!groups)return-1;size_t count=0;int rc=decode_account_groups_field(f,groups,&count);free(groups);return rc;}case SETTING_LEGACY_FILES_ROOT:return f->length<PATH_MAX&&valid_utf8_bytes(f->value,f->length)&&!memchr(f->value,0,f->length)&&(!f->length||f->value[0]=='/')?0:-1;case SETTING_AUTHENTICATION_MODE:return f->length==1&&f->value[0]<=1?0:-1;case SETTING_SEARCH_INDEX_EXCLUSIONS:{cr_search_index_exclusions x;return decode_search_index_exclusions_field(f,&x);}default:return-1;}}
+static int validate_setting_field(cr_session*s,const cr_tlv*f){int perm=server_setting_permission(f->type,1);if(perm<0||!account_perm(s,(unsigned)perm))return-1;switch(f->type){case 0x04:{if(f->length<1||f->length>0xfc00||f->value[0]>1)return-1;if(f->length==1)return 0;if(f->length<9)return-1;uint32_t tn=cr_read_be32(f->value+1);if((size_t)tn+9>f->length)return-1;size_t pos=5u+tn;uint32_t sn=cr_read_be32(f->value+pos);return pos+4u+sn==f->length?0:-1;}case 0x05:return f->length>0&&f->length<=255?0:-1;case 0x06:case 0x07:return f->length<=255?0:-1;case 0x08:return f->length<=16384?0:-1;case 0x09:case 0x0c:case 0x20:case 0x21:case 0x22:case 0x23:case 0x35:return f->length==2?0:-1;case 0x2f:{if(f->length<4)return-1;uint32_t count=cr_read_be32(f->value);return count<=4096&&4u+(size_t)count*10u==f->length?0:-1;}case 0x30:{if(f->length<2)return-1;size_t pos=2;uint16_t count=cr_read_be16(f->value);for(uint16_t i=0;i<count;i++){if(pos+2>f->length)return-1;uint16_t a=cr_read_be16(f->value+pos);pos+=2;if(a>32||pos+a+2>f->length)return-1;pos+=a;uint16_t b=cr_read_be16(f->value+pos);pos+=2;if(!b||b>64||pos+b+2>f->length)return-1;pos+=b;uint16_t c=cr_read_be16(f->value+pos);pos+=2;if(c>16||pos+c+4>f->length)return-1;pos+=c+4;}return pos==f->length?0:-1;}case 0x32:return f->length==4?0:-1;case 0x33:return f->length<=255?0:-1;case SETTING_ACCOUNT_GROUPS:{cr_account_group*groups=calloc(CR_MAX_ACCOUNT_GROUPS,sizeof(*groups));if(!groups)return-1;size_t count=0;int rc=decode_account_groups_field(f,groups,&count);free(groups);return rc;}case SETTING_LEGACY_FILES_ROOT:return f->length<PATH_MAX&&valid_utf8_bytes(f->value,f->length)&&!memchr(f->value,0,f->length)&&(!f->length||f->value[0]=='/')?0:-1;case SETTING_AUTHENTICATION_MODE:return f->length==1&&f->value[0]<=1?0:-1;case SETTING_SEARCH_INDEX_REBUILD_INTERVAL:return f->length==4?0:-1;case SETTING_SEARCH_INDEX_EXCLUSIONS:{cr_search_index_exclusions x;return decode_search_index_exclusions_field(f,&x);}default:return-1;}}
 static int decode_setting_text(const cr_tlv*f,char*out,size_t cap){return cr_macroman_to_utf8(f->value,f->length,out,cap);}
 static int apply_settings_locked(cr_server*s,const cr_packet*p){
     cr_server_state*st=&s->state;json_object*identity=ensure_json_object_member(st->root,"identity"),*advanced=ensure_json_object_member(st->root,"advanced"),*agreement=ensure_json_object_member(st->root,"agreement"),*runtime=ensure_json_object_member(st->root,"runtime");
@@ -3419,6 +3426,7 @@ static int apply_settings_locked(cr_server*s,const cr_packet*p){
         case SETTING_ACCOUNT_GROUPS:break;
         case SETTING_LEGACY_FILES_ROOT:{char path[PATH_MAX];if(f->length>=sizeof(path))return-1;memcpy(path,f->value,f->length);path[f->length]=0;json_object_object_add(runtime,"legacyFilesRoot",json_object_new_string(path));break;}
         case SETTING_AUTHENTICATION_MODE:if(cr_state_apply_authentication_mode_locked(st,f->value[0]==0))return-1;break;
+        case SETTING_SEARCH_INDEX_REBUILD_INTERVAL:json_object_object_add(runtime,"searchIndexRebuildIntervalHours",json_object_new_int64(cr_read_be32(f->value)));break;
         case SETTING_SEARCH_INDEX_EXCLUSIONS:{cr_search_index_exclusions x;if(decode_search_index_exclusions_field(f,&x))return-1;json_object*arr=json_object_new_array();if(!arr)return-1;for(size_t j=0;j<x.count;j++)json_object_array_add(arr,json_object_new_string(x.patterns[j]));json_object_object_add(runtime,"searchIndexExclusions",arr);break;}
         default:return-1;
     }}
@@ -3474,6 +3482,8 @@ static void refresh_connected_account_state(cr_server*server){
 
 static int handle_server_settings_update(cr_session *s, const cr_packet *p) {
     int tracker_changed = 0, exclusions_changed = 0, groups_changed = 0, legacy_root_changed = 0;
+    int rebuild_interval_changed = 0;
+    uint32_t rebuild_interval_hours = 0;
     int rc = -1;
     cr_search_index_exclusions exclusions;
     memset(&exclusions, 0, sizeof(exclusions));
@@ -3497,6 +3507,10 @@ static int handle_server_settings_update(cr_session *s, const cr_packet *p) {
                 goto done;
             }
             exclusions_changed = 1;
+        }
+        if (field->type == SETTING_SEARCH_INDEX_REBUILD_INTERVAL) {
+            rebuild_interval_hours = cr_read_be32(field->value);
+            rebuild_interval_changed = 1;
         }
         if (field->type == SETTING_LEGACY_FILES_ROOT) {
             if (field->length >= sizeof(legacy_root)) { rc = send_error(s,p->transaction_id,1); goto done; }
@@ -3559,10 +3573,14 @@ static int handle_server_settings_update(cr_session *s, const cr_packet *p) {
         pthread_mutex_lock(&s->server->mutex);
         s->server->search_index_exclusions = exclusions;
         pthread_mutex_unlock(&s->server->mutex);
-        if (s->server->file_index.ready) {
-            repair_file_search_index(s->server);
-            log_msg("Search-index exclusion update applied; background rebuild queued, filesystem fallback active meanwhile");
-        }
+        log_msg("Search-index exclusions updated; removals take full effect on the next manual or scheduled rebuild");
+    }
+    if (rebuild_interval_changed) {
+        s->server->search_index_rebuild_interval_hours = rebuild_interval_hours;
+        s->server->last_file_index_schedule_check = 0;
+        log_msg(rebuild_interval_hours
+            ? "Automatic full search-index rebuild interval updated"
+            : "Automatic full search-index rebuilds disabled");
     }
 
     log_msg("Server settings updated remotely");
@@ -4181,8 +4199,8 @@ static int serve_upload(cr_server*s,cr_transfer_stream*stream,cr_session*session
     if(rename_upload_noreplace(stage,targetfs))goto done;
     committed=1;
     if(file_search_index_incremental_available(s)&&!session_uses_legacy_files_root(s,session)&&!session->files_root_path[0]&&cr_file_search_index_upsert_subtree(&s->file_index,targetfs,target.data,target.len,&s->metadata,&s->search_index_exclusions)){
-        log_msg("File-search index upload update failed; rebuilding cache");
-        repair_file_search_index(s);
+        log_msg("File-search index upload update failed");
+        invalidate_file_search_index(s,"incremental upload failure");
     }
     log_msg("Upload completed for user %u",session->user_id);
     rc=0;
@@ -4533,11 +4551,28 @@ static void remove_file_search_index_files(const char *path){
 static int initialize_file_search_index(cr_server*s){
     char path[PATH_MAX];
     int n=snprintf(path,sizeof(path),"%s/file-index.db",s->state.database_dir);
+    int existed=0;
     atomic_store(&s->file_index_ready,0);
     if(n<=0||(size_t)n>=sizeof(path)){log_msg("File-search index path is too long; filesystem fallback enabled");return-1;}
+    existed=access(path,F_OK)==0;
     for(int attempt=0;attempt<2;attempt++){
         if(attempt)remove_file_search_index_files(path);
-        if(cr_file_search_index_init(&s->file_index,path)==0)return 0;
+        if(cr_file_search_index_init(&s->file_index,path)==0){
+            if(existed&&attempt==0){
+                uint64_t count=0;int64_t rebuilt=0;int found=0;
+                int valid=cr_file_search_index_entry_count(&s->file_index,&count)==0&&
+                          cr_file_search_index_last_full_rebuild(&s->file_index,&rebuilt,&found)==0;
+                if(valid&&(count>0||found)){
+                    atomic_store(&s->file_index_ready,1);
+                    log_msg("Reusing existing file-search index: %llu searchable item(s)",(unsigned long long)count);
+                }else{
+                    log_msg("No completed file-search index yet; filesystem fallback active until manual or scheduled rebuild");
+                }
+            }else{
+                log_msg("No reusable file-search index; filesystem fallback active until manual or scheduled rebuild");
+            }
+            return 0;
+        }
     }
     log_msg("File-search index unavailable; filesystem fallback enabled");
     return -1;
@@ -4612,16 +4647,14 @@ static void *file_search_index_rebuild_main(void *opaque){
     }
 }
 
-static void start_file_search_index_rebuild(cr_server*s){
-    if(!s->file_index.ready)return;
+
+static void invalidate_file_search_index(cr_server*s,const char*reason){
+    if(!s)return;
+    pthread_mutex_lock(&s->mutex);
     atomic_store(&s->file_index_ready,0);
-    s->file_index_thread_running=1;
-    if(pthread_create(&s->file_index_thread,NULL,file_search_index_rebuild_main,s)==0){
-        s->file_index_thread_started=1;
-    }else{
-        s->file_index_thread_running=0;
-        log_msg("Could not start file-search index rebuild thread; filesystem fallback enabled");
-    }
+    s->file_index_dirty=1;
+    pthread_mutex_unlock(&s->mutex);
+    log_msg("File-search index disabled after %s; filesystem fallback active until manual or scheduled rebuild",reason?reason:"incremental update failure");
 }
 
 /* Queue a rebuild without holding the requesting control/file operation behind a full
@@ -4668,6 +4701,27 @@ static void repair_file_search_index(cr_server*s){
     log_msg("Could not queue file-search index rebuild; filesystem fallback enabled");
 }
 
+static void maybe_schedule_file_search_index_rebuild(cr_server*s){
+    if(!s||!s->file_index.ready||!s->search_index_rebuild_interval_hours)return;
+    time_t now=time(NULL);
+    if(s->last_file_index_schedule_check&&now-s->last_file_index_schedule_check<60)return;
+    s->last_file_index_schedule_check=now;
+
+    pthread_mutex_lock(&s->mutex);
+    int running=s->file_index_thread_running;
+    pthread_mutex_unlock(&s->mutex);
+    if(running)return;
+
+    int64_t reference=(int64_t)now;
+    if(cr_file_search_index_rebuild_schedule_reference(&s->file_index,(int64_t)now,&reference))return;
+    uint64_t interval=(uint64_t)s->search_index_rebuild_interval_hours*3600ULL;
+    uint64_t due=reference>0?(uint64_t)reference+interval:interval;
+    if((uint64_t)now<due)return;
+
+    log_msg("Automatic file-search index rebuild due after %u hour(s)",s->search_index_rebuild_interval_hours);
+    repair_file_search_index(s);
+}
+
 static int provision_personal_homes(cr_server*s){for(size_t i=0;i<s->state.account_count;i++){cr_account*a=&s->state.accounts[i];if(a->personal==CR_PERSONAL_NONE)continue;if(!safe_component(a->login))return-1;char home[PATH_MAX];if(join_path_component(home,sizeof(home),s->state.personal_home_root,a->login))return-1;if(mkdir(home,0755)&&errno!=EEXIST)return-1;}return 0;}
 
 int cr_server_init(cr_server **out, const cr_server_config *config) {
@@ -4694,6 +4748,7 @@ int cr_server_init(cr_server **out, const cr_server_config *config) {
        snprintf(s->bot_avatar_path,sizeof(s->bot_avatar_path),"%s/etc/carracho-bot-avatar.png",config->instance_root)>=(int)sizeof(s->bot_avatar_path)){free(s);return-1;}
     if(ensure_directory_tree(daemon_dir)){free(s);return-1;}
     s->search_index_exclusions = config->persistent.search_index_exclusions;
+    s->search_index_rebuild_interval_hours = config->persistent.search_index_rebuild_interval_hours;
     s->download_bandwidth_limit_bps = config->persistent.upload_bandwidth_limit_bytes_per_second;
     for (size_t i = 0; i < CR_SERVER_MAX_TRANSFER_CONNECTIONS; i++) s->transfer_fds[i] = -1;
     if (pthread_mutex_init(&s->mutex, NULL)) { free(s); return -1; }
@@ -4793,9 +4848,13 @@ int cr_server_run(cr_server *s) {
     s->bot_rss_thread_started=1;
     if (pthread_create(&s->transfer_thread, NULL, transfer_accept_main, s) != 0) {s->stop=1;pthread_join(s->bot_rss_thread,NULL);s->bot_rss_thread_started=0;pthread_join(s->bot_thread,NULL);s->bot_thread_started=0;return -1;}
     log_msg("Carracho C server ready: control=%u transfer=%u state=%s", s->port, s->transfer_port, s->state.path);
-    start_file_search_index_rebuild(s);
+    if(s->search_index_rebuild_interval_hours)
+        log_msg("Automatic full search-index rebuild interval: %u hour(s)",s->search_index_rebuild_interval_hours);
+    else
+        log_msg("Automatic full search-index rebuilds disabled");
     while (!s->stop) {
         reap_finished_sessions(s);
+        maybe_schedule_file_search_index_rebuild(s);
         maybe_run_news_expiration(s);
         maybe_send_tracker_registration(s);
         maybe_sleep_idle_users(s);

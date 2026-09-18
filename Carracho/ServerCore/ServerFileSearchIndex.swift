@@ -94,6 +94,21 @@ final class ServerFileSearchIndex {
         return String(data: Data(part), encoding: .macOSRoman).map(excludesName) ?? false
     }
 
+    private func isInsideDropbox(_ path: Data, metadata: ServerFileMetadataStore?) -> Bool {
+        guard let metadata, !path.isEmpty else { return false }
+        var prefixEnd = path.startIndex
+        while prefixEnd < path.endIndex {
+            if path[prefixEnd] == LegacyPath.separator {
+                let prefix = Data(path[..<prefixEnd])
+                if (metadata.metadata(for: prefix)?.flags ?? 0) & LegacyDirectoryFlags.dropBox != 0 {
+                    return true
+                }
+            }
+            prefixEnd = path.index(after: prefixEnd)
+        }
+        return (metadata.metadata(for: path)?.flags ?? 0) & LegacyDirectoryFlags.dropBox != 0
+    }
+
     func rebuild(storageRoot: URL, metadata: ServerFileMetadataStore?) throws {
         try queue.sync {
             let db = try openDatabase(); defer { sqlite3_close(db) }
@@ -108,6 +123,9 @@ final class ServerFileSearchIndex {
                     try indexChildren(of: storageRoot, legacyParent: Data(), db: db, metadata: metadata,
                                       visitedDirectories: &visitedDirectories)
                 }
+                let rebuiltAt = Int64(Date().timeIntervalSince1970)
+                try setMetadataInteger(db, key: "last_full_rebuild_unix", value: rebuiltAt)
+                try setMetadataInteger(db, key: "schedule_anchor_unix", value: rebuiltAt)
                 try execute(db, "COMMIT")
                 try compactAfterFullRebuild(db)
             } catch {
@@ -249,6 +267,28 @@ final class ServerFileSearchIndex {
         }
     }
 
+    func lastFullRebuildDate() throws -> Date? {
+        try queue.sync {
+            let db = try openDatabase(); defer { sqlite3_close(db) }
+            try createSchema(db)
+            return try metadataDate(db, key: "last_full_rebuild_unix")
+        }
+    }
+
+    /// Persistent reference used by the automatic rebuild scheduler. Existing pre-scheduler
+    /// indexes get an anchor when first observed so restarts cannot postpone the interval forever.
+    func rebuildScheduleReferenceDate(now: Date = Date()) throws -> Date {
+        try queue.sync {
+            let db = try openDatabase(); defer { sqlite3_close(db) }
+            try createSchema(db)
+            if let full = try metadataDate(db, key: "last_full_rebuild_unix") { return full }
+            if let anchor = try metadataDate(db, key: "schedule_anchor_unix") { return anchor }
+            let value = Int64(now.timeIntervalSince1970)
+            try setMetadataInteger(db, key: "schedule_anchor_unix", value: value)
+            return Date(timeIntervalSince1970: TimeInterval(value))
+        }
+    }
+
     private func indexChildren(of directory: URL, legacyParent: Data, db: OpaquePointer?,
                                metadata: ServerFileMetadataStore?,
                                visitedDirectories: inout Set<String>) throws {
@@ -289,6 +329,10 @@ final class ServerFileSearchIndex {
               !name.isEmpty, name.count <= 255 else { return }
 
         let isFolder = values.isDirectory == true
+        // Exclude the Dropbox directory itself and every descendant. Checking
+        // ancestors here also closes the incremental-upload path, where the
+        // indexer may be asked to upsert a file directly below a Dropbox.
+        if isInsideDropbox(path, metadata: metadata) { return }
         let rawSize = UInt64(max(values.fileSize ?? 0, 0))
         let size = isFolder ? UInt32(0) : UInt32(min(rawSize, UInt64(UInt32.max)))
         let timestamp: UInt32
@@ -304,15 +348,12 @@ final class ServerFileSearchIndex {
                    size: size, timestamp: timestamp, db: db)
 
         if isFolder, recurse {
-            let flags = metadata?.metadata(for: path)?.flags ?? 0
-            if (flags & LegacyDirectoryFlags.dropBox) == 0 {
-                if let identity = Self.directoryIdentityKey(effectiveURL),
-                   !visitedDirectories.insert(identity).inserted {
-                    return
-                }
-                try indexChildren(of: effectiveURL, legacyParent: path, db: db, metadata: metadata,
-                                  visitedDirectories: &visitedDirectories)
+            if let identity = Self.directoryIdentityKey(effectiveURL),
+               !visitedDirectories.insert(identity).inserted {
+                return
             }
+            try indexChildren(of: effectiveURL, legacyParent: path, db: db, metadata: metadata,
+                              visitedDirectories: &visitedDirectories)
         }
     }
 
@@ -402,7 +443,36 @@ final class ServerFileSearchIndex {
             ) WITHOUT ROWID
             """)
         try execute(db, "CREATE INDEX IF NOT EXISTS trigrams_term_idx ON trigrams(term,path_key)")
+        try execute(db, """
+            CREATE TABLE IF NOT EXISTS index_meta(
+                key TEXT PRIMARY KEY,
+                value INTEGER NOT NULL
+            ) WITHOUT ROWID
+            """)
         try execute(db, "PRAGMA user_version=\(Self.schemaVersion)")
+    }
+
+    private func metadataDate(_ db: OpaquePointer?, key: String) throws -> Date? {
+        var statement: OpaquePointer?
+        try prepare(db, "SELECT value FROM index_meta WHERE key=?", &statement)
+        defer { sqlite3_finalize(statement) }
+        try bindText(statement, 1, key)
+        let rc = sqlite3_step(statement)
+        if rc == SQLITE_DONE { return nil }
+        guard rc == SQLITE_ROW else { throw sqliteError(db) }
+        return Date(timeIntervalSince1970: TimeInterval(sqlite3_column_int64(statement, 0)))
+    }
+
+    private func setMetadataInteger(_ db: OpaquePointer?, key: String, value: Int64) throws {
+        var statement: OpaquePointer?
+        try prepare(db, """
+            INSERT INTO index_meta(key,value) VALUES(?,?)
+            ON CONFLICT(key) DO UPDATE SET value=excluded.value
+            """, &statement)
+        defer { sqlite3_finalize(statement) }
+        try bindText(statement, 1, key)
+        try bindInt64(statement, 2, value)
+        guard sqlite3_step(statement) == SQLITE_DONE else { throw sqliteError(db) }
     }
 
     private func compactAfterFullRebuild(_ db: OpaquePointer?) throws {

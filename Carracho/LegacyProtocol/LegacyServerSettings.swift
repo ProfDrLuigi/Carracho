@@ -41,6 +41,8 @@ enum LegacyServerSettingField {
     static let legacyFilesRoot: UInt32 = 0xf0000005
     /// Carracho extension: one-byte authentication mode (0 = Legacy compatible, 1 = Modern only).
     static let authenticationMode: UInt32 = 0xf0000006
+    /// Modern Carracho extension: UInt32 hours between automatic full search-index rebuilds; 0 disables.
+    static let searchIndexRebuildIntervalHours: UInt32 = 0xf0000007
 
     static func encodeAuthenticationMode(modernOnly: Bool) -> Data { Data([modernOnly ? 1 : 0]) }
 

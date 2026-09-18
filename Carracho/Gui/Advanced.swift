@@ -87,7 +87,7 @@ extension ViewController {
         let fields = [adminMaxConnectionsField, adminMaxConnectionsPerIPField,
                       adminMaxTransfersField, adminMaxTransfersPerUserField,
                       adminMaxFolderDepthField, adminLegacyFilesRootField,
-                      transferBandwidthField]
+                      adminSearchIndexRebuildIntervalField, transferBandwidthField]
         for field in fields { field.delegate = self }
         adminSearchIndexExclusionsView.delegate = self
         adminIPRulesView.delegate = self
@@ -111,7 +111,7 @@ extension ViewController {
 
         let numericFields = [adminMaxConnectionsField, adminMaxConnectionsPerIPField,
                              adminMaxTransfersField, adminMaxTransfersPerUserField,
-                             adminMaxFolderDepthField]
+                             adminMaxFolderDepthField, adminSearchIndexRebuildIntervalField]
         for field in numericFields {
             field.alignment = .right
             field.controlSize = .small
@@ -168,13 +168,17 @@ extension ViewController {
         advancedEmptyTrashButton.imagePosition = .imageLeading
         advancedEmptyTrashButton.contentTintColor = .systemRed
         let maintenanceIndexRow = horizontalStack([NSTextField(labelWithString: L("Search index")), NSView(), advancedRebuildIndexButton], spacing: 10)
+        let maintenanceIntervalRow = advancedFormRow("Automatic rebuild",
+                                                     control: adminSearchIndexRebuildIntervalField,
+                                                     note: L("hours · 0 = off"))
         let maintenanceTrashRow = horizontalStack([NSTextField(labelWithString: L("Server Trash")), NSView(), advancedEmptyTrashButton], spacing: 10)
         maintenanceIndexRow.heightAnchor.constraint(greaterThanOrEqualToConstant: 30).isActive = true
         maintenanceTrashRow.heightAnchor.constraint(greaterThanOrEqualToConstant: 30).isActive = true
         let maintenanceCard = advancedSectionCard(title: L("Maintenance"), symbol: "wrench.and.screwdriver.fill", content: [
             maintenanceIndexRow,
+            maintenanceIntervalRow,
             maintenanceTrashRow,
-            advancedHelp(L("Maintenance actions run immediately and are not part of Save Changes.")),
+            advancedHelp(L("The existing search index is reused after a restart. Full rebuilds run only manually or after the configured interval.")),
         ])
 
         adminSearchIndexExclusionsView.isRichText = false
@@ -317,7 +321,7 @@ extension ViewController {
         for field in [adminMaxConnectionsField, adminMaxConnectionsPerIPField,
                       adminMaxTransfersField, adminMaxTransfersPerUserField,
                       adminMaxFolderDepthField, adminLegacyFilesRootField,
-                      transferBandwidthField] {
+                      adminSearchIndexRebuildIntervalField, transferBandwidthField] {
             field.isEnabled = editorEnabled
         }
         adminAuthenticationModePopup.isEnabled = editorEnabled
@@ -399,6 +403,8 @@ extension ViewController {
                 throw ServerStateError.invalidValue(L("Classic / Legacy File Root is invalid or too long."))
             }
             let exclusions = try parseSearchIndexExclusions(adminSearchIndexExclusionsView.string)
+            let rebuildIntervalHours = try parseUInt32(adminSearchIndexRebuildIntervalField,
+                                                       name: L("Search-index rebuild interval"))
             let bandwidth = try transferBandwidthBytesPerSecond()
             let bans = client.isConnected ? try parseBannedIPv4Addresses(adminIPRulesView.string) : []
 
@@ -432,6 +438,7 @@ extension ViewController {
                                                    authenticationMode: authenticationMode,
                                                    legacyRoot: legacyRoot,
                                                    exclusions: exclusions,
+                                                   rebuildIntervalHours: rebuildIntervalHours,
                                                    bandwidth: bandwidth,
                                                    bans: bans)
                 } else {
@@ -443,6 +450,7 @@ extension ViewController {
                                                   authenticationMode: authenticationMode,
                                                   legacyRoot: legacyRoot,
                                                   exclusions: exclusions,
+                                                  rebuildIntervalHours: rebuildIntervalHours,
                                                   bandwidth: bandwidth)
                 }
             }
@@ -478,7 +486,8 @@ extension ViewController {
     func saveLocalAdvancedChanges(maxConnections: UInt16, maxConnectionsPerIP: UInt16,
                                           maxTransfers: UInt16, maxTransfersPerUser: UInt16,
                                           maxFolderDepth: UInt16, authenticationMode: ServerAuthenticationMode,
-                                          legacyRoot: String, exclusions: [String], bandwidth: UInt64) {
+                                          legacyRoot: String, exclusions: [String],
+                                          rebuildIntervalHours: UInt32, bandwidth: UInt64) {
         guard let backend = serverBackend else { return }
         advancedSaveInProgress = true
         advancedSaveStatusOverride = nil
@@ -497,9 +506,10 @@ extension ViewController {
             advanced.maxFolderDownloadDepth = maxFolderDepth
 
             var runtime = localServerState.runtime
-            let exclusionsChanged = runtime.searchIndexExclusions != exclusions
+            let intervalChanged = runtime.searchIndexRebuildIntervalHours != rebuildIntervalHours
             runtime.legacyFilesRoot = legacyRoot
             runtime.searchIndexExclusions = exclusions
+            runtime.searchIndexRebuildIntervalHours = rebuildIntervalHours
             runtime.uploadBandwidthLimitBytesPerSecond = bandwidth
 
             let wasRunning = localServerRuntime?.status.isRunning == true
@@ -509,9 +519,7 @@ extension ViewController {
             try localServerRuntime?.persistStartupConfigurationToJSON(backend.snapshot())
             try persistLocalLegacyFilesRootToConfig(legacyRoot)
             try persistLocalSearchIndexExclusionsToConfig(exclusions)
-            if exclusionsChanged {
-                localServerRuntime?.rebuildSearchIndexInBackground(reason: "search-index exclusions changed")
-            }
+            if intervalChanged { localServerRuntime?.refreshSearchIndexRebuildSchedule() }
             if wasRunning {
                 localServerRuntime?.refreshNewsConfiguration()
                 localServerRuntime?.refreshTrackerConfiguration()
@@ -590,7 +598,8 @@ extension ViewController {
     func saveRemoteAdvancedChanges(maxConnections: UInt16, maxConnectionsPerIP: UInt16,
                                            maxTransfers: UInt16, maxTransfersPerUser: UInt16,
                                            maxFolderDepth: UInt16, authenticationMode: ServerAuthenticationMode,
-                                           legacyRoot: String, exclusions: [String], bandwidth: UInt64,
+                                           legacyRoot: String, exclusions: [String],
+                                           rebuildIntervalHours: UInt32, bandwidth: UInt64,
                                            bans: [ServerIPRestriction]) {
         let exclusionsData: Data
         do {
@@ -632,6 +641,8 @@ extension ViewController {
             LegacyTLV(type: LegacyServerSettingField.maxFolderDownloadDepth, value: LegacyWire.uint16BE(maxFolderDepth)),
             LegacyTLV(type: LegacyServerSettingField.legacyFilesRoot, value: Data(legacyRoot.utf8)),
             LegacyTLV(type: LegacyServerSettingField.searchIndexExclusions, value: exclusionsData),
+            LegacyTLV(type: LegacyServerSettingField.searchIndexRebuildIntervalHours,
+                      value: LegacyWire.uint32BE(rebuildIntervalHours)),
         ]
         group.enter()
         client.setServerSettings(settings) { result in
@@ -764,6 +775,7 @@ extension ViewController {
             LegacyServerSettingField.maxSimultaneousFileTransfers,
             LegacyServerSettingField.maxFileTransfersPerUser,
             LegacyServerSettingField.maxFolderDownloadDepth,
+            LegacyServerSettingField.searchIndexRebuildIntervalHours,
         ]
         client.requestServerSettings(fields: fields) { [weak self] result in
             guard let self else { return }
@@ -784,6 +796,12 @@ extension ViewController {
                     try cursor.requireEnd()
                     return value
                 }
+                func u32(_ data: Data) throws -> UInt32 {
+                    var cursor = LegacyByteCursor(data)
+                    let value = try cursor.readUInt32BE()
+                    try cursor.requireEnd()
+                    return value
+                }
                 self.remoteAdvancedAuthenticationMode = modernOnly ? .modernOnly : .legacyCompatible
                 self.adminAuthenticationModePopup.selectItem(at: modernOnly ? 1 : 0)
                 self.adminMaxConnectionsField.stringValue = String(try u16(maxConnections))
@@ -792,6 +810,8 @@ extension ViewController {
                 self.adminMaxTransfersPerUserField.stringValue = String(try u16(maxTransfersPerUser))
                 let remoteFolderDepth = try u16(maxFolderDepth)
                 self.adminMaxFolderDepthField.stringValue = String(Self.displayedRemoteFolderDepth(remoteFolderDepth))
+                let interval = try values[LegacyServerSettingField.searchIndexRebuildIntervalHours].map(u32) ?? 0
+                self.adminSearchIndexRebuildIntervalField.stringValue = String(interval)
                 self.advancedRemoteCoreLoaded = true
                 self.updateAdvancedSaveUI()
             } catch {
@@ -1195,7 +1215,6 @@ extension ViewController {
             runtime.searchIndexExclusions = patterns
             try backend.updateRuntime(runtime)
             try persistLocalSearchIndexExclusionsToConfig(patterns)
-            localServerRuntime?.rebuildSearchIndexInBackground(reason: "search-index exclusions changed")
             reloadLocalStateFromBackend()
             showAdminSaved(L("Search-index exclusions saved locally."))
         } catch { showAdminError(error) }
@@ -1332,6 +1351,14 @@ extension ViewController {
             throw ServerStateError.invalidValue(L("The ban list exceeds 4096 IP addresses."))
         }
         return result
+    }
+
+    func parseUInt32(_ field: NSTextField, name: String) throws -> UInt32 {
+        let text = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let value = UInt32(text) else {
+            throw ServerStateError.invalidValue(LF("%@ must be a valid number from 0 to 4294967295.", name))
+        }
+        return value
     }
 
     func parseUInt16(_ field: NSTextField, name: String, requirePositive: Bool) throws -> UInt16 {

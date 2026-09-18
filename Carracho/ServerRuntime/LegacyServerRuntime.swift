@@ -141,6 +141,9 @@ final class LegacyServerRuntime {
     private let fileSearchIndexRebuildQueue = DispatchQueue(label: "com.carracho.server-file-search-rebuild", qos: .utility)
     private var fileSearchIndexRebuildGeneration: UInt64 = 0
     private var fileSearchIndexRebuildWorkerActive = false
+    private let fileSearchIndexScheduleQueue = DispatchQueue(label: "com.carracho.server-file-search-schedule", qos: .utility)
+    private let fileSearchIndexScheduleLock = NSLock()
+    private var fileSearchIndexScheduleTimer: DispatchSourceTimer?
     var onStatus: ((LegacyServerRuntimeStatus) -> Void)?
     var onLog: ((String) -> Void)?
     var onStateChanged: (() -> Void)?
@@ -502,6 +505,7 @@ final class LegacyServerRuntime {
         transferAcceptQueue.async { [weak self] in self?.transferAcceptLoop(fd: pair.transferFD) }
         scheduleNextNewsExpiration()
         refreshTrackerConfiguration()
+        refreshSearchIndexRebuildSchedule()
         scheduleAutomaticSleepMonitor()
         botRSSService.start()
         return pair.controlPort
@@ -529,6 +533,7 @@ final class LegacyServerRuntime {
         stateLock.unlock()
         cancelNewsExpirationTimer()
         cancelTrackerNotificationTimer()
+        cancelSearchIndexRebuildSchedule()
         cancelAutomaticSleepMonitor()
 
         if fd >= 0 { LegacySocket.shutdownAndClose(fd) }
@@ -1583,22 +1588,97 @@ final class LegacyServerRuntime {
     }
 
     private func prepareFileSearchIndex() {
+        guard FileManager.default.fileExists(atPath: fileSearchIndexURL.path) else {
+            setCurrentFileSearchIndex(nil)
+            log("File-search index not present; filesystem fallback active until manual or scheduled rebuild")
+            return
+        }
         let index = ServerFileSearchIndex(url: fileSearchIndexURL,
                                           exclusionPatterns: backend.snapshot().runtime.searchIndexExclusions)
         do {
-            try index.rebuild(storageRoot: storageRoot, metadata: fileMetadataStore)
-            setCurrentFileSearchIndex(index)
-            log("File-search index ready: \(fileSearchIndexURL.lastPathComponent)")
-        } catch {
-            for suffix in ["", "-wal", "-shm"] { try? FileManager.default.removeItem(atPath: fileSearchIndexURL.path + suffix) }
-            do {
-                try index.rebuild(storageRoot: storageRoot, metadata: fileMetadataStore)
-                setCurrentFileSearchIndex(index)
-                log("File-search index rebuilt after cache recovery")
-            } catch {
+            let count = try index.entryCount()
+            let hasCompletedRebuild = try index.lastFullRebuildDate() != nil
+            guard count > 0 || hasCompletedRebuild else {
                 setCurrentFileSearchIndex(nil)
-                log("File-search index unavailable; using filesystem fallback: \(error.localizedDescription)")
+                log("No completed file-search index yet; filesystem fallback active until manual or scheduled rebuild")
+                return
             }
+            setCurrentFileSearchIndex(index)
+            log("Reusing file-search index: \(count) searchable item(s)")
+        } catch {
+            setCurrentFileSearchIndex(nil)
+            log("Existing file-search index is unavailable; filesystem fallback active until manual or scheduled rebuild: \(error.localizedDescription)")
+        }
+    }
+
+    private func cancelSearchIndexRebuildSchedule() {
+        fileSearchIndexScheduleLock.lock()
+        let timer = fileSearchIndexScheduleTimer
+        fileSearchIndexScheduleTimer = nil
+        fileSearchIndexScheduleLock.unlock()
+        timer?.cancel()
+    }
+
+    func refreshSearchIndexRebuildSchedule() {
+        cancelSearchIndexRebuildSchedule()
+        stateLock.lock()
+        let isRunning = running
+        stateLock.unlock()
+        guard isRunning else { return }
+
+        let hours = backend.snapshot().runtime.searchIndexRebuildIntervalHours
+        guard hours > 0 else {
+            log("Automatic full search-index rebuilds disabled")
+            return
+        }
+
+        let interval = TimeInterval(hours) * 3600
+        let schedulingIndex = currentFileSearchIndex()
+            ?? ServerFileSearchIndex(url: fileSearchIndexURL,
+                                     exclusionPatterns: backend.snapshot().runtime.searchIndexExclusions)
+        let referenceDate = (try? schedulingIndex.rebuildScheduleReferenceDate()) ?? Date()
+        let delay = max(1, referenceDate.addingTimeInterval(interval).timeIntervalSinceNow)
+
+        let timer = DispatchSource.makeTimerSource(queue: fileSearchIndexScheduleQueue)
+        timer.schedule(deadline: .now() + delay)
+        timer.setEventHandler { [weak self] in
+            guard let self else { return }
+            self.cancelSearchIndexRebuildSchedule()
+            self.rebuildSearchIndexInBackground(reason: "scheduled \(hours)-hour interval")
+        }
+        fileSearchIndexScheduleLock.lock()
+        fileSearchIndexScheduleTimer = timer
+        fileSearchIndexScheduleLock.unlock()
+        timer.resume()
+        log("Next automatic full search-index rebuild scheduled in \(Int(ceil(delay / 3600))) hour(s)")
+    }
+
+    private func invalidateFileSearchIndex(reason: String) {
+        fileSearchIndexStateLock.lock()
+        fileSearchIndex = nil
+        fileSearchIndexRebuildGeneration &+= 1
+        fileSearchIndexStateLock.unlock()
+        log("File-search index disabled after \(reason); filesystem fallback active until manual or scheduled rebuild")
+    }
+
+    private func buildFreshSearchIndex() throws -> ServerFileSearchIndex {
+        func makeIndex() -> ServerFileSearchIndex {
+            ServerFileSearchIndex(url: fileSearchIndexURL,
+                                  exclusionPatterns: backend.snapshot().runtime.searchIndexExclusions)
+        }
+        var index = makeIndex()
+        do {
+            try index.rebuild(storageRoot: storageRoot, metadata: fileMetadataStore)
+            return index
+        } catch {
+            // Full rebuilds are the one place where replacing a broken disposable cache is
+            // intentional. Startup itself never deletes/rebuilds the cache.
+            for suffix in ["", "-wal", "-shm"] {
+                try? FileManager.default.removeItem(atPath: fileSearchIndexURL.path + suffix)
+            }
+            index = makeIndex()
+            try index.rebuild(storageRoot: storageRoot, metadata: fileMetadataStore)
+            return index
         }
     }
 
@@ -1635,10 +1715,8 @@ final class LegacyServerRuntime {
             let generation = fileSearchIndexRebuildGeneration
             fileSearchIndexStateLock.unlock()
 
-            let index = ServerFileSearchIndex(url: fileSearchIndexURL,
-                                              exclusionPatterns: backend.snapshot().runtime.searchIndexExclusions)
             do {
-                try index.rebuild(storageRoot: storageRoot, metadata: fileMetadataStore)
+                let index = try buildFreshSearchIndex()
                 let count = try index.entryCount()
                 fileSearchIndexStateLock.lock()
                 if generation == fileSearchIndexRebuildGeneration {
@@ -1646,6 +1724,7 @@ final class LegacyServerRuntime {
                     fileSearchIndexRebuildWorkerActive = false
                     fileSearchIndexStateLock.unlock()
                     log("Search inventory rebuilt in background: \(count) searchable item(s)")
+                    refreshSearchIndexRebuildSchedule()
                     return
                 }
                 fileSearchIndexStateLock.unlock()
@@ -1670,8 +1749,8 @@ final class LegacyServerRuntime {
         }
         do { try index.upsertSubtree(at: url, path: path, metadata: fileMetadataStore) }
         catch {
-            log("File-search index update failed for \(LegacyPath.displayString(path)); scheduling cache rebuild: \(error.localizedDescription)")
-            scheduleFileSearchIndexRebuild(reason: "incremental update failed")
+            log("File-search index update failed for \(LegacyPath.displayString(path)): \(error.localizedDescription)")
+            invalidateFileSearchIndex(reason: "incremental update failure")
         }
     }
 
@@ -1683,8 +1762,8 @@ final class LegacyServerRuntime {
         }
         do { try index.removeSubtree(path: path) }
         catch {
-            log("File-search index delete failed for \(LegacyPath.displayString(path)); scheduling cache rebuild: \(error.localizedDescription)")
-            scheduleFileSearchIndexRebuild(reason: "incremental delete failed")
+            log("File-search index delete failed for \(LegacyPath.displayString(path)): \(error.localizedDescription)")
+            invalidateFileSearchIndex(reason: "incremental delete failure")
         }
     }
 
@@ -1696,8 +1775,8 @@ final class LegacyServerRuntime {
         }
         do { try index.moveSubtree(from: source, to: destination, destinationURL: destinationURL, metadata: fileMetadataStore) }
         catch {
-            log("File-search index move failed; scheduling cache rebuild: \(error.localizedDescription)")
-            scheduleFileSearchIndexRebuild(reason: "incremental move failed")
+            log("File-search index move failed: \(error.localizedDescription)")
+            invalidateFileSearchIndex(reason: "incremental move failure")
         }
     }
 
@@ -2131,15 +2210,14 @@ final class LegacyServerRuntime {
 
     @discardableResult
     func rebuildSearchIndex() throws -> Int {
-        try fileSearchIndexRebuildQueue.sync {
-            let index = ServerFileSearchIndex(url: fileSearchIndexURL,
-                                              exclusionPatterns: backend.snapshot().runtime.searchIndexExclusions)
-            try index.rebuild(storageRoot: storageRoot, metadata: fileMetadataStore)
+        let count = try fileSearchIndexRebuildQueue.sync {
+            let index = try buildFreshSearchIndex()
             setCurrentFileSearchIndex(index)
-            let count = try index.entryCount()
-            log("Search inventory rebuilt: \(count) searchable item(s)")
-            return count
+            return try index.entryCount()
         }
+        log("Search inventory rebuilt: \(count) searchable item(s)")
+        refreshSearchIndexRebuildSchedule()
+        return count
     }
 
 
@@ -2931,7 +3009,8 @@ final class LegacyServerRuntime {
              LegacyServerSettingField.allowDenyIPList,
              LegacyServerSettingField.searchIndexExclusions,
              LegacyServerSettingField.legacyFilesRoot,
-             LegacyServerSettingField.authenticationMode:
+             LegacyServerSettingField.authenticationMode,
+             LegacyServerSettingField.searchIndexRebuildIntervalHours:
             return .editAdvancedSettings
         case LegacyServerSettingField.trackerList, LegacyServerSettingField.trackerRegistrationFlags,
              LegacyServerSettingField.trackerDescription:
@@ -2987,6 +3066,8 @@ final class LegacyServerRuntime {
             return try LegacyServerSettingField.encodeIPRestrictions(state.advanced.ipRestrictions.map(\.legacy))
         case LegacyServerSettingField.searchIndexExclusions:
             return try LegacyServerSettingField.encodeSearchIndexExclusions(state.runtime.searchIndexExclusions)
+        case LegacyServerSettingField.searchIndexRebuildIntervalHours:
+            return LegacyWire.uint32BE(state.runtime.searchIndexRebuildIntervalHours)
         case LegacyServerSettingField.legacyFilesRoot:
             return Data(state.runtime.legacyFilesRoot.utf8)
         case LegacyServerSettingField.authenticationMode:
@@ -3139,6 +3220,7 @@ final class LegacyServerRuntime {
             var trackerConfigurationChanged = false
             var accountGroupsChanged = false
             var searchIndexExclusionsChanged = false
+            var searchIndexRebuildIntervalChanged = false
             var legacyFilesRootChanged = false
             try backend.updateServerState { state in
                 for field in packet.fields {
@@ -3182,6 +3264,9 @@ final class LegacyServerRuntime {
                         let patterns = try LegacyServerSettingField.decodeSearchIndexExclusions(field.value)
                         state.runtime.searchIndexExclusions = patterns
                         searchIndexExclusionsChanged = true
+                    case LegacyServerSettingField.searchIndexRebuildIntervalHours:
+                        state.runtime.searchIndexRebuildIntervalHours = try field.uint32BE()
+                        searchIndexRebuildIntervalChanged = true
                     case LegacyServerSettingField.authenticationMode:
                         let modernOnly = try LegacyServerSettingField.decodeAuthenticationMode(field.value)
                         try backend.applyAuthenticationModeInTransaction(modernOnly ? .modernOnly : .legacyCompatible, to: &state)
@@ -3241,7 +3326,10 @@ final class LegacyServerRuntime {
             try persistStartupConfigurationToJSON(updatedState)
             if accountGroupsChanged { refreshConnectedAccountsFromBackendAndBroadcastColor() }
             if newsScheduleChanged { refreshNewsConfiguration() }
-            if searchIndexExclusionsChanged { scheduleFileSearchIndexRebuild(reason: "search-index exclusions changed") }
+            if searchIndexExclusionsChanged {
+                log("Search-index exclusions updated; removals take full effect on the next manual or scheduled rebuild")
+            }
+            if searchIndexRebuildIntervalChanged { refreshSearchIndexRebuildSchedule() }
             if legacyFilesRootChanged {
                 log(updatedState.runtime.legacyFilesRoot.isEmpty
                     ? "Legacy Files root disabled; Classic sessions use the normal Files root"
@@ -3296,6 +3384,7 @@ final class LegacyServerRuntime {
         object["maxFolderDownloadDepth"] = Int(state.advanced.maxFolderDownloadDepth)
         object["uploadBandwidthLimitBytesPerSecond"] = NSNumber(value: state.runtime.uploadBandwidthLimitBytesPerSecond)
         object["searchIndexExclusions"] = state.runtime.searchIndexExclusions
+        object["searchIndexRebuildIntervalHours"] = Int(state.runtime.searchIndexRebuildIntervalHours)
         object["legacyFilesRoot"] = state.runtime.legacyFilesRoot
         object["newsExpirationHour"] = Int(state.advanced.newsExpirationHour)
         object["newsExpirationMinute"] = Int(state.advanced.newsExpirationMinute)

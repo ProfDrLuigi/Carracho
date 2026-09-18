@@ -116,6 +116,7 @@ typedef struct cr_startup_persistent_settings {
     char legacy_files_root[PATH_MAX];
     uint64_t upload_bandwidth_limit_bytes_per_second;
     cr_search_index_exclusions search_index_exclusions;
+    uint32_t search_index_rebuild_interval_hours;
 } cr_startup_persistent_settings;
 
 typedef struct cr_offline_message_blob cr_offline_message_blob;

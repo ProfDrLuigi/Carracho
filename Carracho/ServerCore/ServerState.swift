@@ -45,17 +45,21 @@ struct ServerRuntimeSettings: Codable, Equatable {
     var legacyFilesRoot: String = ""
     var uploadBandwidthLimitBytesPerSecond: UInt64 = 0
     var searchIndexExclusions: [String] = []
+    /// Full search-index rebuild cadence in hours. Zero disables scheduled full rebuilds.
+    var searchIndexRebuildIntervalHours: UInt32 = 0
 
     private enum CodingKeys: String, CodingKey {
         case filesRoot, legacyFilesRoot, uploadBandwidthLimitBytesPerSecond, searchIndexExclusions
+        case searchIndexRebuildIntervalHours
     }
 
     init(filesRoot: String = "", legacyFilesRoot: String = "", uploadBandwidthLimitBytesPerSecond: UInt64 = 0,
-         searchIndexExclusions: [String] = []) {
+         searchIndexExclusions: [String] = [], searchIndexRebuildIntervalHours: UInt32 = 0) {
         self.filesRoot = filesRoot
         self.legacyFilesRoot = legacyFilesRoot
         self.uploadBandwidthLimitBytesPerSecond = uploadBandwidthLimitBytesPerSecond
         self.searchIndexExclusions = searchIndexExclusions
+        self.searchIndexRebuildIntervalHours = searchIndexRebuildIntervalHours
     }
 
     init(from decoder: Decoder) throws {
@@ -64,6 +68,7 @@ struct ServerRuntimeSettings: Codable, Equatable {
         legacyFilesRoot = try c.decodeIfPresent(String.self, forKey: .legacyFilesRoot) ?? ""
         uploadBandwidthLimitBytesPerSecond = try c.decodeIfPresent(UInt64.self, forKey: .uploadBandwidthLimitBytesPerSecond) ?? 0
         searchIndexExclusions = try c.decodeIfPresent([String].self, forKey: .searchIndexExclusions) ?? []
+        searchIndexRebuildIntervalHours = try c.decodeIfPresent(UInt32.self, forKey: .searchIndexRebuildIntervalHours) ?? 0
     }
 }
 

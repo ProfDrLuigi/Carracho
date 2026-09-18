@@ -51,12 +51,21 @@ static int append_child(const uint8_t *parent,size_t pl,const uint8_t *name,size
     size_t need=pl+(pl?1:0)+nl;if(!nl||need>4096)return-1;if(pl)memcpy(out,parent,pl);size_t p=pl;if(pl)out[p++]=1;memcpy(out+p,name,nl);*ol=need;return 0;
 }
 static int is_dropbox(cr_file_metadata_store *m,const uint8_t *path,size_t n){cr_file_metadata x;int found=0,drop=0;cr_file_metadata_init(&x);if(!m||cr_file_metadata_get(m,path,n,&x,&found)){cr_file_metadata_free(&x);return 0;}drop=found&&((x.flags&0x2000u)!=0);cr_file_metadata_free(&x);return drop;}
+static int is_inside_dropbox(cr_file_metadata_store *m,const uint8_t *path,size_t n){
+    if(!m||!path||!n)return 0;
+    for(size_t i=0;i<=n;i++){
+        if(i<n&&path[i]!=1)continue;
+        if(i&&is_dropbox(m,path,i))return 1;
+    }
+    return 0;
+}
 
 static int create_schema(sqlite3 *db){
     if(exec_sql(db,"PRAGMA foreign_keys=ON")||exec_sql(db,"PRAGMA journal_mode=WAL")||exec_sql(db,"PRAGMA synchronous=NORMAL"))return-1;
     if(exec_sql(db,"CREATE TABLE IF NOT EXISTS entries(path_key TEXT PRIMARY KEY,path BLOB NOT NULL,name BLOB NOT NULL,name_search TEXT NOT NULL,comment_search TEXT NOT NULL DEFAULT '',is_folder INTEGER NOT NULL CHECK(is_folder IN (0,1)),size INTEGER NOT NULL,timestamp INTEGER NOT NULL)"))return-1;
     if(exec_sql(db,"CREATE TABLE IF NOT EXISTS trigrams(term TEXT NOT NULL,path_key TEXT NOT NULL REFERENCES entries(path_key) ON DELETE CASCADE,PRIMARY KEY(term,path_key)) WITHOUT ROWID"))return-1;
     if(exec_sql(db,"CREATE INDEX IF NOT EXISTS trigrams_term_idx ON trigrams(term,path_key)"))return-1;
+    if(exec_sql(db,"CREATE TABLE IF NOT EXISTS index_meta(key TEXT PRIMARY KEY,value INTEGER NOT NULL) WITHOUT ROWID"))return-1;
     char pragma[64];snprintf(pragma,sizeof(pragma),"PRAGMA user_version=%d",CR_FILE_INDEX_SCHEMA);return exec_sql(db,pragma);
 }
 
@@ -301,12 +310,19 @@ static int scan_item_locked(cr_file_search_index *idx, const char *fs,
   if (cr_utf8_to_macroman(leaf, name, sizeof(name), &nl) || !nl || nl > 255)
     return 0;
   int folder = S_ISDIR(st.st_mode);
+  /*
+   * Dropbox trees are write-only/private storage from the search index's point
+   * of view. Check every legacy-path prefix so direct incremental upserts of a
+   * file inside a Dropbox cannot bypass the full-rebuild recursion guard.
+   */
+  if (is_inside_dropbox(metadata, path, pl))
+    return 0;
   uint64_t raw = folder ? 0 : (uint64_t)(st.st_size < 0 ? 0 : st.st_size);
   uint32_t size = raw > UINT32_MAX ? UINT32_MAX : (uint32_t)raw;
   if (insert_entry_locked(idx, path, pl, name, nl, leaf, folder, size,
                           mac_time(st.st_mtime), metadata))
     return -1;
-  if (folder && recurse && !is_dropbox(metadata, path, pl)) {
+  if (folder && recurse) {
     int added = visited_add(visited, &st);
     if (added < 0)
       return -1;
@@ -352,7 +368,14 @@ int cr_file_search_index_rebuild_interruptible(
     rc = scan_rc;
     goto done;
   }
-  if (exec_sql(idx->db, "COMMIT"))
+  char meta_sql[384];long long rebuilt_at=(long long)time(NULL);
+  snprintf(meta_sql,sizeof(meta_sql),
+           "INSERT INTO index_meta(key,value) VALUES('last_full_rebuild_unix',%lld) "
+           "ON CONFLICT(key) DO UPDATE SET value=excluded.value;"
+           "INSERT INTO index_meta(key,value) VALUES('schedule_anchor_unix',%lld) "
+           "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+           rebuilt_at,rebuilt_at);
+  if (exec_sql(idx->db, meta_sql) || exec_sql(idx->db, "COMMIT"))
     goto done;
   /* Reclaim substantial stale index space, then truncate the rebuild WAL. */
   compact_after_full_rebuild(idx->db);
@@ -368,6 +391,119 @@ int cr_file_search_index_rebuild(cr_file_search_index *idx,const char *root,cr_f
 int cr_file_search_index_upsert_subtree(cr_file_search_index *idx,const char *fs,const uint8_t *path,size_t n,cr_file_metadata_store *metadata,const cr_search_index_exclusions *exclusions){if(!idx||!idx->ready)return-1;pthread_mutex_lock(&idx->mutex);cr_index_visited visited={0};int rc=-1;if(exec_sql(idx->db,"BEGIN IMMEDIATE"))goto done;if(delete_subtree_locked(idx,path,n)||scan_item_locked(idx,fs,path,n,metadata,exclusions,&visited,1,NULL)){exec_sql(idx->db,"ROLLBACK");goto done;}if(exec_sql(idx->db,"COMMIT"))goto done;rc=0;done:visited_free(&visited);pthread_mutex_unlock(&idx->mutex);return rc;}
 int cr_file_search_index_remove_subtree(cr_file_search_index *idx,const uint8_t *path,size_t n){if(!idx||!idx->ready)return-1;pthread_mutex_lock(&idx->mutex);int rc=delete_subtree_locked(idx,path,n);pthread_mutex_unlock(&idx->mutex);return rc;}
 int cr_file_search_index_move_subtree(cr_file_search_index *idx,const uint8_t *src,size_t sl,const uint8_t *dst,size_t dl,const char *dfs,cr_file_metadata_store *metadata,const cr_search_index_exclusions *exclusions){if(!idx||!idx->ready)return-1;pthread_mutex_lock(&idx->mutex);cr_index_visited visited={0};int rc=-1;if(exec_sql(idx->db,"BEGIN IMMEDIATE"))goto done;if(delete_subtree_locked(idx,src,sl)||delete_subtree_locked(idx,dst,dl)||scan_item_locked(idx,dfs,dst,dl,metadata,exclusions,&visited,1,NULL)){exec_sql(idx->db,"ROLLBACK");goto done;}if(exec_sql(idx->db,"COMMIT"))goto done;rc=0;done:visited_free(&visited);pthread_mutex_unlock(&idx->mutex);return rc;}
+
+int cr_file_search_index_entry_count(cr_file_search_index *idx, uint64_t *count) {
+    if (count)
+        *count = 0;
+    if (!idx || !idx->ready)
+        return -1;
+
+    pthread_mutex_lock(&idx->mutex);
+    sqlite3_stmt *st = NULL;
+    int rc = -1;
+
+    if (sqlite3_prepare_v2(idx->db, "SELECT COUNT(*) FROM entries", -1, &st, NULL) == SQLITE_OK &&
+        sqlite3_step(st) == SQLITE_ROW) {
+        sqlite3_int64 value = sqlite3_column_int64(st, 0);
+        if (count)
+            *count = value > 0 ? (uint64_t)value : 0;
+        rc = 0;
+    }
+
+    sqlite3_finalize(st);
+    pthread_mutex_unlock(&idx->mutex);
+    return rc;
+}
+
+int cr_file_search_index_last_full_rebuild(cr_file_search_index *idx, int64_t *timestamp, int *found) {
+    if (timestamp)
+        *timestamp = 0;
+    if (found)
+        *found = 0;
+    if (!idx || !idx->ready)
+        return -1;
+
+    pthread_mutex_lock(&idx->mutex);
+    sqlite3_stmt *st = NULL;
+    int rc = -1;
+
+    if (sqlite3_prepare_v2(idx->db,
+                           "SELECT value FROM index_meta WHERE key='last_full_rebuild_unix'",
+                           -1, &st, NULL) == SQLITE_OK) {
+        int step = sqlite3_step(st);
+        if (step == SQLITE_ROW) {
+            if (timestamp)
+                *timestamp = sqlite3_column_int64(st, 0);
+            if (found)
+                *found = 1;
+            rc = 0;
+        } else if (step == SQLITE_DONE) {
+            rc = 0;
+        }
+    }
+
+    sqlite3_finalize(st);
+    pthread_mutex_unlock(&idx->mutex);
+    return rc;
+}
+
+int cr_file_search_index_rebuild_schedule_reference(cr_file_search_index *idx,
+                                                     int64_t now,
+                                                     int64_t *timestamp) {
+    if (timestamp)
+        *timestamp = now;
+    if (!idx || !idx->ready)
+        return -1;
+
+    pthread_mutex_lock(&idx->mutex);
+    sqlite3_stmt *st = NULL;
+    int rc = -1;
+    int64_t value = 0;
+    int found = 0;
+    const char *keys[] = {"last_full_rebuild_unix", "schedule_anchor_unix"};
+
+    for (size_t k = 0; k < 2 && !found; k++) {
+        if (sqlite3_prepare_v2(idx->db,
+                               "SELECT value FROM index_meta WHERE key=?",
+                               -1, &st, NULL) != SQLITE_OK)
+            goto done;
+
+        sqlite3_bind_text(st, 1, keys[k], -1, SQLITE_STATIC);
+        int step = sqlite3_step(st);
+        if (step == SQLITE_ROW) {
+            value = sqlite3_column_int64(st, 0);
+            found = 1;
+        } else if (step != SQLITE_DONE) {
+            sqlite3_finalize(st);
+            st = NULL;
+            goto done;
+        }
+
+        sqlite3_finalize(st);
+        st = NULL;
+    }
+
+    if (!found) {
+        if (sqlite3_prepare_v2(idx->db,
+                               "INSERT INTO index_meta(key,value) VALUES('schedule_anchor_unix',?)",
+                               -1, &st, NULL) != SQLITE_OK)
+            goto done;
+
+        sqlite3_bind_int64(st, 1, now);
+        if (sqlite3_step(st) != SQLITE_DONE)
+            goto done;
+        value = now;
+    }
+
+    if (timestamp)
+        *timestamp = value;
+    rc = 0;
+
+done:
+    sqlite3_finalize(st);
+    pthread_mutex_unlock(&idx->mutex);
+    return rc;
+}
 
 int cr_file_search_index_search(cr_file_search_index *idx, const char *query,
                                 const cr_search_index_exclusions *exclusions,

@@ -46,6 +46,9 @@ int cr_file_search_index_move_subtree(cr_file_search_index *index,
                                       const char *destination_fs_path,
                                       cr_file_metadata_store *metadata,
                                       const cr_search_index_exclusions *exclusions);
+int cr_file_search_index_entry_count(cr_file_search_index *index, uint64_t *count);
+int cr_file_search_index_last_full_rebuild(cr_file_search_index *index, int64_t *timestamp, int *found);
+int cr_file_search_index_rebuild_schedule_reference(cr_file_search_index *index, int64_t now, int64_t *timestamp);
 int cr_file_search_index_search(cr_file_search_index *index, const char *query,
                                 const cr_search_index_exclusions *exclusions,
                                 cr_file_search_index_callback callback, void *context,

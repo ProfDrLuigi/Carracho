@@ -942,6 +942,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
     let adminLegacyFilesRootStatusLabel = NSTextField(labelWithString: "")
     let adminSearchIndexExclusionsView = NSTextView()
     let adminSearchIndexExclusionsStatusLabel = NSTextField(labelWithString: "")
+    let adminSearchIndexRebuildIntervalField = NSTextField(string: "")
     let adminIPRulesView = NSTextView()
     let adminBanStatusLabel = NSTextField(labelWithString: L("Connect to a server to manage bans."))
     let advancedSaveButton = NSButton(title: L("Save Changes"), target: nil, action: nil)
@@ -6761,7 +6762,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
             switch identifier {
             case "kind": value = Self.fileKindTitle(entry)
             case "name":
-                if let results = sortedFileSearchResults, row < results.count { value = LegacyPath.displayString(results[row].path) }
+                if let results = sortedFileSearchResults, row < results.count { value = LegacyPath.displayName(results[row].path) }
                 else { value = Self.macRomanString(entry.name) }
             case "size":
                 if entry.isFolder {
@@ -6786,7 +6787,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
                 }
                 switch identifier {
                 case "direction": value = item.kind == LegacyTransferKind.download ? L("Download") : L("Upload")
-                case "name": value = item.name
+                case "name": value = transferRowName(transferRow)
                 case "progress": value = item.queued ? L("Queued") : transferProgressText(completed: item.completedBytes, total: item.totalBytes)
                 case "status": value = transferRowStatus(transferRow)
                 case "server": value = item.serverName
@@ -7213,7 +7214,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         guard let results = fileSearchResults else { return nil }
         return sortedForTable(results, table: fileTable) { lhs, rhs, key in
             switch key {
-            case "name": return Self.compareText(LegacyPath.displayString(lhs.path), LegacyPath.displayString(rhs.path))
+            case "name": return Self.compareText(LegacyPath.displayName(lhs.path), LegacyPath.displayName(rhs.path))
             case "size": return Self.compareNumber(lhs.size, rhs.size)
             case "kind": return Self.compareText(lhs.isFolder ? L("Folder") : L("File"), rhs.isFolder ? L("Folder") : L("File"))
             case "modified": return Self.compareNumber(lhs.timestamp, rhs.timestamp)

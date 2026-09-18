@@ -143,7 +143,6 @@ extension ViewController {
             detailRow("File", transferDetailNameLabel),
             detailRow("User", transferDetailUserLabel),
             detailRow("Server", transferDetailServerLabel),
-            detailRow("Location", transferDetailLocationLabel),
             detailRow("Started", transferDetailStartedLabel),
             detailRow("Issue", transferDetailErrorLabel),
         ], spacing: 4)
@@ -663,7 +662,9 @@ extension ViewController {
 
     func transferRowName(_ row: TransferMonitorRow) -> String {
         switch row {
-        case let .local(item): return item.name
+        case let .local(item):
+            let leaf = NSString(string: item.name).lastPathComponent
+            return leaf.isEmpty ? item.name : leaf
         case let .managed(item): return LegacyPath.displayName(item.path)
         case let .legacyServer(item): return LegacyPath.displayName(item.path)
         }

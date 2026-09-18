@@ -309,6 +309,8 @@ static int load_startup_config(const char *config_path, const char *instance_roo
     config->persistent.news_expiration_minute = (uint8_t)number;
     if (config_int(root, "uploadBandwidthLimitBytesPerSecond", 0, 0, INT64_MAX, &number)) { json_object_put(root); return -1; }
     config->persistent.upload_bandwidth_limit_bytes_per_second = (uint64_t)number;
+    if (config_int(root, "searchIndexRebuildIntervalHours", 0, 0, UINT32_MAX, &number)) { json_object_put(root); return -1; }
+    config->persistent.search_index_rebuild_interval_hours = (uint32_t)number;
     if (config_search_index_exclusions(root, &config->persistent.search_index_exclusions)) { json_object_put(root); return -1; }
 
     if (!config->persistent.server_name_configured || !config->persistent.description_configured) {

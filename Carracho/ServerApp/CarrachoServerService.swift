@@ -22,6 +22,7 @@ struct CarrachoServerConfiguration: Codable, Equatable {
     var maxFolderDownloadDepth: UInt16 = 8
     var uploadBandwidthLimitBytesPerSecond: UInt64 = 0
     var searchIndexExclusions: [String] = []
+    var searchIndexRebuildIntervalHours: UInt32 = 0
     var newsExpirationHour: UInt8 = 0
     var newsExpirationMinute: UInt8 = 0
 
@@ -29,7 +30,8 @@ struct CarrachoServerConfiguration: Codable, Equatable {
         case serverName, description, serverPort, filesRoot, legacyFilesRoot, authenticationMode
         case maxConnections, maxConnectionsPerIP, maxSimultaneousFileTransfers
         case maxFileTransfersPerUser, maxFolderDownloadDepth
-        case uploadBandwidthLimitBytesPerSecond, searchIndexExclusions, newsExpirationHour, newsExpirationMinute
+        case uploadBandwidthLimitBytesPerSecond, searchIndexExclusions, searchIndexRebuildIntervalHours
+        case newsExpirationHour, newsExpirationMinute
     }
 
     init() {}
@@ -49,6 +51,7 @@ struct CarrachoServerConfiguration: Codable, Equatable {
         maxFolderDownloadDepth = try values.decodeIfPresent(UInt16.self, forKey: .maxFolderDownloadDepth) ?? 8
         uploadBandwidthLimitBytesPerSecond = try values.decodeIfPresent(UInt64.self, forKey: .uploadBandwidthLimitBytesPerSecond) ?? 0
         searchIndexExclusions = try values.decodeIfPresent([String].self, forKey: .searchIndexExclusions) ?? []
+        searchIndexRebuildIntervalHours = try values.decodeIfPresent(UInt32.self, forKey: .searchIndexRebuildIntervalHours) ?? 0
         newsExpirationHour = try values.decodeIfPresent(UInt8.self, forKey: .newsExpirationHour) ?? 0
         newsExpirationMinute = try values.decodeIfPresent(UInt8.self, forKey: .newsExpirationMinute) ?? 0
     }
@@ -179,6 +182,7 @@ final class CarrachoServerService {
         configuration.newsExpirationMinute = state.advanced.newsExpirationMinute
         configuration.uploadBandwidthLimitBytesPerSecond = state.runtime.uploadBandwidthLimitBytesPerSecond
         configuration.searchIndexExclusions = state.runtime.searchIndexExclusions
+        configuration.searchIndexRebuildIntervalHours = state.runtime.searchIndexRebuildIntervalHours
         configuration.legacyFilesRoot = state.runtime.legacyFilesRoot
         if !state.runtime.filesRoot.isEmpty {
             configuration.filesRoot = state.runtime.filesRoot
@@ -322,7 +326,8 @@ final class CarrachoServerService {
             filesRoot: filesURL.standardizedFileURL.path,
             legacyFilesRoot: legacyFilesURL?.standardizedFileURL.path ?? "",
             uploadBandwidthLimitBytesPerSecond: configuration.uploadBandwidthLimitBytesPerSecond,
-            searchIndexExclusions: configuration.searchIndexExclusions
+            searchIndexExclusions: configuration.searchIndexExclusions,
+            searchIndexRebuildIntervalHours: configuration.searchIndexRebuildIntervalHours
         )
         guard identity != previous.identity || advanced != previous.advanced || runtime != previous.runtime ||
                 configuration.authenticationMode != previous.authentication.mode else { return }

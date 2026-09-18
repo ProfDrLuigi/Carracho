@@ -12,6 +12,7 @@
   "maxFolderDownloadDepth": 8,
   "uploadBandwidthLimitBytesPerSecond": 0,
   "searchIndexExclusions": [],
+  "searchIndexRebuildIntervalHours": 0,
   "newsExpirationHour": 0,
   "newsExpirationMinute": 0,
   "trackerRegistration": {

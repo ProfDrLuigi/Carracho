@@ -1612,12 +1612,12 @@ extension ViewController {
             views.append(iconView)
         }
 
-        let displayName = fileSearchResults == nil ? Self.macRomanString(item.entry.name) : LegacyPath.displayString(item.path)
+        let displayName = Self.macRomanString(item.entry.name)
         let title = NSTextField(labelWithString: displayName)
         title.lineBreakMode = .byTruncatingTail
         title.maximumNumberOfLines = 1
         title.font = NSFont.systemFont(ofSize: filesFontSize, weight: .regular)
-        title.toolTip = fileSearchResults == nil ? Self.macRomanString(item.entry.name) : LegacyPath.displayString(item.path)
+        title.toolTip = displayName
         views.append(title)
 
         let stack = NSStackView(views: views)
