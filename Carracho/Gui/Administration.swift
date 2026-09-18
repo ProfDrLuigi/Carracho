@@ -17,9 +17,12 @@ extension ViewController {
         header.translatesAutoresizingMaskIntoConstraints = false
         page.addSubview(header)
         NSLayoutConstraint.activate([
-            header.leadingAnchor.constraint(equalTo: page.leadingAnchor, constant: 4),
-            header.trailingAnchor.constraint(lessThanOrEqualTo: page.trailingAnchor, constant: -4),
-            header.topAnchor.constraint(equalTo: page.topAnchor, constant: 4),
+            // Match the workspace headers (Overview / Files / News): 18 pt from the leading
+            // edge and 14 pt from the trailing edge. Admin headers used to sit almost flush
+            // against the page edge at 4 pt.
+            header.leadingAnchor.constraint(equalTo: page.leadingAnchor, constant: 18),
+            header.trailingAnchor.constraint(lessThanOrEqualTo: page.trailingAnchor, constant: -14),
+            header.topAnchor.constraint(equalTo: page.topAnchor, constant: 10),
         ])
         return page
     }

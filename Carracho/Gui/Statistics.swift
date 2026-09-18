@@ -166,8 +166,9 @@ extension ViewController {
         statsStatusLabel.lineBreakMode = .byTruncatingTail
         let statusRow = horizontalStack([statsStatusLabel, NSView()], spacing: 8)
 
-        let content = verticalStack([header, metrics, groupsCard, helpCard, CarrachoDividerView(), statusRow], spacing: 14)
+        let content = verticalStack([metrics, groupsCard, helpCard, CarrachoDividerView(), statusRow], spacing: 14)
         content.translatesAutoresizingMaskIntoConstraints = false
+        header.translatesAutoresizingMaskIntoConstraints = false
 
         let scroll = NSScrollView()
         scroll.drawsBackground = true
@@ -180,15 +181,20 @@ extension ViewController {
         document.translatesAutoresizingMaskIntoConstraints = false
         scroll.documentView = document
         document.addSubview(content)
+        page.addSubview(header)
         page.addSubview(scroll)
 
         let maxWidth = content.widthAnchor.constraint(lessThanOrEqualToConstant: 1040)
         let fillWidth = content.widthAnchor.constraint(equalTo: document.widthAnchor, constant: -20)
         fillWidth.priority = .defaultHigh
         NSLayoutConstraint.activate([
+            header.leadingAnchor.constraint(equalTo: page.leadingAnchor, constant: 18),
+            header.trailingAnchor.constraint(equalTo: page.trailingAnchor, constant: -14),
+            header.topAnchor.constraint(equalTo: page.topAnchor, constant: 10),
+
             scroll.leadingAnchor.constraint(equalTo: page.leadingAnchor, constant: 4),
             scroll.trailingAnchor.constraint(equalTo: page.trailingAnchor, constant: -4),
-            scroll.topAnchor.constraint(equalTo: page.topAnchor, constant: 4),
+            scroll.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 14),
             scroll.bottomAnchor.constraint(equalTo: page.bottomAnchor, constant: -4),
 
             document.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
