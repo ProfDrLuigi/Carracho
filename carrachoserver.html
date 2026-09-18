@@ -37,6 +37,13 @@
                 <li>News reaction changes are now broadcast to other connected modern clients so reaction counts and users can refresh immediately.</li>
                 <li>Improved dedicated account-group Files roots and their validation, including support for intentionally provisioned server-side directory shares while retaining strict path and personal-directory safety checks.</li>
                 <li>Updated the native Linux server in parallel with the macOS/Swift server, including group-inheritance persistence, transfer statistics, recursive directory-share handling, Classic agreement formatting, and Unicode-to-Classic emoji fallbacks.</li>
+                <li>Improved Classic Conference compatibility: join and leave notifications now follow the original protocol ordering, disconnected users are removed reliably from Classic Conference lists, and modern-only presence extensions are no longer sent to Legacy clients.</li>
+                <li>Improved Classic user-update and avatar compatibility by keeping modern status/color extensions and oversized modern avatar payloads away from Legacy update packets and using Classic-safe avatar data where appropriate.</li>
+                <li>Improved the persistent file-search index: an existing index is now reused after a server restart instead of being rebuilt every time, while full rebuilds can still be started manually.</li>
+                <li>Added a configurable automatic full search-index rebuild interval in hours. A value of 0 disables scheduled full rebuilds, and the interval is measured from the last successful full rebuild across server restarts.</li>
+                <li>Drop Boxes and everything below them are now excluded from the search index during both full rebuilds and incremental file updates.</li>
+                <li>Improved incremental search-index failure handling: the server falls back to filesystem search instead of unexpectedly starting a complete background rebuild.</li>
+                <li>Deleting files or folders inside server-side directory-symlink shares now works across filesystem boundaries while preserving the central Server Trash behavior.</li>
         </ul></span>
 
         <p><span class="header" lang="en">New in 1.0.2</span></p>

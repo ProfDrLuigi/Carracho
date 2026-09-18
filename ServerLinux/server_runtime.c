@@ -2282,6 +2282,155 @@ static int can_move(cr_session*s,int folder){return account_perm(s,folder?PERM_M
 static int can_rename(cr_session*s,int folder){return s->mode==CR_MODE_ADMIN&&account_perm(s,folder?PERM_RENAME_FOLDERS:PERM_RENAME_FILES);}
 static int can_comment(cr_session*s,int folder){return account_perm(s,folder?PERM_COMMENT_FOLDERS:PERM_COMMENT_FILES);}
 static int recursive_remove_path(const char*path){struct stat st;if(lstat(path,&st))return errno==ENOENT?0:-1;if(S_ISLNK(st.st_mode)||S_ISREG(st.st_mode))return unlink(path);if(!S_ISDIR(st.st_mode))return-1;DIR*d=opendir(path);if(!d)return-1;struct dirent*de;int rc=0;while((de=readdir(d))){if(!strcmp(de->d_name,".")||!strcmp(de->d_name,".."))continue;char child[PATH_MAX];if(join_path_component(child,sizeof(child),path,de->d_name)||recursive_remove_path(child)){rc=-1;break;}}closedir(d);if(!rc&&rmdir(path))rc=-1;return rc;}
+
+static int copy_regular_file_for_trash(const char *source, const char *dest, mode_t mode) {
+    int in = open(source, O_RDONLY | O_CLOEXEC);
+    if (in < 0)
+        return -1;
+
+    int out = open(dest, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+    if (out < 0) {
+        int saved = errno;
+        close(in);
+        errno = saved;
+        return -1;
+    }
+
+    uint8_t buffer[128 * 1024];
+    int rc = 0;
+    for (;;) {
+        ssize_t n = read(in, buffer, sizeof(buffer));
+        if (n < 0) {
+            if (errno == EINTR)
+                continue;
+            rc = -1;
+            break;
+        }
+        if (n == 0)
+            break;
+
+        size_t off = 0;
+        while (off < (size_t)n) {
+            ssize_t w = write(out, buffer + off, (size_t)n - off);
+            if (w < 0) {
+                if (errno == EINTR)
+                    continue;
+                rc = -1;
+                break;
+            }
+            off += (size_t)w;
+        }
+        if (rc)
+            break;
+    }
+
+    if (!rc && fchmod(out, mode & 07777))
+        rc = -1;
+
+    int saved = errno;
+    if (close(in) && !rc) {
+        rc = -1;
+        saved = errno;
+    }
+    if (close(out) && !rc) {
+        rc = -1;
+        saved = errno;
+    }
+    if (rc) {
+        unlink(dest);
+        errno = saved;
+    }
+    return rc;
+}
+
+static int copy_path_for_trash(const char *source, const char *dest) {
+    struct stat st;
+    if (lstat(source, &st))
+        return -1;
+
+    if (S_ISREG(st.st_mode))
+        return copy_regular_file_for_trash(source, dest, st.st_mode);
+
+    if (S_ISLNK(st.st_mode)) {
+        char target[PATH_MAX];
+        ssize_t n = readlink(source, target, sizeof(target) - 1);
+        if (n < 0)
+            return -1;
+        target[n] = 0;
+        return symlink(target, dest);
+    }
+
+    if (!S_ISDIR(st.st_mode)) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    if (mkdir(dest, 0700))
+        return -1;
+
+    DIR *d = opendir(source);
+    if (!d) {
+        int saved = errno;
+        rmdir(dest);
+        errno = saved;
+        return -1;
+    }
+
+    int rc = 0;
+    struct dirent *de;
+    while ((de = readdir(d))) {
+        if (!strcmp(de->d_name, ".") || !strcmp(de->d_name, ".."))
+            continue;
+
+        char src_child[PATH_MAX];
+        char dst_child[PATH_MAX];
+        if (join_path_component(src_child, sizeof(src_child), source, de->d_name) ||
+            join_path_component(dst_child, sizeof(dst_child), dest, de->d_name) ||
+            copy_path_for_trash(src_child, dst_child)) {
+            rc = -1;
+            break;
+        }
+    }
+
+    int saved = errno;
+    closedir(d);
+
+    if (!rc && chmod(dest, st.st_mode & 07777)) {
+        rc = -1;
+        saved = errno;
+    }
+    if (rc) {
+        recursive_remove_path(dest);
+        errno = saved;
+    }
+    return rc;
+}
+
+static int move_path_allowing_cross_device(const char *source, const char *dest, int *used_copy) {
+    if (used_copy)
+        *used_copy = 0;
+
+    if (rename(source, dest) == 0)
+        return 0;
+    if (errno != EXDEV)
+        return -1;
+
+    if (copy_path_for_trash(source, dest))
+        return -1;
+
+    if (recursive_remove_path(source)) {
+        /*
+         * Keep the complete trash copy as a safety backup if removing the source fails
+         * part-way through. Returning an error prevents metadata/index deletion.
+         */
+        return -1;
+    }
+
+    if (used_copy)
+        *used_copy = 1;
+    return 0;
+}
+
 static int unique_trash_path(cr_server*s,const char*source,char*out,size_t cap){
     const char*leaf=strrchr(source,'/');leaf=leaf?leaf+1:source;
     uint8_t rnd[16];if(RAND_bytes(rnd,sizeof(rnd))!=1)return-1;
@@ -2298,7 +2447,44 @@ static int handle_create_folder(cr_session*s,const cr_packet*p){
     if(!account_perm(s,PERM_CREATE_FOLDERS))return send_error(s,p->transaction_id,1);
     const cr_tlv*parent=cr_packet_field(p,1),*flagsf=cr_packet_field(p,2),*name=cr_packet_field(p,3);if(!flagsf||flagsf->length!=2||!name||validate_legacy_leaf(name->value,name->length,0xfa))return send_error(s,p->transaction_id,1);const uint8_t*pp=parent?parent->value:NULL;size_t pl=parent?parent->length:0;char parent_fs[PATH_MAX];if(resolve_legacy_path_ex(s->server,s,pp,pl,parent_fs,sizeof(parent_fs),1))return send_error(s,p->transaction_id,1);int folder=0;if(resource_kind(parent_fs,&folder,NULL,NULL)||!folder)return send_error(s,p->transaction_id,1);uint8_t child[4096];size_t cl=0;if(build_legacy_child(pp,pl,name->value,name->length,child,&cl))return send_error(s,p->transaction_id,1);char target[PATH_MAX];if(resolve_legacy_path_ex(s->server,s,child,cl,target,sizeof(target),0)||mkdir(target,0755))return send_error(s,p->transaction_id,1);cr_file_metadata m;cr_file_metadata_init(&m);m.flags=cr_read_be16(flagsf->value)&~DIR_FLAG_FOLDER;cr_now_iso8601(m.created_at);m.has_created_at=1;if(cr_file_metadata_set(session_metadata_store(s->server,s),child,cl,&m)){rmdir(target);return send_error(s,p->transaction_id,1);}if(file_search_index_incremental_available(s->server)&&!session_uses_legacy_files_root(s->server,s)&&!s->files_root_path[0]&&cr_file_search_index_upsert_subtree(&s->server->file_index,target,child,cl,&s->server->metadata,&s->server->search_index_exclusions)){log_msg("File-search index update failed for created folder");invalidate_file_search_index(s->server,"incremental folder update failure");}log_msg("Folder created: %s",target);return send_task_complete(s,p->transaction_id);
 }
-static int handle_delete_file(cr_session*s,const cr_packet*p){const cr_tlv*pf=cr_packet_field(p,1);if(!pf||!pf->length)return send_error(s,p->transaction_id,1);if(!account_perm(s,PERM_VIEW_DROPBOXES)&&path_is_inside_dropbox(s->server,s,pf->value,pf->length))return send_error(s,p->transaction_id,1);char source[PATH_MAX];if(resolve_legacy_path_ex(s->server,s,pf->value,pf->length,source,sizeof(source),1))return send_error(s,p->transaction_id,1);int folder=0;if(resource_kind(source,&folder,NULL,NULL)||!can_delete(s,folder))return send_error(s,p->transaction_id,1);if(mkdir(s->server->trash_root,0755)&&errno!=EEXIST)return send_error(s,p->transaction_id,1);char dest[PATH_MAX];if(unique_trash_path(s->server,source,dest,sizeof(dest))||rename(source,dest))return send_error(s,p->transaction_id,1);if(cr_file_metadata_remove(session_metadata_store(s->server,s),pf->value,pf->length,folder)){rename(dest,source);return send_error(s,p->transaction_id,1);}if(file_search_index_incremental_available(s->server)&&!session_uses_legacy_files_root(s->server,s)&&!s->files_root_path[0]&&cr_file_search_index_remove_subtree(&s->server->file_index,pf->value,pf->length)){log_msg("File-search index delete failed");invalidate_file_search_index(s->server,"incremental delete failure");}return send_task_complete(s,p->transaction_id);}
+static int handle_delete_file(cr_session*s,const cr_packet*p){
+    const cr_tlv*pf=cr_packet_field(p,1);
+    if(!pf||!pf->length)return send_error(s,p->transaction_id,1);
+    if(!account_perm(s,PERM_VIEW_DROPBOXES)&&path_is_inside_dropbox(s->server,s,pf->value,pf->length))
+        return send_error(s,p->transaction_id,1);
+
+    char source[PATH_MAX];
+    if(resolve_legacy_path_ex(s->server,s,pf->value,pf->length,source,sizeof(source),1))
+        return send_error(s,p->transaction_id,1);
+
+    int folder=0;
+    if(resource_kind(source,&folder,NULL,NULL)||!can_delete(s,folder))
+        return send_error(s,p->transaction_id,1);
+    if(mkdir(s->server->trash_root,0755)&&errno!=EEXIST)
+        return send_error(s,p->transaction_id,1);
+
+    char dest[PATH_MAX];
+    int cross_device=0;
+    if(unique_trash_path(s->server,source,dest,sizeof(dest))||
+       move_path_allowing_cross_device(source,dest,&cross_device))
+        return send_error(s,p->transaction_id,1);
+
+    if(cr_file_metadata_remove(session_metadata_store(s->server,s),pf->value,pf->length,folder)){
+        if(move_path_allowing_cross_device(dest,source,NULL))
+            log_msg("Delete rollback failed after metadata error: %s -> %s",dest,source);
+        return send_error(s,p->transaction_id,1);
+    }
+
+    if(file_search_index_incremental_available(s->server)&&
+       !session_uses_legacy_files_root(s->server,s)&&!s->files_root_path[0]&&
+       cr_file_search_index_remove_subtree(&s->server->file_index,pf->value,pf->length)){
+        log_msg("File-search index delete failed");
+        invalidate_file_search_index(s->server,"incremental delete failure");
+    }
+    if(cross_device)
+        log_msg("Moved to server Trash across filesystems: %s -> %s",source,dest);
+    return send_task_complete(s,p->transaction_id);
+}
 static int handle_file_info(cr_session*s,const cr_packet*p){const cr_tlv*pf=cr_packet_field(p,1);if(!pf||!pf->length)return send_error(s,p->transaction_id,1);if(!account_perm(s,PERM_VIEW_DROPBOXES)&&path_is_inside_dropbox(s->server,s,pf->value,pf->length))return send_error(s,p->transaction_id,1);char path[PATH_MAX];struct stat st;int folder=0;if(resolve_legacy_path_ex(s->server,s,pf->value,pf->length,path,sizeof(path),1)||resource_kind(path,&folder,NULL,&st))return send_error(s,p->transaction_id,1);cr_file_metadata m;int found=0;if(cr_file_metadata_get(session_metadata_store(s->server,s),pf->value,pf->length,&m,&found))return send_error(s,p->transaction_id,1);uint8_t meta[30];memset(meta,0,sizeof(meta));cr_write_be16(meta,(uint16_t)(m.flags|(folder?DIR_FLAG_FOLDER:0)));uint64_t sz=folder?0:(uint64_t)(st.st_size<0?0:st.st_size);cr_write_be32(meta+2,sz>UINT32_MAX?UINT32_MAX:(uint32_t)sz);cr_write_be32(meta+6,m.has_created_at?cr_iso8601_to_mac_timestamp(m.created_at):stat_mac_time(st.st_mtime));cr_write_be32(meta+10,stat_mac_time(st.st_mtime));memcpy(meta+14,m.finder_info,16);const uint8_t*leaf=NULL;size_t ll=0;if(legacy_leaf(pf->value,pf->length,&leaf,&ll)){cr_file_metadata_free(&m);return send_error(s,p->transaction_id,1);}cr_tlv_out f[5];size_t n=0;f[n++]=(cr_tlv_out){1,pf->value,pf->length};f[n++]=(cr_tlv_out){2,leaf,(uint16_t)ll};f[n++]=(cr_tlv_out){3,meta,30};f[n++]=(cr_tlv_out){4,m.comment,(uint16_t)m.comment_len};if(s->modern_transport)f[n++]=(cr_tlv_out){FILE_LABEL_FIELD,&m.label,1};int rc=session_send(s,CMD_MOVE_FILE,p->transaction_id,f,n);cr_file_metadata_free(&m);return rc;}
 static int handle_set_file_info(cr_session*s,const cr_packet*p){const cr_tlv*pf=cr_packet_field(p,1),*name=cr_packet_field(p,2),*flagsf=cr_packet_field(p,3),*comment=cr_packet_field(p,4),*labelf=s->modern_transport?cr_packet_field(p,FILE_LABEL_FIELD):NULL;if(!pf||!pf->length||!name||validate_legacy_leaf(name->value,name->length,0x200)||!flagsf||flagsf->length!=2||!comment||comment->length>255||(labelf&&(labelf->length!=1||labelf->value[0]>7)))return send_error(s,p->transaction_id,1);if(!account_perm(s,PERM_VIEW_DROPBOXES)&&path_is_inside_dropbox(s->server,s,pf->value,pf->length))return send_error(s,p->transaction_id,1);char source[PATH_MAX];int folder=0;struct stat st;if(resolve_legacy_path_ex(s->server,s,pf->value,pf->length,source,sizeof(source),1)||resource_kind(source,&folder,NULL,&st))return send_error(s,p->transaction_id,1);cr_file_metadata m;int found=0;if(cr_file_metadata_get(session_metadata_store(s->server,s),pf->value,pf->length,&m,&found))return send_error(s,p->transaction_id,1);const uint8_t*oldleaf=NULL;size_t oldlen=0;if(legacy_leaf(pf->value,pf->length,&oldleaf,&oldlen)){cr_file_metadata_free(&m);return send_error(s,p->transaction_id,1);}uint16_t requested=(uint16_t)(cr_read_be16(flagsf->value)&~DIR_FLAG_FOLDER),oldflags=(uint16_t)(m.flags&~DIR_FLAG_FOLDER);int rename_req=oldlen!=name->length||memcmp(oldleaf,name->value,oldlen),comment_req=m.comment_len!=comment->length||(m.comment_len&&memcmp(m.comment,comment->value,m.comment_len)),flags_req=folder&&requested!=oldflags,label_req=labelf&&m.label!=labelf->value[0];if((rename_req&&!can_rename(s,folder))||(comment_req&&!can_comment(s,folder))||(label_req&&!can_comment(s,folder))||(flags_req&&!account_perm(s,PERM_CHANGE_FOLDER_MODE))){cr_file_metadata_free(&m);return send_error(s,p->transaction_id,1);}uint8_t final_path[4096];size_t final_len=pf->length;memcpy(final_path,pf->value,pf->length);char final_fs[PATH_MAX];strcpy(final_fs,source);if(rename_req){size_t parent_len=legacy_parent_length(pf->value,pf->length);if(build_legacy_child(pf->value,parent_len,name->value,name->length,final_path,&final_len)||resolve_legacy_path_ex(s->server,s,final_path,final_len,final_fs,sizeof(final_fs),0)||rename(source,final_fs)){cr_file_metadata_free(&m);return send_error(s,p->transaction_id,1);}if(cr_file_metadata_move(session_metadata_store(s->server,s),pf->value,pf->length,final_path,final_len,folder)){rename(final_fs,source);cr_file_metadata_free(&m);return send_error(s,p->transaction_id,1);}}
     cr_file_metadata_free(&m);if(cr_file_metadata_get(session_metadata_store(s->server,s),final_path,final_len,&m,&found)){if(rename_req)rename(final_fs,source);return send_error(s,p->transaction_id,1);}free(m.comment);m.comment=NULL;m.comment_len=comment->length;if(comment->length){m.comment=malloc(comment->length);if(!m.comment){cr_file_metadata_free(&m);return send_error(s,p->transaction_id,1);}memcpy(m.comment,comment->value,comment->length);}if(folder)m.flags=requested;if(labelf)m.label=labelf->value[0];if(!m.has_created_at){cr_now_iso8601(m.created_at);m.has_created_at=1;}if(cr_file_metadata_set(session_metadata_store(s->server,s),final_path,final_len,&m)){cr_file_metadata_free(&m);return send_error(s,p->transaction_id,1);}cr_file_metadata_free(&m);if(file_search_index_incremental_available(s->server)&&!session_uses_legacy_files_root(s->server,s)&&!s->files_root_path[0]){int irc=rename_req?cr_file_search_index_move_subtree(&s->server->file_index,pf->value,pf->length,final_path,final_len,final_fs,&s->server->metadata,&s->server->search_index_exclusions):cr_file_search_index_upsert_subtree(&s->server->file_index,final_fs,final_path,final_len,&s->server->metadata,&s->server->search_index_exclusions);if(irc){log_msg("File-search index metadata/rename update failed");invalidate_file_search_index(s->server,"incremental metadata/rename failure");}}return send_task_complete(s,p->transaction_id);}

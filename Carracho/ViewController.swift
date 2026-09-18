@@ -1175,6 +1175,11 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
     /// The shared Files card initially lives in Overview. Its first move into the full Files
     /// workspace needs one final top alignment after Auto Layout has resized the scroll view.
     var fileNeedsInitialWorkspaceTopAlignment = false
+    /// Overview uses the same NSScrollView as the standalone Files workspace. With enough rows
+    /// for the vertical scroller to appear, AppKit tiles that scroll view after the normal table
+    /// reload and can re-apply the previous clip origin. Keep this one-shot flag until the parent
+    /// view has completed layout, then align row 0 against the final scroller geometry.
+    var fileNeedsOverviewTopAlignmentAfterLayout = false
     var selectedFilePaths: Set<Data> = []
     /// Stable snapshot consumed by NSTableView while it asks for visible cells.
     /// Rebuilding/sorting the complete directory tree from every data-source callback makes
@@ -1436,6 +1441,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         if currentWorkspace == .conferences || currentWorkspace == .overview {
             updateChannelComposerHeight()
         }
+        alignOverviewFilesToTopAfterLayoutIfNeeded()
     }
 
     func buildInterface() {
@@ -3436,6 +3442,12 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         reloadJoinedChannelSidebar()
         updateInspectorContext()
         switch workspace {
+        case .overview:
+            // The shared Files card is reparented into the compact Overview pane. Its scroll view
+            // may not know yet whether it needs a vertical scroller, so defer the one-shot top
+            // alignment to viewDidLayout(), after NSScrollView has tiled its final geometry.
+            scheduleOverviewFilesTopAlignmentAfterLayout()
+            alignInitialFilesWorkspaceToTopIfNeeded()
         case .files:
             view.window?.makeFirstResponder(fileTable)
             alignInitialFilesWorkspaceToTopIfNeeded()
@@ -3789,6 +3801,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         pendingFileScrollRestoreY = nil
         fileShouldResetScrollOnNextReload = true
         fileNeedsInitialWorkspaceTopAlignment = false
+        fileNeedsOverviewTopAlignmentAfterLayout = false
         resetInlineFileExpansion()
         transferMonitorItems = [:]
         transferMonitorOrder = []
@@ -5518,6 +5531,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         pendingFileScrollRestoreY = nil
         fileShouldResetScrollOnNextReload = true
         fileNeedsInitialWorkspaceTopAlignment = false
+        fileNeedsOverviewTopAlignmentAfterLayout = false
         resetInlineFileExpansion()
         fileSearchField.stringValue = ""
         fileTransferLabel.stringValue = ""
@@ -5647,7 +5661,9 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
                 self.lastDirectory = listing
                 self.commitFileNavigation(listing.currentPath, mode: .initialize)
                 self.renderSession()
-                if self.currentWorkspace == .files { self.alignInitialFilesWorkspaceToTopIfNeeded() }
+                if self.currentWorkspace == .files || self.currentWorkspace == .overview {
+                    self.alignInitialFilesWorkspaceToTopIfNeeded()
+                }
             case let .failure(error):
                 self.fileNeedsInitialWorkspaceTopAlignment = false
                 self.fileDirectoryError = LF("Could not load the file root: %@", Self.displayMessage(for: error))

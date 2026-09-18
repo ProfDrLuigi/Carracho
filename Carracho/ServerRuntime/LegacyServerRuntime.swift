@@ -1957,6 +1957,33 @@ final class LegacyServerRuntime {
         } catch { try fileControlError(error, packet: packet, session: session, operation: "Create folder") }
     }
 
+    private func moveItemAllowingCrossVolume(from source: URL, to destination: URL) throws {
+        let manager = FileManager.default
+        do {
+            try manager.moveItem(at: source, to: destination)
+            return
+        } catch {
+            // A server-side directory symlink may point to another volume. Preserve the central
+            // server Trash semantics by copying first and deleting the source only after the copy
+            // completed. If source removal fails, discard the copy and report the operation.
+            do {
+                try manager.copyItem(at: source, to: destination)
+                do {
+                    try manager.removeItem(at: source)
+                } catch {
+                    try? manager.removeItem(at: destination)
+                    throw error
+                }
+            } catch {
+                if manager.fileExists(atPath: destination.path),
+                   manager.fileExists(atPath: source.path) {
+                    try? manager.removeItem(at: destination)
+                }
+                throw error
+            }
+        }
+    }
+
     private func handleDeleteFile(packet: LegacyPacket, session: LegacyServerSession) throws {
         guard let path = packet.firstField(type: 1)?.value, !path.isEmpty else {
             try session.sendAuthenticated(Self.errorPacket(transactionID: packet.transactionID, code: 1)); return
@@ -1971,11 +1998,11 @@ final class LegacyServerRuntime {
             try FileManager.default.createDirectory(at: trashRoot, withIntermediateDirectories: true)
             let leaf = source.lastPathComponent
             let trashURL = trashRoot.appendingPathComponent("\(UUID().uuidString)-\(leaf)")
-            try FileManager.default.moveItem(at: source, to: trashURL)
+            try moveItemAllowingCrossVolume(from: source, to: trashURL)
             let mappedPath = try storageMetadataPath(path, account: session.account)
             do { try requireFileMetadataStore(legacyTransport: session.isLegacyTransport).remove(path: mappedPath, includingDescendants: kind.isFolder) }
             catch {
-                try? FileManager.default.moveItem(at: trashURL, to: source)
+                try? moveItemAllowingCrossVolume(from: trashURL, to: source)
                 throw error
             }
             removeSearchIndexSubtree(path: mappedPath, legacyTransport: session.isLegacyTransport)

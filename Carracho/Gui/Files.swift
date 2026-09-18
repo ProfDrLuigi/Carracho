@@ -724,12 +724,41 @@ extension ViewController {
         }
     }
 
+    func scheduleOverviewFilesTopAlignmentAfterLayout() {
+        guard currentWorkspace == .overview,
+              !fileDirectoryLoading, fileSearchResults == nil, lastDirectory != nil else { return }
+        pendingFileScrollRestoreY = nil
+        fileNeedsOverviewTopAlignmentAfterLayout = true
+        view.needsLayout = true
+    }
+
+    /// Runs from ViewController.viewDidLayout(), not from reloadData(). This distinction matters
+    /// for long Overview lists: NSScrollView only knows its final clip geometry after deciding
+    /// that the autohiding vertical scroller is needed. Tiling here prevents that late scroller
+    /// pass from resurrecting the previous vertical origin.
+    func alignOverviewFilesToTopAfterLayoutIfNeeded() {
+        guard fileNeedsOverviewTopAlignmentAfterLayout, currentWorkspace == .overview,
+              !fileDirectoryLoading, fileSearchResults == nil, lastDirectory != nil,
+              let scrollView = fileTable.enclosingScrollView else { return }
+
+        scrollView.tile()
+        scrollView.layoutSubtreeIfNeeded()
+        fileTable.layoutSubtreeIfNeeded()
+        scrollFileTableToTop()
+        fileNeedsOverviewTopAlignmentAfterLayout = false
+    }
+
     func alignInitialFilesWorkspaceToTopIfNeeded() {
-        guard fileNeedsInitialWorkspaceTopAlignment, currentWorkspace == .files,
+        guard fileNeedsInitialWorkspaceTopAlignment,
+              currentWorkspace == .files || currentWorkspace == .overview,
               !fileDirectoryLoading, fileSearchResults == nil, lastDirectory != nil else { return }
         fileNeedsInitialWorkspaceTopAlignment = false
         pendingFileScrollRestoreY = nil
-        alignFilesToTopAfterFinalLayout()
+        if currentWorkspace == .overview {
+            scheduleOverviewFilesTopAlignmentAfterLayout()
+        } else {
+            alignFilesToTopAfterFinalLayout()
+        }
     }
 
     func reloadFileTablePreservingState() {
