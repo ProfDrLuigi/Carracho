@@ -744,6 +744,9 @@ extension ViewController {
         // win over it and resurrect the old folder's vertical offset.
         if shouldResetScroll { pendingFileScrollRestoreY = nil }
 
+        // NSTableView may ask for numberOfRows/viewFor dozens of times during a single scroll.
+        // Build and sort the logical row tree once per model reload, not once per cell callback.
+        rebuildVisibleFileRowSnapshot()
         fileTable.reloadData()
         let currentRows = visibleFileRows
         if !selectedPaths.isEmpty {
@@ -1401,9 +1404,11 @@ extension ViewController {
     }
 
     func nativeMacOSFolderImage() -> NSImage {
+        if let cached = filesFolderIconCache { return cached }
         let systemImage = NSWorkspace.shared.icon(forFileType: "public.folder")
-        guard let image = systemImage.copy() as? NSImage else { return systemImage }
+        let image = (systemImage.copy() as? NSImage) ?? systemImage
         image.isTemplate = false
+        filesFolderIconCache = image
         return image
     }
 
@@ -1464,37 +1469,43 @@ extension ViewController {
     }
 
     func genericSystemDocumentImage() -> NSImage {
+        if let cached = filesGenericDocumentIconCache { return cached }
         let systemImage: NSImage
         if #available(macOS 12.0, *) {
             systemImage = NSWorkspace.shared.icon(for: .data)
         } else {
             systemImage = NSWorkspace.shared.icon(forFileType: "public.data")
         }
-        guard let image = systemImage.copy() as? NSImage else { return systemImage }
+        let image = (systemImage.copy() as? NSImage) ?? systemImage
         image.isTemplate = false
+        filesGenericDocumentIconCache = image
         return image
     }
 
     private func systemFileTypeImage(forExtension fileExtension: String) -> NSImage? {
+        let cacheKey = fileExtension.lowercased()
+        if let cached = filesSystemFileTypeIconCache[cacheKey] { return cached }
+        if filesSystemFileTypeIconMisses.contains(cacheKey) { return nil }
+
         let systemImage: NSImage
-        let genericImage: NSImage
-        if #available(macOS 12.0, *), let type = UTType(filenameExtension: fileExtension) {
+        if #available(macOS 12.0, *), let type = UTType(filenameExtension: cacheKey) {
             systemImage = NSWorkspace.shared.icon(for: type)
-            genericImage = NSWorkspace.shared.icon(for: .data)
         } else {
-            systemImage = NSWorkspace.shared.icon(forFileType: fileExtension)
-            genericImage = NSWorkspace.shared.icon(forFileType: "public.data")
+            systemImage = NSWorkspace.shared.icon(forFileType: cacheKey)
         }
+        let genericImage = genericSystemDocumentImage()
 
         // NSWorkspace also returns a generic document for unknown/unregistered extensions.
         // Treat that as "no system-specific icon" so Carracho's Generic-<ext> asset gets its turn.
         if let systemData = systemImage.tiffRepresentation,
            let genericData = genericImage.tiffRepresentation,
            systemData == genericData {
+            filesSystemFileTypeIconMisses.insert(cacheKey)
             return nil
         }
-        guard let image = systemImage.copy() as? NSImage else { return systemImage }
+        let image = (systemImage.copy() as? NSImage) ?? systemImage
         image.isTemplate = false
+        filesSystemFileTypeIconCache[cacheKey] = image
         return image
     }
 
@@ -1502,10 +1513,13 @@ extension ViewController {
         let name = Self.macRomanString(entry.name)
         let lowerName = name.lowercased()
         if lowerName.hasSuffix(".carracho") || lowerName.hasPrefix(".carracho.") {
+            if let cached = filesIncompleteIconCache { return cached }
             let source = Bundle.main.image(forResource: NSImage.Name("Incomplete"))
                 ?? NSImage(named: NSImage.Name("Incomplete"))
-            if let source, let image = source.copy() as? NSImage {
+            if let source {
+                let image = (source.copy() as? NSImage) ?? source
                 image.isTemplate = false
+                filesIncompleteIconCache = image
                 return image
             }
         }

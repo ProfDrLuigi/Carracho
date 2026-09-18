@@ -352,9 +352,9 @@ final class LegacyServerRuntime {
         for recipient in recipients {
             let wireMessage: Data
             if recipient.isLegacyTransport, CarrachoTextWire.isTaggedUTF8(message) {
-                guard let filtered = CarrachoTextWire.macRomanFilteringUnrepresentable(from: message),
-                      !filtered.isEmpty else { continue }
-                wireMessage = filtered
+                guard let classic = CarrachoTextWire.macRomanDescribingEmoji(from: message, maximumBytes: 0x800),
+                      !classic.isEmpty else { continue }
+                wireMessage = classic
             } else {
                 wireMessage = message
             }
@@ -383,8 +383,9 @@ final class LegacyServerRuntime {
         let message = try CarrachoTextWire.encode(normalized, maximumBytes: 0x8000)
         let wireMessage: Data
         if recipient.isLegacyTransport, CarrachoTextWire.isTaggedUTF8(message) {
-            guard let filtered = CarrachoTextWire.macRomanFilteringUnrepresentable(from: message), !filtered.isEmpty else { return }
-            wireMessage = filtered
+            guard let classic = CarrachoTextWire.macRomanDescribingEmoji(from: message, maximumBytes: 0x8000),
+                  !classic.isEmpty else { return }
+            wireMessage = classic
         } else {
             wireMessage = message
         }
@@ -742,7 +743,14 @@ final class LegacyServerRuntime {
         if let modernServerPublicKey { fields.append(LegacyTLV(type: 7, value: modernServerPublicKey)) }
         if let modernAuthenticator { fields.append(LegacyTLV(type: 8, value: modernAuthenticator)) }
         if snapshot.agreement.enabled {
-            let agreement = LegacyAgreementContent(text: Self.macRoman(snapshot.agreement.text), styleData: Data())
+            let isClassic = modernSalt == nil
+            let agreementText = isClassic
+                ? Self.classicAgreementText(snapshot.agreement.text)
+                : Self.macRoman(snapshot.agreement.text)
+            let agreement = LegacyAgreementContent(
+                text: agreementText,
+                styleData: isClassic ? Self.classicAgreementStyleData() : Data()
+            )
             fields.append(LegacyTLV(type: 4, value: try agreement.encoded()))
         }
         return LegacyPacket(command: LegacyCommand.loginSuccess, transactionID: 0, fields: fields)
@@ -1111,9 +1119,19 @@ final class LegacyServerRuntime {
             guard let target = authenticatedSession(userID: userID) else {
                 throw LegacyServerRuntimeError.protocolFailure("private-message target is not connected")
             }
+            let wireMessage: Data
+            if target.isLegacyTransport, CarrachoTextWire.isTaggedUTF8(message) {
+                guard let classic = CarrachoTextWire.macRomanDescribingEmoji(from: message, maximumBytes: 0x8000),
+                      !classic.isEmpty else {
+                    throw LegacyServerRuntimeError.protocolFailure("private-message text is not Classic-representable")
+                }
+                wireMessage = classic
+            } else {
+                wireMessage = message
+            }
             var fields = [
                 LegacyTLV(type: 1, value: LegacyWire.uint32BE(senderID)),
-                LegacyTLV(type: 2, value: message),
+                LegacyTLV(type: 2, value: wireMessage),
             ]
             if !extra.isEmpty { fields.append(LegacyTLV(type: 3, value: extra)) }
             let targetsLocalBot = target.isLocalOnly
@@ -1144,11 +1162,23 @@ final class LegacyServerRuntime {
             }
 
             if let target = authenticatedSession(accountID: recipient.id) {
+                let wireMessage: Data
+                if target.isLegacyTransport, CarrachoTextWire.isTaggedUTF8(message) {
+                    guard let classic = CarrachoTextWire.macRomanDescribingEmoji(
+                        from: message,
+                        maximumBytes: LegacyOfflineMessage.maximumMessageLength
+                    ), !classic.isEmpty else {
+                        throw LegacyServerRuntimeError.protocolFailure("offline-message text is not Classic-representable")
+                    }
+                    wireMessage = classic
+                } else {
+                    wireMessage = message
+                }
                 try target.sendAuthenticated(LegacyPacket(command: LegacyCommand.privateMessage,
                                                            transactionID: 0,
                                                            fields: [
                     LegacyTLV(type: 1, value: LegacyWire.uint32BE(senderID)),
-                    LegacyTLV(type: 2, value: message),
+                    LegacyTLV(type: 2, value: wireMessage),
                 ]))
             } else {
                 guard try backend.offlineMessageCount(recipientAccountID: recipient.id) < LegacyOfflineMessage.maximumQueuedMessages else {
@@ -1213,11 +1243,23 @@ final class LegacyServerRuntime {
             let stored = try backend.loadOfflineMessages(recipientAccountID: account.id)
             let fields = try stored.map { item -> LegacyTLV in
                 let payload = try LegacyOfflineMessagePayload.decode(item.plaintext)
+                let wireMessage: Data
+                if session.isLegacyTransport, CarrachoTextWire.isTaggedUTF8(payload.message) {
+                    guard let classic = CarrachoTextWire.macRomanDescribingEmoji(
+                        from: payload.message,
+                        maximumBytes: LegacyOfflineMessage.maximumMessageLength
+                    ), !classic.isEmpty else {
+                        throw LegacyServerRuntimeError.protocolFailure("stored offline-message text is not Classic-representable")
+                    }
+                    wireMessage = classic
+                } else {
+                    wireMessage = payload.message
+                }
                 let record = LegacyOfflineMessage(id: item.id,
                                                   sentAtUnix: item.createdAtUnix,
                                                   senderLogin: payload.senderLogin,
                                                   senderNickname: payload.senderNickname,
-                                                  message: payload.message)
+                                                  message: wireMessage)
                 return LegacyTLV(type: 1, value: try record.encoded())
             }
             try session.sendAuthenticated(LegacyPacket(command: LegacyCommand.offlineMessageFetch,
@@ -3314,9 +3356,9 @@ final class LegacyServerRuntime {
         for recipient in authenticatedSessions() {
             let wireMessage: Data
             if recipient.isLegacyTransport, CarrachoTextWire.isTaggedUTF8(message) {
-                guard let filtered = CarrachoTextWire.macRomanFilteringUnrepresentable(from: message),
-                      !filtered.isEmpty else { continue }
-                wireMessage = filtered
+                guard let classic = CarrachoTextWire.macRomanDescribingEmoji(from: message, maximumBytes: 0x200),
+                      !classic.isEmpty else { continue }
+                wireMessage = classic
             } else {
                 wireMessage = message
             }
@@ -3473,13 +3515,23 @@ final class LegacyServerRuntime {
             log("Channel media reference rejected for user \(userID): \(error.localizedDescription)")
             return
         }
-        let broadcast = LegacyPacket(command: LegacyCommand.channelChat, transactionID: 0, fields: [
-            LegacyTLV(type: LegacyChannelField.channelID, value: LegacyWire.uint32BE(id)),
-            LegacyTLV(type: LegacyChannelField.userID, value: LegacyWire.uint32BE(userID)),
-            LegacyTLV(type: LegacyChannelField.message, value: message),
-            LegacyTLV(type: LegacyChannelField.chatAttribute, value: Data([attribute])),
-        ])
-        recipients.forEach { try? $0.sendAuthenticated(broadcast) }
+        for recipient in recipients {
+            let wireMessage: Data
+            if recipient.isLegacyTransport, CarrachoTextWire.isTaggedUTF8(message) {
+                guard let classic = CarrachoTextWire.macRomanDescribingEmoji(from: message, maximumBytes: 0x800),
+                      !classic.isEmpty else { continue }
+                wireMessage = classic
+            } else {
+                wireMessage = message
+            }
+            let broadcast = LegacyPacket(command: LegacyCommand.channelChat, transactionID: 0, fields: [
+                LegacyTLV(type: LegacyChannelField.channelID, value: LegacyWire.uint32BE(id)),
+                LegacyTLV(type: LegacyChannelField.userID, value: LegacyWire.uint32BE(userID)),
+                LegacyTLV(type: LegacyChannelField.message, value: wireMessage),
+                LegacyTLV(type: LegacyChannelField.chatAttribute, value: Data([attribute])),
+            ])
+            try? recipient.sendAuthenticated(broadcast)
+        }
         recordMessage()
         respondToLocalBotChannelCommandIfNeeded(message, from: session, channelID: id)
     }
@@ -3854,6 +3906,55 @@ final class LegacyServerRuntime {
             "path=\(Self.quotedLogValue(path)) size_bytes=\(descriptor.totalBytes) " +
             "transferred_bytes=\(descriptor.bytesTransferred) wire_bytes=\(descriptor.wireBytesTransferred) " +
             "resumed_bytes=\(resumedBytes)")
+    }
+
+    private static func classicAgreementText(_ value: String) -> Data {
+        let normalized = value
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+            .replacingOccurrences(of: String(UnicodeScalar(0x2028)!), with: "\n")
+            .replacingOccurrences(of: String(UnicodeScalar(0x2029)!), with: "\n")
+
+        let maximumTextBytes = LegacyAgreementSetting.maximumClassicWireLength - 8
+        var result = Data()
+        result.reserveCapacity(min(normalized.utf8.count, maximumTextBytes))
+
+        for character in normalized {
+            if character == "\n" {
+                if result.count < maximumTextBytes { result.append(0x0d) }
+                continue
+            }
+            if character == "\t" {
+                if result.count < maximumTextBytes { result.append(0x09) }
+                continue
+            }
+            if character.unicodeScalars.contains(where: { $0.value < 0x20 || $0.value == 0x7f }) {
+                continue
+            }
+            guard let encoded = String(character).data(using: .macOSRoman),
+                  result.count + encoded.count <= maximumTextBytes else {
+                continue
+            }
+            result.append(encoded)
+        }
+        return result
+    }
+
+    private static func classicAgreementStyleData() -> Data {
+        // TextEdit 'styl' scrap: one StScrpRec style run beginning at character 0.
+        // Layout is big-endian: style count, ScrpSTElement(start, height, ascent,
+        // font, face+pad, size, RGBColor). A real style scrap makes the old
+        // Carracho client feed the TEXT payload through its styled TextEdit path.
+        var data = Data()
+        data.append(contentsOf: [0x00, 0x01])                         // scrpNStyles
+        data.append(contentsOf: [0x00, 0x00, 0x00, 0x00])             // scrpStartChar
+        data.append(contentsOf: [0x00, 0x0e])                         // scrpHeight
+        data.append(contentsOf: [0x00, 0x0b])                         // scrpAscent
+        data.append(contentsOf: [0x00, 0x00])                         // system font
+        data.append(contentsOf: [0x00, 0x00])                         // normal face + alignment pad
+        data.append(contentsOf: [0x00, 0x0c])                         // 12 pt
+        data.append(contentsOf: [0x00, 0x00, 0x00, 0x00, 0x00, 0x00]) // black RGB
+        return data
     }
 
     private static func macRoman(_ value: String) -> Data {
@@ -5032,6 +5133,36 @@ extension LegacyServerRuntime {
         legacyTransport && !backend.snapshot().runtime.legacyFilesRoot.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    /// Classic can have its own physical Files root for compatibility. Explicit directory
+    /// symlinks placed directly in the modern published root are still administrator-created
+    /// shares, so expose them at the Classic root as virtual ordinary folders. A real entry in
+    /// the Classic root with the same name always wins.
+    private func legacyShareOverlayRootURL(_ account: ServerAccount?) -> URL? {
+        guard usesLegacyFilesRoot(legacyTransport: true),
+              account?.personalDirectory != .rootDirectory else { return nil }
+        return try? accountFilesRootURL(account, legacyTransport: false, createIfNeeded: false)
+    }
+
+    private func legacyShareOverlayURL(firstComponent: Data, account: ServerAccount?,
+                                       legacyRoot: URL) -> URL? {
+        guard let modernRoot = legacyShareOverlayRootURL(account),
+              let component = CarrachoTextWire.validatedString(from: firstComponent),
+              !component.isEmpty, component != ".", component != ".." else { return nil }
+
+        // Anything physically present in Files-Legacy shadows the overlay by design.
+        let legacyCandidate = legacyRoot.appendingPathComponent(component).standardizedFileURL
+        if FileManager.default.fileExists(atPath: legacyCandidate.path) { return nil }
+
+        let modernCandidate = modernRoot.appendingPathComponent(component).standardizedFileURL
+        guard FileManager.default.fileExists(atPath: modernCandidate.path),
+              (try? modernCandidate.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) == true else {
+            return nil
+        }
+        let resolved = modernCandidate.resolvingSymlinksInPath().standardizedFileURL
+        guard (try? resolved.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else { return nil }
+        return modernRoot
+    }
+
     private func metadataStore(legacyTransport: Bool) -> ServerFileMetadataStore? {
         usesLegacyFilesRoot(legacyTransport: legacyTransport) ? legacyFileMetadataStore : fileMetadataStore
     }
@@ -5213,6 +5344,7 @@ extension LegacyServerRuntime {
         } else {
             virtualPersonalName = nil
         }
+        var visibleNames = Set<String>()
         for child in children.sorted(by: { $0.lastPathComponent.localizedCaseInsensitiveCompare($1.lastPathComponent) == .orderedAscending }) {
             guard !Self.isTransferStagingName(child.lastPathComponent) else { continue }
             let values = try child.resourceValues(forKeys: keys)
@@ -5269,13 +5401,72 @@ extension LegacyServerRuntime {
             } else {
                 wireSize = UInt32(min(fileSize, UInt64(UInt32.max)))
             }
+            let presentedAsFolder = targetIsFolder
             entries.append(LegacyDirectoryEntry(name: name,
                                                 size: wireSize,
                                                 timestamp: timestamp,
-                                                fileType: isSymbolicLink ? Self.symbolicLinkType : (targetIsFolder ? Self.folderType : 0),
-                                                creator: (isSymbolicLink || targetIsFolder) ? Self.folderCreator : 0,
+                                                fileType: presentedAsFolder ? Self.folderType : (isSymbolicLink ? Self.symbolicLinkType : 0),
+                                                creator: (presentedAsFolder || isSymbolicLink) ? Self.folderCreator : 0,
                                                 flags: wireFlags,
                                                 label: storedLabel))
+            visibleNames.insert(child.lastPathComponent.lowercased())
+        }
+
+        // Files-Legacy is intentionally a separate compatibility tree, but explicit directory
+        // symlinks in the modern published root are administrator-created shares. Mirror those
+        // root-level shares into Classic as ordinary FLDR entries so old clients can traverse them.
+        if legacyTransport, path.isEmpty,
+           let overlayRoot = legacyShareOverlayRootURL(account),
+           let overlayChildren = try? FileManager.default.contentsOfDirectory(
+               at: overlayRoot,
+               includingPropertiesForKeys: Array(keys),
+               options: [.skipsHiddenFiles]
+           ) {
+            for child in overlayChildren.sorted(by: {
+                $0.lastPathComponent.localizedCaseInsensitiveCompare($1.lastPathComponent) == .orderedAscending
+            }) {
+                guard !Self.isTransferStagingName(child.lastPathComponent),
+                      !visibleNames.contains(child.lastPathComponent.lowercased()) else { continue }
+                let values = try child.resourceValues(forKeys: keys)
+                guard values.isSymbolicLink == true else { continue }
+
+                let name: Data
+                if supportsTaggedUTF8Names {
+                    guard let encoded = try? CarrachoTextWire.encode(child.lastPathComponent, maximumBytes: 255),
+                          !encoded.isEmpty else { continue }
+                    name = encoded
+                } else {
+                    guard let encoded = child.lastPathComponent.data(using: .macOSRoman),
+                          !encoded.isEmpty, encoded.count <= 255 else { continue }
+                    name = encoded
+                }
+                if let virtualPersonalName, name == virtualPersonalName { continue }
+
+                let childPath = try LegacyPath.child(parent: path, name: name)
+                guard let targetURL = try? storageURL(for: childPath, account: account,
+                                                      legacyTransport: true, requireExisting: true),
+                      (try? targetURL.resolvingSymlinksInPath()
+                        .resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else { continue }
+
+                let resolvedTarget = targetURL.resolvingSymlinksInPath().standardizedFileURL
+                let targetValues = try resolvedTarget.resourceValues(forKeys: [.contentModificationDateKey])
+                let timestamp = targetValues.contentModificationDate?.legacyMacTimestamp ?? 0
+                let wireSize = visibleDirectoryItemCount(at: resolvedTarget,
+                                                         supportsTaggedUTF8Names: supportsTaggedUTF8Names)
+                let storedMetadata = fileMetadataStore?.metadata(
+                    for: try storageMetadataPath(childPath, account: account)
+                )
+                let wireFlags = (storedMetadata?.flags ?? 0) | LegacyDirectoryFlags.folder
+
+                entries.append(LegacyDirectoryEntry(name: name,
+                                                    size: wireSize,
+                                                    timestamp: timestamp,
+                                                    fileType: Self.folderType,
+                                                    creator: Self.folderCreator,
+                                                    flags: wireFlags,
+                                                    label: .none))
+                visibleNames.insert(child.lastPathComponent.lowercased())
+            }
         }
         if let account, account.personalDirectory == .nestedInRoot, path.isEmpty,
            let name = virtualPersonalName {
@@ -5286,10 +5477,10 @@ extension LegacyServerRuntime {
             entries.append(LegacyDirectoryEntry(name: name, size: itemCount, timestamp: timestamp,
                                                 fileType: Self.folderType, creator: Self.folderCreator,
                                                 flags: LegacyDirectoryFlags.folder))
-            entries.sort {
-                (String(data: $0.name, encoding: .macOSRoman) ?? "")
-                    .localizedCaseInsensitiveCompare(String(data: $1.name, encoding: .macOSRoman) ?? "") == .orderedAscending
-            }
+        }
+        entries.sort {
+            CarrachoTextWire.string(from: $0.name)
+                .localizedCaseInsensitiveCompare(CarrachoTextWire.string(from: $1.name)) == .orderedAscending
         }
         return LegacyDirectoryListing(currentPath: path, entries: entries)
     }
@@ -5297,19 +5488,30 @@ extension LegacyServerRuntime {
     private func storageURL(for legacyPath: Data, account: ServerAccount?, legacyTransport: Bool = false, requireExisting: Bool) throws -> URL {
         var components = try pathComponents(legacyPath)
         var root = try accountFilesRootURL(account, legacyTransport: legacyTransport)
+        var usesPersonalHomeRoot = false
         if let account {
             switch account.personalDirectory {
             case .none:
                 break
             case .rootDirectory:
                 root = try personalHomeURL(for: account, createIfNeeded: true)
+                usesPersonalHomeRoot = true
             case .nestedInRoot:
                 if let first = components.first, first == (try personalVirtualName(for: account)) {
                     root = try personalHomeURL(for: account, createIfNeeded: true)
+                    usesPersonalHomeRoot = true
                     components.removeFirst()
                 }
             }
         }
+        if legacyTransport,
+           !usesPersonalHomeRoot,
+           let first = components.first,
+           let overlayRoot = legacyShareOverlayURL(firstComponent: first, account: account,
+                                                   legacyRoot: root.standardizedFileURL) {
+            root = overlayRoot
+        }
+
         let logicalRoot = root.standardizedFileURL
         let resolvedRoot = logicalRoot.resolvingSymlinksInPath().standardizedFileURL
         let rootValues = try resolvedRoot.resourceValues(forKeys: [.isDirectoryKey])
@@ -5317,12 +5519,15 @@ extension LegacyServerRuntime {
             throw LegacyServerRuntimeError.protocolFailure("server storage root is not a directory")
         }
 
-        func isInsideResolvedRoot(_ url: URL) -> Bool {
+        func isInside(_ url: URL, root: URL) -> Bool {
             let path = url.standardizedFileURL.path
-            let rootPath = resolvedRoot.path
+            let rootPath = root.standardizedFileURL.path
             return rootPath == "/" ? path.hasPrefix("/") : (path == rootPath || path.hasPrefix(rootPath + "/"))
         }
 
+        var resolvedScope = resolvedRoot
+        let allowServerSymlinkShares = !usesPersonalHomeRoot
+        var symlinkShareHops = 0
         var current = logicalRoot
         for (index, data) in components.enumerated() {
             guard let component = CarrachoTextWire.validatedString(from: data) else {
@@ -5333,15 +5538,26 @@ extension LegacyServerRuntime {
             let isLast = index == components.count - 1
 
             if FileManager.default.fileExists(atPath: current.path) {
+                let values = try current.resourceValues(forKeys: [.isSymbolicLinkKey])
                 let resolved = current.resolvingSymlinksInPath().standardizedFileURL
-                guard isInsideResolvedRoot(resolved) else {
-                    throw LegacyServerRuntimeError.protocolFailure("server storage symlink escaped account root")
+                if !isInside(resolved, root: resolvedScope) {
+                    let targetValues = try resolved.resourceValues(forKeys: [.isDirectoryKey])
+                    guard allowServerSymlinkShares,
+                          values.isSymbolicLink == true,
+                          targetValues.isDirectory == true else {
+                        throw LegacyServerRuntimeError.protocolFailure("server storage symlink escaped account root")
+                    }
+                    symlinkShareHops += 1
+                    guard symlinkShareHops <= 32 else {
+                        throw LegacyServerRuntimeError.protocolFailure("too many nested server storage symlinks")
+                    }
+                    resolvedScope = resolved
                 }
             } else if requireExisting || !isLast {
                 throw LegacyServerRuntimeError.protocolFailure("server storage path does not exist")
             } else {
                 let resolvedParent = current.deletingLastPathComponent().resolvingSymlinksInPath().standardizedFileURL
-                guard isInsideResolvedRoot(resolvedParent) else {
+                guard isInside(resolvedParent, root: resolvedScope) else {
                     throw LegacyServerRuntimeError.protocolFailure("server storage path escaped account root")
                 }
             }

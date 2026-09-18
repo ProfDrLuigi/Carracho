@@ -742,6 +742,210 @@ static int encode_channel_list(cr_server*s,cr_buffer*out){cr_buffer_init(out);pt
 static int safe_component(const char *s){return *s&&strcmp(s,".")&&strcmp(s,"..")&&!strchr(s,'/');}
 static int is_transfer_staging_name(const char *s){size_t n=strlen(s);return (n>=9&&!strcmp(s+n-9,".carracho"))||!strncmp(s,".carracho.",10);}
 static int valid_utf8_bytes(const uint8_t*s,size_t n){size_t i=0;while(i<n){uint8_t c=s[i++];if(c<0x80)continue;unsigned need=0;uint32_t cp=0,min=0;if((c&0xe0)==0xc0){need=1;cp=c&0x1f;min=0x80;}else if((c&0xf0)==0xe0){need=2;cp=c&0x0f;min=0x800;}else if((c&0xf8)==0xf0){need=3;cp=c&0x07;min=0x10000;}else return 0;if(i+need>n)return 0;for(unsigned j=0;j<need;j++){uint8_t d=s[i++];if((d&0xc0)!=0x80)return 0;cp=(cp<<6)|(d&0x3f);}if(cp<min||cp>0x10ffff||(cp>=0xd800&&cp<=0xdfff))return 0;}return 1;}
+
+typedef struct {
+    uint32_t scalar;
+    const char *name;
+    uint8_t emoji_presentation;
+    uint8_t emoji;
+} cr_unicode_emoji_name;
+
+static const cr_unicode_emoji_name cr_unicode_emoji_names[] = {
+#include "unicode_emoji_names.inc"
+};
+
+static const cr_unicode_emoji_name *unicode_emoji_name(uint32_t scalar) {
+    size_t lo=0,hi=sizeof(cr_unicode_emoji_names)/sizeof(cr_unicode_emoji_names[0]);
+    while(lo<hi){
+        size_t mid=lo+(hi-lo)/2;
+        uint32_t value=cr_unicode_emoji_names[mid].scalar;
+        if(value==scalar)return &cr_unicode_emoji_names[mid];
+        if(value<scalar)lo=mid+1;else hi=mid;
+    }
+    return NULL;
+}
+
+typedef struct {
+    uint32_t scalar;
+    const char *name;
+} cr_emoji_short_name;
+
+static const cr_emoji_short_name cr_emoji_short_names[] = {
+    {0x2600u,"sun"},{0x2615u,"coffee"},{0x263au,"smile"},{0x26a1u,"lightning"},
+    {0x2705u,"check"},{0x270cu,"victory"},{0x274cu,"cross"},{0x2764u,"heart"},
+    {0x2b50u,"star"},{0x1f308u,"rainbow"},{0x1f319u,"moon"},{0x1f31fu,"glowing_star"},
+    {0x1f339u,"rose"},{0x1f355u,"pizza"},{0x1f37au,"beer"},{0x1f382u,"cake"},
+    {0x1f389u,"party"},{0x1f3b5u,"music"},{0x1f440u,"eyes"},{0x1f44au,"fist"},
+    {0x1f44cu,"ok"},{0x1f44du,"thumbsup"},{0x1f44eu,"thumbsdown"},{0x1f44fu,"clap"},
+    {0x1f47bu,"ghost"},{0x1f47du,"alien"},{0x1f480u,"skull"},{0x1f494u,"broken_heart"},
+    {0x1f495u,"hearts"},{0x1f496u,"sparkling_heart"},{0x1f499u,"blue_heart"},
+    {0x1f49au,"green_heart"},{0x1f49bu,"yellow_heart"},{0x1f49cu,"purple_heart"},
+    {0x1f4a1u,"idea"},{0x1f4a9u,"poop"},{0x1f4aau,"muscle"},{0x1f4afu,"100"},
+    {0x1f4ccu,"pin"},{0x1f4e6u,"package"},{0x1f525u,"fire"},{0x1f5a4u,"black_heart"},
+    {0x1f600u,"grin"},{0x1f601u,"grinning"},{0x1f602u,"joy"},{0x1f603u,"smiley"},
+    {0x1f604u,"laughing"},{0x1f605u,"sweat_smile"},{0x1f606u,"laugh"},
+    {0x1f607u,"angel"},{0x1f608u,"devil"},{0x1f609u,"wink"},{0x1f60au,"blush"},
+    {0x1f60bu,"yum"},{0x1f60du,"heart_eyes"},{0x1f60eu,"cool"},{0x1f610u,"neutral"},
+    {0x1f612u,"unamused"},{0x1f614u,"pensive"},{0x1f618u,"kiss"},{0x1f61bu,"tongue"},
+    {0x1f61cu,"wink_tongue"},{0x1f61eu,"disappointed"},{0x1f620u,"angry"},
+    {0x1f621u,"rage"},{0x1f622u,"cry"},{0x1f62du,"crying"},{0x1f62eu,"surprised"},
+    {0x1f631u,"scream"},{0x1f634u,"sleep"},{0x1f642u,"smile"},{0x1f643u,"upside_down"},
+    {0x1f644u,"eyeroll"},{0x1f64fu,"pray"},{0x1f680u,"rocket"},{0x1f90du,"white_heart"},
+    {0x1f90eu,"brown_heart"},{0x1f914u,"thinking"},{0x1f916u,"robot"},{0x1f917u,"hug"},
+    {0x1f91du,"handshake"},{0x1f922u,"sick"},{0x1f923u,"rofl"},{0x1f925u,"lying"},
+    {0x1f926u,"facepalm"},{0x1f92eu,"puke"},{0x1f92fu,"mindblown"},{0x1f937u,"shrug"},
+    {0x1f973u,"partyface"},{0x1f9e1u,"orange_heart"}
+};
+
+static const char *emoji_short_name(uint32_t scalar) {
+    for(size_t i=0;i<sizeof(cr_emoji_short_names)/sizeof(cr_emoji_short_names[0]);i++)
+        if(cr_emoji_short_names[i].scalar==scalar)return cr_emoji_short_names[i].name;
+    return NULL;
+}
+
+typedef struct {
+    const char *utf8;
+    const char *name;
+} cr_emoji_sequence_short_name;
+
+static const cr_emoji_sequence_short_name cr_emoji_sequence_short_names[] = {
+    {"👨‍👩‍👧‍👦","family"},{"👩‍👩‍👧‍👦","family"},{"👨‍👨‍👧‍👦","family"},
+    {"🏳️‍🌈","rainbow_flag"},{"🏳️‍⚧️","trans_flag"},
+    {"👨‍💻","coder"},{"👩‍💻","coder"},
+    {"🤦‍♂️","facepalm"},{"🤦‍♀️","facepalm"},
+    {"🤷‍♂️","shrug"},{"🤷‍♀️","shrug"}
+};
+
+static const char *emoji_sequence_short_name(const uint8_t *utf8,size_t available,size_t *consumed) {
+    const char *best=NULL;size_t best_len=0;
+    for(size_t i=0;i<sizeof(cr_emoji_sequence_short_names)/sizeof(cr_emoji_sequence_short_names[0]);i++){
+        size_t n=strlen(cr_emoji_sequence_short_names[i].utf8);
+        if(n>best_len&&n<=available&&!memcmp(utf8,cr_emoji_sequence_short_names[i].utf8,n)){
+            best=cr_emoji_sequence_short_names[i].name;best_len=n;
+        }
+    }
+    if(consumed)*consumed=best_len;
+    return best;
+}
+
+static int decode_utf8_scalar(const uint8_t*s,size_t n,uint32_t*out,size_t*used){
+    if(!s||!n||!out||!used)return-1;
+    uint8_t c=s[0];uint32_t cp=0,min=0;size_t need=0;
+    if(c<0x80){*out=c;*used=1;return 0;}
+    if((c&0xe0)==0xc0){need=1;cp=c&0x1f;min=0x80;}
+    else if((c&0xf0)==0xe0){need=2;cp=c&0x0f;min=0x800;}
+    else if((c&0xf8)==0xf0){need=3;cp=c&0x07;min=0x10000;}
+    else return-1;
+    if(need+1>n)return-1;
+    for(size_t i=0;i<need;i++){uint8_t d=s[i+1];if((d&0xc0)!=0x80)return-1;cp=(cp<<6)|(d&0x3f);}
+    if(cp<min||cp>0x10ffff||(cp>=0xd800&&cp<=0xdfff))return-1;
+    *out=cp;*used=need+1;return 0;
+}
+
+static int append_classic_bytes(uint8_t*out,size_t cap,size_t*used,const void*src,size_t n){
+    if(!out||!used||(!src&&n)||*used>cap||n>cap-*used)return-1;
+    if(n)memcpy(out+*used,src,n);
+    *used+=n;return 0;
+}
+
+static int append_unicode_name(uint8_t*out,size_t cap,size_t*used,const char*name,int with_separator){
+    static const char sep[]=" + ";
+    if(with_separator&&append_classic_bytes(out,cap,used,sep,sizeof(sep)-1))return-1;
+    return append_classic_bytes(out,cap,used,name,strlen(name));
+}
+
+static int is_emoji_modifier(uint32_t cp){return cp>=0x1f3fb&&cp<=0x1f3ff;}
+static int is_regional_indicator(uint32_t cp){return cp>=0x1f1e6&&cp<=0x1f1ff;}
+static int is_emoji_tag(uint32_t cp){return cp>=0xe0020&&cp<=0xe007f;}
+static int wire_is_tagged_utf8(const uint8_t*data,size_t len){return data&&len>=3&&data[0]==0xef&&data[1]==0xbb&&data[2]==0xbf;}
+
+static int classic_text_describing_emoji(const uint8_t*wire,size_t wire_len,uint8_t*out,size_t cap,size_t*out_len){
+    if(!wire||!out||!out_len)return-1;
+    if(!wire_is_tagged_utf8(wire,wire_len)){
+        if(wire_len>cap)return-1;
+        if(wire_len)memcpy(out,wire,wire_len);
+        *out_len=wire_len;return 0;
+    }
+
+    const uint8_t*utf8=wire+3;size_t utf8_len=wire_len-3;
+    if(!utf8_len||!valid_utf8_bytes(utf8,utf8_len)||memchr(utf8,0,utf8_len))return-1;
+
+    size_t pos=0,used=0;
+    while(pos<utf8_len){
+        size_t sequence_len=0;
+        const char*sequence_alias=emoji_sequence_short_name(utf8+pos,utf8_len-pos,&sequence_len);
+        if(sequence_alias){
+            if(append_classic_bytes(out,cap,&used,"*",1)||
+               append_unicode_name(out,cap,&used,sequence_alias,0)||
+               append_classic_bytes(out,cap,&used,"*",1))return-1;
+            pos+=sequence_len;continue;
+        }
+
+        uint32_t cp=0;size_t scalar_len=0;
+        if(decode_utf8_scalar(utf8+pos,utf8_len-pos,&cp,&scalar_len))return-1;
+        const cr_unicode_emoji_name*info=unicode_emoji_name(cp);
+
+        char scalar[5];memcpy(scalar,utf8+pos,scalar_len);scalar[scalar_len]='\0';
+        uint8_t mac[8];size_t mac_len=0;
+        if(cr_utf8_to_macroman_filtered(scalar,mac,sizeof(mac),&mac_len))return-1;
+
+        uint32_t next_cp=0;size_t next_len=0;int has_next=0;
+        if(pos+scalar_len<utf8_len&&!decode_utf8_scalar(utf8+pos+scalar_len,utf8_len-pos-scalar_len,&next_cp,&next_len))has_next=1;
+        int sequence_follows=has_next&&(next_cp==0xfe0e||next_cp==0xfe0f||next_cp==0x200d||
+            next_cp==0x20e3||is_emoji_modifier(next_cp)||is_emoji_tag(next_cp)||
+            (is_regional_indicator(cp)&&is_regional_indicator(next_cp)));
+        int emoji_start=info&&info->emoji&&(info->emoji_presentation||mac_len==0||sequence_follows);
+
+        if(!emoji_start){
+            if(!mac_len||append_classic_bytes(out,cap,&used,mac,mac_len))return-1;
+            pos+=scalar_len;continue;
+        }
+
+        const char*base_name=emoji_short_name(cp);
+        if(!base_name)base_name=info->name;
+        if(append_classic_bytes(out,cap,&used,"*",1)||append_unicode_name(out,cap,&used,base_name,0))return-1;
+        pos+=scalar_len;
+
+        if(is_regional_indicator(cp)&&pos<utf8_len){
+            uint32_t ri=0;size_t rn=0;
+            if(!decode_utf8_scalar(utf8+pos,utf8_len-pos,&ri,&rn)&&is_regional_indicator(ri)){
+                const cr_unicode_emoji_name*ri_info=unicode_emoji_name(ri);
+                if(!ri_info||append_unicode_name(out,cap,&used,ri_info->name,1))return-1;
+                pos+=rn;
+            }
+        }
+
+        while(pos<utf8_len){
+            uint32_t component=0;size_t component_len=0;
+            if(decode_utf8_scalar(utf8+pos,utf8_len-pos,&component,&component_len))return-1;
+            if(component==0xfe0e||component==0xfe0f){pos+=component_len;continue;}
+            if(is_emoji_modifier(component)){
+                pos+=component_len;continue;
+            }
+            if(component==0x20e3||is_emoji_tag(component)){
+                const cr_unicode_emoji_name*component_info=unicode_emoji_name(component);
+                const char*component_name=emoji_short_name(component);
+                if(!component_info||append_unicode_name(out,cap,&used,component_name?component_name:component_info->name,1))return-1;
+                pos+=component_len;continue;
+            }
+            if(component==0x200d){
+                pos+=component_len;
+                if(pos>=utf8_len)return-1;
+                uint32_t joined=0;size_t joined_len=0;
+                if(decode_utf8_scalar(utf8+pos,utf8_len-pos,&joined,&joined_len))return-1;
+                const cr_unicode_emoji_name*joined_info=unicode_emoji_name(joined);
+                const char*joined_name=emoji_short_name(joined);
+                if(!joined_info||!joined_info->emoji||
+                   append_unicode_name(out,cap,&used,joined_name?joined_name:joined_info->name,1))return-1;
+                pos+=joined_len;continue;
+            }
+            break;
+        }
+        if(append_classic_bytes(out,cap,&used,"*",1))return-1;
+    }
+    *out_len=used;return 0;
+}
+
 static int encode_file_name(const char*utf8,int modern,uint8_t*out,size_t cap,size_t*out_len){size_t classic_len=0;if(cr_utf8_to_macroman(utf8,out,cap,&classic_len))return-1;if(!modern){*out_len=classic_len;return 0;}char roundtrip[NAME_MAX*4+8];if(classic_len<cap&&!cr_macroman_to_utf8(out,classic_len,roundtrip,sizeof(roundtrip))&&!strcmp(roundtrip,utf8)){*out_len=classic_len;return 0;}size_t n=strlen(utf8);if(!valid_utf8_bytes((const uint8_t*)utf8,n)||n+3>cap)return-1;out[0]=0xef;out[1]=0xbb;out[2]=0xbf;memcpy(out+3,utf8,n);*out_len=n+3;return 0;}
 static int decode_file_component(const cr_session*session,const uint8_t*wire,size_t n,char*out,size_t cap){if(n>=3&&wire[0]==0xef&&wire[1]==0xbb&&wire[2]==0xbf){if(!session->modern_transport||n==3||n-3>=cap||!valid_utf8_bytes(wire+3,n-3)||memchr(wire+3,0,n-3))return-1;memcpy(out,wire+3,n-3);out[n-3]='\0';return safe_component(out)?0:-1;}if(cr_macroman_to_utf8(wire,n,out,cap))return-1;return safe_component(out)?0:-1;}
 static int join_path_component(char *out, size_t cap, const char *base, const char *component) {
@@ -758,8 +962,8 @@ static int session_uses_legacy_files_root(cr_server*s,const cr_session*session){
 static cr_file_metadata_store*session_metadata_store(cr_server*s,const cr_session*session){
     return session_uses_legacy_files_root(s,session)?&s->legacy_metadata:&s->metadata;
 }
-static int session_files_root(cr_server*s,cr_session*session,char*out,size_t cap){
-    const char*base=session_uses_legacy_files_root(s,session)?s->state.legacy_storage_root:s->state.storage_root;if(!session->files_root_path[0]||session->personal==CR_PERSONAL_ROOT){if(strlen(base)+1>cap)return-1;strcpy(out,base);return 0;}
+static int session_files_root_for_mode(cr_server*s,cr_session*session,int use_legacy_root,char*out,size_t cap){
+    const char*base=use_legacy_root?s->state.legacy_storage_root:s->state.storage_root;if(!session->files_root_path[0]||session->personal==CR_PERSONAL_ROOT){if(strlen(base)+1>cap)return-1;strcpy(out,base);return 0;}
     char real_base[PATH_MAX];if(!realpath(base,real_base))return-1;
     char candidate[PATH_MAX];if(strlen(base)+1>sizeof(candidate))return-1;strcpy(candidate,base);const char*p=session->files_root_path;
     while(*p){
@@ -782,6 +986,40 @@ static int session_files_root(cr_server*s,cr_session*session,char*out,size_t cap
     strcpy(out,candidate);
     return 0;
 }
+static int session_files_root(cr_server*s,cr_session*session,char*out,size_t cap){
+    return session_files_root_for_mode(s,session,session_uses_legacy_files_root(s,session),out,cap);
+}
+
+/* Files-Legacy remains the physical Classic tree. Direct directory symlinks in the
+ * modern Files root are explicit administrator shares and are overlaid at the Classic
+ * root as virtual folders. Any real Files-Legacy entry with the same name wins. */
+static int legacy_share_overlay_root_for_path(cr_server*s,cr_session*session,
+                                              const uint8_t*path,size_t path_len,
+                                              const char*legacy_root,char*out,size_t cap){
+    if(!session_uses_legacy_files_root(s,session)||!path_len||session->personal==CR_PERSONAL_ROOT)return 0;
+    size_t n=0;while(n<path_len&&path[n]!=1)n++;
+    if(!n||n>255)return 0;
+    char component[1024];if(decode_file_component(session,path,n,component,sizeof(component)))return 0;
+    if(session->personal==CR_PERSONAL_NESTED){
+        char home_name[512];if(strlen(session->login)+2>sizeof(home_name))return-1;
+        home_name[0]='~';strcpy(home_name+1,session->login);
+        if(!strcmp(component,home_name))return 0;
+    }
+
+    char legacy_candidate[PATH_MAX];struct stat st;
+    if(join_path_component(legacy_candidate,sizeof(legacy_candidate),legacy_root,component))return-1;
+    if(lstat(legacy_candidate,&st)==0)return 0;
+    if(errno!=ENOENT)return 0;
+
+    char modern_root[PATH_MAX],modern_candidate[PATH_MAX],resolved[PATH_MAX];
+    if(session_files_root_for_mode(s,session,0,modern_root,sizeof(modern_root)))return 0;
+    if(join_path_component(modern_candidate,sizeof(modern_candidate),modern_root,component))return-1;
+    if(lstat(modern_candidate,&st)||!S_ISLNK(st.st_mode)||!realpath(modern_candidate,resolved)||
+       stat(resolved,&st)||!S_ISDIR(st.st_mode))return 0;
+    if(strlen(modern_root)+1>cap)return-1;
+    strcpy(out,modern_root);return 1;
+}
+
 static int resolve_legacy_path_ex(cr_server*s,cr_session*session,const uint8_t*path,size_t path_len,char*out,size_t cap,int require_existing){
     if(path_len>4096)return-1;
     char group_root[PATH_MAX];if(session_files_root(s,session,group_root,sizeof(group_root)))return-1;const char*root=group_root;size_t pos=0;int first=1;char virtual_home[512];
@@ -790,7 +1028,11 @@ static int resolve_legacy_path_ex(cr_server*s,cr_session*session,const uint8_t*p
     char home[PATH_MAX]="";
     if(session->personal!=CR_PERSONAL_NONE){if(join_path_component(home,sizeof(home),s->state.personal_home_root,session->login))return-1;if(mkdir(home,0755)&&errno!=EEXIST)return-1;}
     if(session->personal==CR_PERSONAL_ROOT)root=home;
+    char overlay_root[PATH_MAX];int overlay=legacy_share_overlay_root_for_path(s,session,path,path_len,group_root,overlay_root,sizeof(overlay_root));
+    if(overlay<0)return-1;if(overlay>0)root=overlay_root;
     char resolved_scope[PATH_MAX];if(!realpath(root,resolved_scope))return-1;
+    int allow_server_symlink_shares=session->personal!=CR_PERSONAL_ROOT;
+    unsigned symlink_share_hops=0;
     if(strlen(root)+1>cap)return-1;
     strcpy(out,root);
     while(pos<path_len){
@@ -798,13 +1040,19 @@ static int resolve_legacy_path_ex(cr_server*s,cr_session*session,const uint8_t*p
         char component[1024];if(decode_file_component(session,path+start,n,component,sizeof(component)))return-1;
         if(first&&session->personal==CR_PERSONAL_NESTED&&!strcmp(component,virtual_home)){
             if(strlen(home)+1>cap||!realpath(home,resolved_scope))return-1;
+            allow_server_symlink_shares=0;
             strcpy(out,home);
         }
         else{size_t have=strlen(out),cn=strlen(component);if(have+1+cn+1>cap)return-1;out[have]='/';memcpy(out+have+1,component,cn+1);}
         int is_last=(pos>=path_len);struct stat st;
         if(lstat(out,&st)==0){
-            char resolved[PATH_MAX];if(!realpath(out,resolved)||!path_is_within_root(resolved,resolved_scope))return-1;
-            if(stat(resolved,&st))return-1;
+            int is_symlink=S_ISLNK(st.st_mode);
+            char resolved[PATH_MAX];if(!realpath(out,resolved)||stat(resolved,&st))return-1;
+            if(!path_is_within_root(resolved,resolved_scope)){
+                if(!allow_server_symlink_shares||!is_symlink||!S_ISDIR(st.st_mode))return-1;
+                if(++symlink_share_hops>32||strlen(resolved)+1>sizeof(resolved_scope))return-1;
+                strcpy(resolved_scope,resolved);
+            }
         }
         else if(errno==ENOENT){
             if(require_existing||!is_last)return-1;
@@ -838,6 +1086,71 @@ static uint32_t visible_directory_item_count(const char*dir,int modern){
     }
     closedir(d);return(uint32_t)count;
 }
+static int classic_agreement_text(const char*utf8,uint8_t*out,size_t cap,size_t*out_len){
+    if(!utf8||(!out&&cap))return-1;
+    size_t input_len=strlen(utf8);
+    char*normalized=malloc(input_len+1);
+    uint8_t*filtered=malloc(input_len+1);
+    if(!normalized||!filtered){free(normalized);free(filtered);return-1;}
+
+    size_t src=0,dst=0;
+    while(src<input_len){
+        uint8_t c=(uint8_t)utf8[src];
+        if(c=='\r'){
+            normalized[dst++]='\r';
+            src++;
+            if(src<input_len&&utf8[src]=='\n')src++;
+            continue;
+        }
+        if(c=='\n'){
+            normalized[dst++]='\r';
+            src++;
+            continue;
+        }
+        if(src+2<input_len&&c==0xe2&&(uint8_t)utf8[src+1]==0x80&&
+           ((uint8_t)utf8[src+2]==0xa8||(uint8_t)utf8[src+2]==0xa9)){
+            normalized[dst++]='\r';
+            src+=3;
+            continue;
+        }
+        if((c<0x20&&c!='\t')||c==0x7f){src++;continue;}
+
+        size_t scalar_len=1;
+        if((c&0xe0)==0xc0)scalar_len=2;
+        else if((c&0xf0)==0xe0)scalar_len=3;
+        else if((c&0xf8)==0xf0)scalar_len=4;
+        if(src+scalar_len>input_len){free(normalized);free(filtered);return-1;}
+        memcpy(normalized+dst,utf8+src,scalar_len);
+        dst+=scalar_len;src+=scalar_len;
+    }
+    normalized[dst]='\0';
+
+    size_t filtered_len=0;
+    int rc=cr_utf8_to_macroman_filtered(normalized,filtered,input_len+1,&filtered_len);
+    if(!rc){
+        size_t copy=filtered_len<cap?filtered_len:cap;
+        if(copy)memcpy(out,filtered,copy);
+        if(out_len)*out_len=copy;
+    }
+    free(normalized);free(filtered);
+    return rc;
+}
+
+static size_t classic_agreement_style(uint8_t out[22]){
+    static const uint8_t style[22]={
+        0x00,0x01,                    /* one style run */
+        0x00,0x00,0x00,0x00,          /* start char 0 */
+        0x00,0x0e,                    /* height 14 */
+        0x00,0x0b,                    /* ascent 11 */
+        0x00,0x00,                    /* system font */
+        0x00,0x00,                    /* normal face + pad */
+        0x00,0x0c,                    /* 12 pt */
+        0x00,0x00,0x00,0x00,0x00,0x00 /* black RGB */
+    };
+    memcpy(out,style,sizeof(style));
+    return sizeof(style);
+}
+
 static int encode_directory(cr_server*s,cr_session*session,const uint8_t*legacy,size_t legacy_len,cr_buffer*out,cr_buffer*labels){
     cr_buffer_init(out);cr_buffer_init(labels);
     if(!account_perm(session,PERM_VIEW_DROPBOXES)&&path_is_inside_dropbox(s,session,legacy,legacy_len))return cr_buffer_append_string16(out,legacy,legacy_len)||cr_buffer_append_u16(out,0)?-1:0;
@@ -852,10 +1165,53 @@ static int encode_directory(cr_server*s,cr_session*session,const uint8_t*legacy,
         if(count==cap){size_t nc=cap?cap*2:32;dir_item*ni=realloc(items,nc*sizeof(*ni));if(!ni){closedir(d);free(items);return-1;}items=ni;cap=nc;}dir_item*x=&items[count++];memset(x,0,sizeof(*x));snprintf(x->name,sizeof(x->name),"%s",de->d_name);memcpy(x->wire_name,wire_name,wn);x->wire_name_len=wn;
         if(target_accessible&&S_ISREG(effective.st_mode))x->size=(uint32_t)((uint64_t)effective.st_size>UINT32_MAX?UINT32_MAX:effective.st_size);
         else if(target_accessible&&S_ISDIR(effective.st_mode)){int hidden_dropbox=!account_perm(session,PERM_VIEW_DROPBOXES)&&path_is_inside_dropbox(s,session,child,child_len);if(!hidden_dropbox)x->size=visible_directory_item_count(full,session->modern_transport);}
-        x->timestamp=stat_mac_time(target_accessible?effective.st_mtime:lst.st_mtime);if(target_accessible&&S_ISDIR(effective.st_mode))x->flags|=DIR_FLAG_FOLDER;if(!is_symlink&&target_accessible&&S_ISDIR(effective.st_mode)){x->file_type=FILETYPE_FOLDER;x->creator=CREATOR_FOLDER;}if(is_symlink){x->file_type=FILETYPE_SYMLINK;x->creator=CREATOR_FOLDER;}
+        x->timestamp=stat_mac_time(target_accessible?effective.st_mtime:lst.st_mtime);if(target_accessible&&S_ISDIR(effective.st_mode))x->flags|=DIR_FLAG_FOLDER;if(target_accessible&&S_ISDIR(effective.st_mode)){x->file_type=FILETYPE_FOLDER;x->creator=CREATOR_FOLDER;}else if(is_symlink){x->file_type=FILETYPE_SYMLINK;x->creator=CREATOR_FOLDER;}
         if(target_accessible){cr_file_metadata m;int found=0;if(!cr_file_metadata_get(session_metadata_store(s,session),child,child_len,&m,&found)){if(found){x->flags|=m.flags;x->label=m.label;}cr_file_metadata_free(&m);}}
     }
     closedir(d);
+
+    if(session_uses_legacy_files_root(s,session)&&legacy_len==0&&session->personal!=CR_PERSONAL_ROOT){
+        char modern_root[PATH_MAX];
+        if(!session_files_root_for_mode(s,session,0,modern_root,sizeof(modern_root))){
+            DIR*md=opendir(modern_root);
+            if(md){
+                struct dirent*mde;
+                while((mde=readdir(md))){
+                    if(mde->d_name[0]=='.'||is_transfer_staging_name(mde->d_name))continue;
+                    int duplicate=0;for(size_t i=0;i<count;i++)if(!strcasecmp(items[i].name,mde->d_name)){duplicate=1;break;}
+                    if(duplicate)continue;
+
+                    char full[PATH_MAX],resolved[PATH_MAX];struct stat lst,effective;
+                    if(join_path_component(full,sizeof(full),modern_root,mde->d_name)||lstat(full,&lst)||
+                       !S_ISLNK(lst.st_mode)||!realpath(full,resolved)||stat(resolved,&effective)||
+                       !S_ISDIR(effective.st_mode))continue;
+
+                    uint8_t wire_name[512];size_t wn=0;
+                    if(encode_file_name(mde->d_name,0,wire_name,sizeof(wire_name),&wn)||!wn||wn>255||memchr(wire_name,1,wn))continue;
+                    uint8_t child[4096];size_t child_len=0;
+                    if(build_legacy_child(NULL,0,wire_name,wn,child,&child_len))continue;
+                    char resolved_child[PATH_MAX];
+                    if(resolve_legacy_path_ex(s,session,child,child_len,resolved_child,sizeof(resolved_child),1))continue;
+
+                    if(count==cap){size_t nc=cap?cap*2:32;dir_item*ni=realloc(items,nc*sizeof(*ni));if(!ni){closedir(md);free(items);return-1;}items=ni;cap=nc;}
+                    dir_item*x=&items[count++];memset(x,0,sizeof(*x));
+                    snprintf(x->name,sizeof(x->name),"%s",mde->d_name);
+                    memcpy(x->wire_name,wire_name,wn);x->wire_name_len=wn;
+                    x->size=visible_directory_item_count(resolved_child,0);
+                    x->timestamp=stat_mac_time(effective.st_mtime);
+                    x->file_type=FILETYPE_FOLDER;x->creator=CREATOR_FOLDER;x->flags=DIR_FLAG_FOLDER;
+
+                    cr_file_metadata m;int found=0;
+                    if(!cr_file_metadata_get(&s->metadata,child,child_len,&m,&found)){
+                        if(found)x->flags|=m.flags;
+                        cr_file_metadata_free(&m);
+                    }
+                }
+                closedir(md);
+            }
+        }
+    }
+
     if(session->personal==CR_PERSONAL_NESTED&&legacy_len==0){char vh[512];if(strlen(session->login)+2>sizeof(vh)){free(items);return-1;}vh[0]='~';strcpy(vh+1,session->login);int exists=0;for(size_t i=0;i<count;i++)if(!strcasecmp(items[i].name,vh))exists=1;if(!exists){uint8_t wm[512];size_t wn=0;if(cr_utf8_to_macroman(vh,wm,sizeof(wm),&wn)){free(items);return-1;}if(count==cap){size_t nc=cap?cap*2:32;dir_item*ni=realloc(items,nc*sizeof(*ni));if(!ni){free(items);return-1;}items=ni;cap=nc;}dir_item*x=&items[count++];memset(x,0,sizeof(*x));snprintf(x->name,sizeof(x->name),"%s",vh);memcpy(x->wire_name,wm,wn);x->wire_name_len=wn;char homefs[PATH_MAX];if(!resolve_legacy_path(s,session,wm,wn,homefs,sizeof(homefs)))x->size=visible_directory_item_count(homefs,session->modern_transport);x->file_type=FILETYPE_FOLDER;x->creator=CREATOR_FOLDER;x->flags=DIR_FLAG_FOLDER;}}
     qsort(items,count,sizeof(*items),dir_item_cmp);if(count>UINT16_MAX){free(items);return-1;}if(cr_buffer_append_string16(out,legacy,legacy_len)||cr_buffer_append_u16(out,(uint16_t)count)){free(items);return-1;}
     for(size_t i=0;i<count;i++){dir_item*x=&items[i];if(x->wire_name_len>UINT16_MAX-20||cr_buffer_append_u16(out,(uint16_t)(x->wire_name_len+20))||cr_buffer_append_u16(out,(uint16_t)x->wire_name_len)||cr_buffer_append(out,x->wire_name,x->wire_name_len)||cr_buffer_append_u32(out,x->size)||cr_buffer_append_u32(out,x->timestamp)||cr_buffer_append_u32(out,x->file_type)||cr_buffer_append_u32(out,x->creator)||cr_buffer_append_u16(out,x->flags)||cr_buffer_append_u8(labels,x->label)){free(items);return-1;}}
@@ -872,17 +1228,23 @@ static int send_login_success(cr_session*s){
     }
     if(users.len>UINT16_MAX){cr_buffer_free(&users);return-1;}
     cr_buffer legacy_users;cr_buffer_init(&legacy_users);if(s->modern_transport&&encode_legacy_user_ids(s->server,s,&legacy_users)){cr_buffer_free(&users);return-1;}
-    uint8_t session_info[12],perms[8],maxtr[2],ver[2],server_name[1024],agreement_text[65535];size_t sn=0,an=0;uint16_t max_transfers=0;int agreement_enabled=0;
+    uint8_t session_info[12],perms[8],maxtr[2],ver[2],server_name[1024],agreement_text[65535],agreement_style[22];size_t sn=0,an=0,asn=0;uint16_t max_transfers=0;int agreement_enabled=0;
     pthread_mutex_lock(&s->server->state.mutex);
     max_transfers=s->server->state.advanced.max_file_transfers_per_user;
     int state_fail=cr_utf8_to_macroman(s->server->state.identity.name,server_name,sizeof(server_name),&sn);
     agreement_enabled=s->server->state.agreement_enabled&&s->server->state.agreement_text;
-    if(!state_fail&&agreement_enabled)state_fail=cr_utf8_to_macroman(s->server->state.agreement_text,agreement_text,sizeof(agreement_text)-8,&an);
+    if(!state_fail&&agreement_enabled){
+        if(!s->modern_transport)asn=classic_agreement_style(agreement_style);
+        size_t agreement_cap=s->modern_transport?sizeof(agreement_text)-8:(size_t)0xfc00-8-asn;
+        state_fail=s->modern_transport
+            ?cr_utf8_to_macroman(s->server->state.agreement_text,agreement_text,agreement_cap,&an)
+            :classic_agreement_text(s->server->state.agreement_text,agreement_text,agreement_cap,&an);
+    }
     pthread_mutex_unlock(&s->server->state.mutex);
     if(state_fail){cr_buffer_free(&users);return-1;}
     cr_account tmp;memset(&tmp,0,sizeof(tmp));tmp.permission_bits=s->permission_bits;cr_account_permission_bytes(&tmp,perms);if(!s->modern_transport)perms[PERM_POST_NEWS/8]&=(uint8_t)~(0x80u>>(PERM_POST_NEWS%8));cr_write_be32(session_info,s->user_id);memcpy(session_info+4,perms,8);cr_write_be16(maxtr,max_transfers);cr_write_be16(ver,s->modern_transport?3:2);
     cr_tlv_out f[16];size_t n=0;f[n++]=(cr_tlv_out){1,session_info,12};f[n++]=(cr_tlv_out){2,server_name,(uint16_t)sn};f[n++]=(cr_tlv_out){3,users.data,(uint16_t)users.len};
-    cr_buffer agreement;cr_buffer_init(&agreement);if(agreement_enabled){cr_buffer_append_u32(&agreement,(uint32_t)an);cr_buffer_append(&agreement,agreement_text,an);cr_buffer_append_u32(&agreement,0);f[n++]=(cr_tlv_out){4,agreement.data,(uint16_t)agreement.len};}
+    cr_buffer agreement;cr_buffer_init(&agreement);if(agreement_enabled){cr_buffer_append_u32(&agreement,(uint32_t)an);cr_buffer_append(&agreement,agreement_text,an);cr_buffer_append_u32(&agreement,(uint32_t)asn);if(asn)cr_buffer_append(&agreement,agreement_style,asn);f[n++]=(cr_tlv_out){4,agreement.data,(uint16_t)agreement.len};}
     uint8_t media_caps[4];cr_write_be32(media_caps,s->modern_transport?MEDIA_CAP_CURRENT:0);
     const char*files_root_name=s->files_root_name[0]?s->files_root_name:"Allgemein";size_t files_root_name_len=strlen(files_root_name);if(!files_root_name_len||files_root_name_len>64){cr_buffer_free(&agreement);cr_buffer_free(&users);return-1;}
     f[n++]=(cr_tlv_out){0x21,maxtr,2};f[n++]=(cr_tlv_out){5,ver,2};f[n++]=(cr_tlv_out){LOGIN_FIELD_MEDIA_CAPABILITIES,media_caps,4};f[n++]=(cr_tlv_out){LOGIN_FIELD_FILES_ROOT_NAME,(const uint8_t*)files_root_name,(uint16_t)files_root_name_len};if(s->modern_transport){if(legacy_users.len>UINT16_MAX){cr_buffer_free(&legacy_users);cr_buffer_free(&agreement);cr_buffer_free(&users);return-1;}f[n++]=(cr_tlv_out){LOGIN_FIELD_LEGACY_USER_IDS,legacy_users.data,(uint16_t)legacy_users.len};f[n++]=(cr_tlv_out){6,s->modern_salt,CR_MODERN_SESSION_SALT};f[n++]=(cr_tlv_out){7,s->modern_server_public_key,32};f[n++]=(cr_tlv_out){8,s->modern_handshake_authenticator,32};}int rc=session_send_key(s,k_initial_key,sizeof(k_initial_key),CMD_LOGIN_SUCCESS,0,f,n);cr_buffer_free(&legacy_users);cr_buffer_free(&agreement);cr_buffer_free(&users);return rc;
@@ -1484,10 +1846,10 @@ static int bot_post_channel_message(cr_server*s,uint32_t channel_id,const uint8_
         size_t out_len=wire_len;
         uint8_t legacy[0x800];
         if(tagged&&!x->modern_transport){
-            size_t filtered=0;
-            if(cr_utf8_to_macroman_filtered(text,legacy,sizeof(legacy),&filtered)||!filtered) continue;
+            size_t classic_len=0;
+            if(classic_text_describing_emoji(wire,wire_len,legacy,sizeof(legacy),&classic_len)||!classic_len) continue;
             out=legacy;
-            out_len=filtered;
+            out_len=classic_len;
         }
         cr_tlv_out fields[]={{CHANNEL_FIELD_ID,cid,4},{CHANNEL_FIELD_USER_ID,uid,4},{CHANNEL_FIELD_MESSAGE,out,(uint16_t)out_len},{CHANNEL_FIELD_ATTRIBUTE,&attribute,1}};
         (void)session_send(x,CMD_CHANNEL_CHAT,0,fields,4);
@@ -1532,10 +1894,10 @@ static int bot_post_private_message(cr_server*s,cr_session*target,const uint8_t*
     size_t out_len=wire_len;
     uint8_t legacy[CR_BOT_RESPONSE_MAX_BYTES];
     if(tagged&&!target->modern_transport){
-        size_t filtered=0;
-        if(cr_utf8_to_macroman_filtered(text,legacy,sizeof(legacy),&filtered)||!filtered) return -1;
+        size_t classic_len=0;
+        if(classic_text_describing_emoji(wire,wire_len,legacy,sizeof(legacy),&classic_len)||!classic_len) return -1;
         out=legacy;
-        out_len=filtered;
+        out_len=classic_len;
     }
 
     uint8_t uid[4];
@@ -1828,15 +2190,31 @@ static int bind_media_tokens(cr_server*s,cr_session*session,const uint8_t*data,s
 static int handle_channel_chat(cr_session*s,const cr_packet*p){
     const cr_tlv*id=cr_packet_field(p,CHANNEL_FIELD_ID),*msg=cr_packet_field(p,CHANNEL_FIELD_MESSAGE),*attr=cr_packet_field(p,CHANNEL_FIELD_ATTRIBUTE);
     if(!id||id->length!=4||!msg||!msg->length||msg->length>0x800)return 0;
+    int tagged=wire_is_tagged_utf8(msg->value,msg->length);
+    if(tagged&&(!s->modern_transport||msg->length==3||!valid_utf8_bytes(msg->value+3,msg->length-3)||memchr(msg->value+3,0,msg->length-3)))return 0;
+    uint8_t classic[0x800];size_t classic_len=0;
+    int classic_ready=!tagged||!classic_text_describing_emoji(msg->value,msg->length,classic,sizeof(classic),&classic_len);
+
     uint32_t cid=cr_read_be32(id->value);uint8_t attribute=attr&&attr->length?attr->value[0]:0;uint8_t cb[4],ub[4];cr_write_be32(cb,cid);cr_write_be32(ub,s->user_id);
     pthread_mutex_lock(&s->server->mutex);cr_channel*c=channel_by_id_locked(s->server,cid);int idx=c?channel_member_index(c,s->user_id):-1;if(idx<0){pthread_mutex_unlock(&s->server->mutex);return 0;}uint8_t mode=c->members[idx].mode;uint16_t flags=c->flags;if((flags&CHANNEL_RESTRICTED_CHAT)&&!(mode&(CHANNEL_OPERATOR|CHANNEL_SPEECH))){pthread_mutex_unlock(&s->server->mutex);return p->transaction_id?send_error(s,p->transaction_id,0xcb):0;}pthread_mutex_unlock(&s->server->mutex);
     if(validate_youtube_tokens(msg->value,msg->length,4)){log_msg("Channel YouTube reference rejected for user %u",s->user_id);return 0;}
     char scope[32],message_id[33];snprintf(scope,sizeof(scope),"%u",cid);if(media_message_id(message_id)||bind_media_tokens(s->server,s,msg->value,msg->length,4,CR_MEDIA_KIND_CHAT,scope,message_id,time(NULL)+7*24*60*60)){log_msg("Channel media reference rejected for user %u",s->user_id);return 0;}
-    cr_tlv_out f[]={{CHANNEL_FIELD_ID,cb,4},{CHANNEL_FIELD_USER_ID,ub,4},{CHANNEL_FIELD_MESSAGE,msg->value,msg->length},{CHANNEL_FIELD_ATTRIBUTE,&attribute,1}};
-    pthread_mutex_lock(&s->server->mutex);c=channel_by_id_locked(s->server,cid);if(c)for(size_t i=0;i<c->member_count;i++){cr_session*x=find_session_locked(s->server,c->members[i].user_id);if(x)session_send(x,CMD_CHANNEL_CHAT,0,f,4);}pthread_mutex_unlock(&s->server->mutex);
+
+    pthread_mutex_lock(&s->server->mutex);
+    c=channel_by_id_locked(s->server,cid);
+    if(c)for(size_t i=0;i<c->member_count;i++){
+        cr_session*x=find_session_locked(s->server,c->members[i].user_id);if(!x)continue;
+        const uint8_t*wire=msg->value;size_t wire_len=msg->length;
+        if(tagged&&!x->modern_transport){
+            if(!classic_ready||!classic_len)continue;
+            wire=classic;wire_len=classic_len;
+        }
+        cr_tlv_out f[]={{CHANNEL_FIELD_ID,cb,4},{CHANNEL_FIELD_USER_ID,ub,4},{CHANNEL_FIELD_MESSAGE,wire,(uint16_t)wire_len},{CHANNEL_FIELD_ATTRIBUTE,&attribute,1}};
+        session_send(x,CMD_CHANNEL_CHAT,0,f,4);
+    }
+    pthread_mutex_unlock(&s->server->mutex);
     cr_state_stat_add(&s->server->state,"totalMessages",1);bot_maybe_reply_channel(s,cid,msg->value,msg->length);return 0;
 }
-
 
 
 static int legacy_leaf(const uint8_t*path,size_t path_len,const uint8_t**leaf,size_t*leaf_len){if(!path_len)return-1;size_t start=0;for(size_t i=0;i<path_len;i++)if(path[i]==1)start=i+1;if(start>=path_len)return-1;*leaf=path+start;*leaf_len=path_len-start;return 0;}
@@ -1899,12 +2277,24 @@ static int handle_private_message(cr_session *s, const cr_packet *p) {
     const cr_tlv *message = cr_packet_field(p, 2), *extra = cr_packet_field(p, 3);
     if (packet_target_user(p, &target_id) || !message || !message->length || message->length > 0x8000 ||
         (extra && extra->length > 0x8000)) return p->transaction_id ? send_error(s,p->transaction_id,1) : 0;
+    int tagged=wire_is_tagged_utf8(message->value,message->length);
+    if(tagged&&(!s->modern_transport||message->length==3||!valid_utf8_bytes(message->value+3,message->length-3)||memchr(message->value+3,0,message->length-3)))
+        return p->transaction_id?send_error(s,p->transaction_id,1):0;
+
+    uint8_t classic[0x8000];size_t classic_len=0;
+    int classic_ready=!tagged||!classic_text_describing_emoji(message->value,message->length,classic,sizeof(classic),&classic_len);
     uint8_t uid[4]; cr_write_be32(uid, s->user_id);
-    cr_tlv_out fields[3]; size_t n=0;
-    fields[n++] = (cr_tlv_out){1,uid,4}; fields[n++] = (cr_tlv_out){2,message->value,message->length};
-    if (extra && extra->length) fields[n++] = (cr_tlv_out){3,extra->value,extra->length};
+
     pthread_mutex_lock(&s->server->mutex);
     cr_session *target = find_session_locked(s->server, target_id);
+    const uint8_t*wire=message->value;size_t wire_len=message->length;
+    if(target&&tagged&&!target->modern_transport){
+        if(!classic_ready||!classic_len)target=NULL;
+        else{wire=classic;wire_len=classic_len;}
+    }
+    cr_tlv_out fields[3]; size_t n=0;
+    fields[n++] = (cr_tlv_out){1,uid,4}; fields[n++] = (cr_tlv_out){2,wire,(uint16_t)wire_len};
+    if (extra && extra->length) fields[n++] = (cr_tlv_out){3,extra->value,extra->length};
     int target_is_bot = target && target == s->server->bot_session && target->local_only;
     int send_rc = target ? session_send(target,CMD_PRIVATE_MESSAGE,0,fields,n) : -1;
     pthread_mutex_unlock(&s->server->mutex);
@@ -2258,11 +2648,13 @@ static int handle_flat_news_clear(cr_session*s,const cr_packet*p){if(!account_pe
 static int handle_broadcast(cr_session *s, const cr_packet *p) {
     const cr_tlv *message=cr_packet_field(p,1);
     if(!account_perm(s,PERM_BROADCAST)||!message||!message->length||message->length>0x200)return send_error(s,p->transaction_id,2);
-    int tagged=flat_news_is_tagged_utf8(message->value,message->length);
+    int tagged=wire_is_tagged_utf8(message->value,message->length);
     if(tagged){
         size_t utf8_len=message->length-3;
         if(!s->modern_transport||!utf8_len||!valid_utf8_bytes(message->value+3,utf8_len)||memchr(message->value+3,0,utf8_len))return send_error(s,p->transaction_id,2);
     }
+    uint8_t classic[0x200];size_t classic_len=0;
+    int classic_ready=!tagged||!classic_text_describing_emoji(message->value,message->length,classic,sizeof(classic),&classic_len);
     uint8_t uid[4];
     cr_write_be32(uid,s->user_id);
     pthread_mutex_lock(&s->server->mutex);
@@ -2271,14 +2663,9 @@ static int handle_broadcast(cr_session *s, const cr_packet *p) {
         if(!session_ready_for_async(x))continue;
         const uint8_t*wire=message->value;
         size_t wire_len=message->length;
-        uint8_t legacy[0x200];
         if(tagged&&!x->modern_transport){
-            char utf8[0x200];
-            size_t utf8_len=message->length-3;
-            memcpy(utf8,message->value+3,utf8_len);
-            utf8[utf8_len]='\0';
-            if(cr_utf8_to_macroman_filtered(utf8,legacy,sizeof(legacy),&wire_len)||!wire_len)continue;
-            wire=legacy;
+            if(!classic_ready||!classic_len)continue;
+            wire=classic;wire_len=classic_len;
         }
         cr_tlv_out f[]={{1,wire,(uint16_t)wire_len},{2,uid,4}};
         session_send(x,CMD_BROADCAST,0,f,2);

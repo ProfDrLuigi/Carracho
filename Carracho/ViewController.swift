@@ -628,6 +628,19 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
     static let maximumJoinedChannels = 6
     static let contentFontSizeOptions: [CGFloat] = [10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24]
     static let filesFontSizeDefaultsKey = "Carracho.FilesFontSize"
+
+    static let displayDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        return formatter
+    }()
+
+    static let fileByteCountFormatter: ByteCountFormatter = {
+        let formatter = ByteCountFormatter()
+        formatter.countStyle = .file
+        return formatter
+    }()
     static let newsFontSizeDefaultsKey = "Carracho.NewsFontSize"
     static let channelChatFontSizeDefaultsKey = "Carracho.ChannelChatFontSize"
     static let serverLogFontSizeDefaultsKey = "Carracho.ServerLogFontSize"
@@ -1162,6 +1175,10 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
     /// workspace needs one final top alignment after Auto Layout has resized the scroll view.
     var fileNeedsInitialWorkspaceTopAlignment = false
     var selectedFilePaths: Set<Data> = []
+    /// Stable snapshot consumed by NSTableView while it asks for visible cells.
+    /// Rebuilding/sorting the complete directory tree from every data-source callback makes
+    /// scrolling large listings accidentally O(rows * visibleCells * log(rows)).
+    var visibleFileRowSnapshot: [VisibleFileRow] = []
     var expandedFilePaths: Set<Data> = []
     var expandedDirectoryListings: [Data: LegacyDirectoryListing] = [:]
     var loadingExpandedFilePaths: Set<Data> = []
@@ -1171,6 +1188,15 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
     var quickViewItem: CarrachoQuickLookItem?
     var isQuickViewPreparing = false
     var quickViewGeneration = 0
+
+    // File-list icons come from LaunchServices/NSWorkspace and can be surprisingly expensive.
+    // Keep immutable copies by type so scrolling does not repeat icon lookup + TIFF comparison.
+    var filesFolderIconCache: NSImage?
+    var filesGenericDocumentIconCache: NSImage?
+    var filesIncompleteIconCache: NSImage?
+    var filesSystemFileTypeIconCache: [String: NSImage] = [:]
+    var filesSystemFileTypeIconMisses: Set<String> = []
+
     static let quickViewMaximumBytes: UInt64 = 2_000_000
     static let quickViewExtensions: Set<String> = ["txt", "jpg", "png", "pdf", "html", "gif", "sh"]
     var transferMonitorItems: [UUID: ClientTransferMonitorItem] = [:]
@@ -6424,7 +6450,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         case let .privateMessage(message):
             let sender = liveUsers[message.senderUserID].map { Self.macRomanString($0.nickname) }
                 ?? L("Unknown User")
-            let privateText = CarrachoHTMLText.plainText(fromWire: message.message)
+            let privateText = CarrachoHTMLText.plainText(fromWire: message.message, expandLegacyEmoticons: true)
             emitClientEvent(.message,
                             notificationTitle: LF("New message from %@", sender),
                             notificationBody: clientNotificationSnippet(privateText, fallback: L("New private message")))
@@ -6561,7 +6587,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
             if message.senderUserID != lastLoginResult?.session.userID {
                 let sender = liveUsers[message.senderUserID].map { Self.macRomanString($0.nickname) } ?? L("Unknown User")
                 let room = joinedChannels[message.channelID].map { Self.macRomanString($0.state.name) } ?? L("Chat")
-                let text = CarrachoHTMLText.plainText(fromWire: message.message)
+                let text = CarrachoHTMLText.plainText(fromWire: message.message, expandLegacyEmoticons: true)
                 emitClientEvent(.chat,
                                 notificationTitle: LF("New chat message in #%@", room),
                                 notificationBody: LF("%@: %@", sender, clientNotificationSnippet(text)))
@@ -6618,7 +6644,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
             applyRemoteFileLabelChange(path: path, label: label)
         case let .broadcastMessage(broadcast):
             let sender = liveUsers[broadcast.senderUserID].map { Self.macRomanString($0.nickname) } ?? L("Unknown User")
-            let message = CarrachoHTMLText.plainText(fromWire: broadcast.message)
+            let message = CarrachoHTMLText.plainText(fromWire: broadcast.message, expandLegacyEmoticons: true)
             appendLine("\n" + LF("Broadcast from %@: %@", sender, message))
             presentRichMessage(title: L("Server Broadcast"), senderLine: LF("From %@", sender), message: broadcast.message)
         case .forcedDisconnect:
@@ -6728,7 +6754,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
                         value = entry.size == 1 ? L("1 item") : LF("%@ items", String(entry.size))
                     }
                 } else {
-                    value = ByteCountFormatter.string(fromByteCount: Int64(entry.size), countStyle: .file)
+                    value = Self.fileByteCountFormatter.string(fromByteCount: Int64(entry.size))
                 }
             case "modified": value = entry.timestamp == 0 ? "—" : Self.macDateString(entry.timestamp)
             case "flags": value = String(format: "%04x", entry.flags)
@@ -7180,11 +7206,23 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
     }
 
     var visibleFileRows: [VisibleFileRow] {
+        visibleFileRowSnapshot
+    }
+
+    func rebuildVisibleFileRowSnapshot() {
         if let results = sortedFileSearchResults {
-            return results.map { VisibleFileRow(entry: $0.directoryEntry, path: $0.path, depth: 0) }
+            visibleFileRowSnapshot = results.map {
+                VisibleFileRow(entry: $0.directoryEntry, path: $0.path, depth: 0)
+            }
+            return
         }
-        guard let root = lastDirectory else { return [] }
+        guard let root = lastDirectory else {
+            visibleFileRowSnapshot = []
+            return
+        }
+
         var rows: [VisibleFileRow] = []
+        rows.reserveCapacity(root.entries.count)
 
         func append(_ listing: LegacyDirectoryListing, depth: Int) {
             for entry in sortedDirectoryEntries(listing.entries) {
@@ -7198,7 +7236,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         }
 
         append(root, depth: 0)
-        return rows
+        visibleFileRowSnapshot = rows
     }
 
     var visibleUsers: [LegacyUserListEntry] {
@@ -7526,10 +7564,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
 
     static func dateString(_ date: Date?) -> String {
         guard let date else { return "—" }
-        let formatter = DateFormatter()
-        formatter.dateStyle = .medium
-        formatter.timeStyle = .short
-        return formatter.string(from: date)
+        return displayDateFormatter.string(from: date)
     }
 
     static func expirationDisplay(_ seconds: UInt32) -> String {
@@ -7570,10 +7605,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         // Classic Mac epoch starts 1904-01-01; Unix starts 1970-01-01.
         let unix = TimeInterval(Int64(timestamp) - 2_082_844_800)
         guard unix > -2_082_844_800 else { return "—" }
-        let formatter = DateFormatter()
-        formatter.dateStyle = .medium
-        formatter.timeStyle = .short
-        return formatter.string(from: Date(timeIntervalSince1970: unix))
+        return displayDateFormatter.string(from: Date(timeIntervalSince1970: unix))
     }
 
     static func displayMessage(for error: Error) -> String {

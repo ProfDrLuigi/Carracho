@@ -475,7 +475,7 @@ extension ViewController {
         textView.drawsBackground = false
         textView.textContainerInset = NSSize(width: 10, height: 10)
         textView.textStorage?.setAttributedString(
-            CarrachoHTMLText.attributedString(fromWire: message, baseFont: .systemFont(ofSize: 13))
+            CarrachoHTMLText.attributedString(fromWire: message, baseFont: .systemFont(ofSize: 13), expandLegacyEmoticons: true)
         )
         let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 500, height: 190))
         scroll.hasVerticalScroller = true

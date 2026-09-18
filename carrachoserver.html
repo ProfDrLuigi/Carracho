@@ -24,6 +24,21 @@
 </head>
     <body>
         
+        <p><span class="header" lang="en">New in 1.0.3</span></p>
+        <ul>
+            <span class="newstext">
+                <li>Improved account-group inheritance: existing accounts that still use their group's default permissions and nickname color now follow later group changes, while explicit per-account overrides remain preserved.</li>
+                <li>Added persistent per-account transfer statistics for download/upload counts and transferred bytes, exposed to modern administration clients on both macOS and native Linux servers.</li>
+                <li>Server-side directory symlinks can now intentionally open recursive shared directory trees and are presented to clients as normal folders. Nested share hops are limited to 32, while personal home directories remain strictly confined.</li>
+                <li>External file symlinks are not promoted to directory shares, preserving the distinction between explicitly shared directories and ordinary symbolic links.</li>
+                <li>Improved Classic agreement compatibility by normalizing modern line endings and supplying a real Classic text-style record so agreement text is displayed correctly by old clients.</li>
+                <li>Improved Unicode interoperability with Classic clients: emoji sent by modern users or the local Bot are converted for Legacy recipients to compact readable aliases such as *laughing*, while modern recipients continue to receive the original emoji.</li>
+                <li>Improved login/user-list robustness for modern clients by keeping large avatar payloads out of the packed login user list and synchronizing avatars, status messages, group colors, and transport markers through individual user updates.</li>
+                <li>News reaction changes are now broadcast to other connected modern clients so reaction counts and users can refresh immediately.</li>
+                <li>Improved dedicated account-group Files roots and their validation, including support for intentionally provisioned server-side directory shares while retaining strict path and personal-directory safety checks.</li>
+                <li>Updated the native Linux server in parallel with the macOS/Swift server, including group-inheritance persistence, transfer statistics, recursive directory-share handling, Classic agreement formatting, and Unicode-to-Classic emoji fallbacks.</li>
+        </ul></span>
+
         <p><span class="header" lang="en">New in 1.0.2</span></p>
         <ul>
             <span class="newstext">

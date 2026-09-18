@@ -26,21 +26,27 @@ enum CarrachoHTMLText {
 
     static func attributedString(fromWire data: Data,
                                  baseFont: NSFont = .systemFont(ofSize: 13),
-                                 textColor: NSColor = .labelColor) -> NSAttributedString {
-        attributedString(from: string(fromWire: data), baseFont: baseFont, textColor: textColor)
+                                 textColor: NSColor = .labelColor,
+                                 expandLegacyEmoticons: Bool = false) -> NSAttributedString {
+        attributedString(from: string(fromWire: data),
+                         baseFont: baseFont,
+                         textColor: textColor,
+                         expandLegacyEmoticons: expandLegacyEmoticons)
     }
 
     static func attributedString(from source: String,
                                  baseFont: NSFont = .systemFont(ofSize: 13),
-                                 textColor: NSColor = .labelColor) -> NSAttributedString {
+                                 textColor: NSColor = .labelColor,
+                                 expandLegacyEmoticons: Bool = false) -> NSAttributedString {
         let normalized = source
             .replacingOccurrences(of: "\r\n", with: "\n")
             .replacingOccurrences(of: "\r", with: "\n")
         guard looksLikeHTML(normalized) else {
-            return NSAttributedString(string: normalized, attributes: [
+            let rendered = NSAttributedString(string: normalized, attributes: [
                 .font: baseFont,
                 .foregroundColor: textColor,
             ])
+            return expandLegacyEmoticons ? replacingLegacyEmoticons(in: rendered) : rendered
         }
 
         let safeBody = sanitize(normalized)
@@ -60,17 +66,80 @@ enum CarrachoHTMLText {
                                                     .characterEncoding: String.Encoding.utf8.rawValue,
                                                   ],
                                                   documentAttributes: nil) else {
-            return NSAttributedString(string: normalized, attributes: [
+            let rendered = NSAttributedString(string: normalized, attributes: [
                 .font: baseFont,
                 .foregroundColor: textColor,
             ])
+            return expandLegacyEmoticons ? replacingLegacyEmoticons(in: rendered) : rendered
         }
-        return value
+        return expandLegacyEmoticons ? replacingLegacyEmoticons(in: value) : value
     }
 
-    static func plainText(fromWire data: Data) -> String {
-        attributedString(fromWire: data).string
+    static func plainText(fromWire data: Data, expandLegacyEmoticons: Bool = false) -> String {
+        attributedString(fromWire: data, expandLegacyEmoticons: expandLegacyEmoticons).string
     }
+
+    /// Classic clients cannot send Unicode emoji, but they can send old textual
+    /// emoticons. Modern clients expand those during presentation only. The original
+    /// wire/stored text stays untouched, so Classic peers continue to see :D, :), etc.
+    static func replacingLegacyEmoticons(in attributed: NSAttributedString) -> NSAttributedString {
+        guard attributed.length > 0 else { return attributed }
+        let source = attributed.string
+        let ns = source as NSString
+        let matches = legacyEmoticonRegex.matches(in: source, range: NSRange(location: 0, length: ns.length))
+        guard !matches.isEmpty else { return attributed }
+
+        let result = NSMutableAttributedString(attributedString: attributed)
+        let wordCharacters = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "_"))
+        for match in matches.reversed() {
+            let range = match.range(at: 1)
+            guard range.location != NSNotFound else { continue }
+            let token = ns.substring(with: range).lowercased()
+            guard let emoji = legacyEmoticonMap[token] else { continue }
+
+            // Letter/digit-leading forms such as XD must start at a word boundary;
+            // otherwise perfectly innocent words ending in "xd" become accidental faces.
+            if let first = token.unicodeScalars.first, wordCharacters.contains(first), range.location > 0 {
+                let previous = ns.substring(with: NSRange(location: range.location - 1, length: 1))
+                if previous.rangeOfCharacter(from: wordCharacters) != nil { continue }
+            }
+            result.replaceCharacters(in: range, with: emoji)
+        }
+        return result
+    }
+
+    static func replacingLegacyEmoticons(in source: String) -> String {
+        replacingLegacyEmoticons(in: NSAttributedString(string: source)).string
+    }
+
+    private static let legacyEmoticonMap: [String: String] = [
+        ":-d": "😄", ":d": "😄",
+        "x-d": "😂", "xd": "😂",
+        ":-)": "🙂", ":)": "🙂",
+        ";-)": "😉", ";)": "😉",
+        ":-(": "🙁", ":(": "🙁",
+        ":-p": "😛", ":p": "😛",
+        ";-p": "😜", ";p": "😜",
+        ":-o": "😮", ":o": "😮",
+        ":-/": "😕", ":/": "😕",
+        ":-|": "😐", ":|": "😐",
+        ":'-(": "😢", ":'(": "😢",
+        ":-*": "😘", ":*": "😘",
+        "<3": "❤️",
+    ]
+
+    private static let legacyEmoticonRegex: NSRegularExpression = {
+        let tokens = legacyEmoticonMap.keys
+            .sorted { $0.count > $1.count }
+            .map(NSRegularExpression.escapedPattern(for:))
+            .joined(separator: "|")
+        // The right-side boundary keeps letter-ending forms such as :D/:P from
+        // eating pieces of ordinary text while still allowing the common hello:D form.
+        return try! NSRegularExpression(
+            pattern: "(" + tokens + ")(?=$|[\\s\\.,!?;:\\)\\]\\}<>])",
+            options: [.caseInsensitive]
+        )
+    }()
 
     static func looksLikeHTML(_ source: String) -> Bool {
         let tagPattern = #"(?is)<\s*/?\s*(a|b|big|blockquote|br|center|code|del|div|em|font|h[1-6]|hr|i|ins|li|ol|p|pre|s|small|span|strike|strong|sub|sup|tt|u|ul)\b[^>]*>"#

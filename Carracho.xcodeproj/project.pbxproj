@@ -7,6 +7,32 @@
 	objects = {
 
 /* Begin PBXAggregateTarget section */
+		2A80A9BF305D5B9600ECFBC3 /* Publish Carracho */ = {
+			isa = PBXAggregateTarget;
+			buildConfigurationList = 2A80A9C0305D5B9600ECFBC3 /* Build configuration list for PBXAggregateTarget "Publish Carracho" */;
+			buildPhases = (
+				2A80A9C3305D5BA600ECFBC3 /* ShellScript */,
+			);
+			dependencies = (
+			);
+			name = "Publish Carracho";
+			packageProductDependencies = (
+			);
+			productName = "Publish Carracho";
+		};
+		2A80A9C4305D5EF400ECFBC3 /* Publish Carracho Server */ = {
+			isa = PBXAggregateTarget;
+			buildConfigurationList = 2A80A9C6305D5EF400ECFBC3 /* Build configuration list for PBXAggregateTarget "Publish Carracho Server" */;
+			buildPhases = (
+				2A80A9C5305D5EF400ECFBC3 /* ShellScript */,
+			);
+			dependencies = (
+			);
+			name = "Publish Carracho Server";
+			packageProductDependencies = (
+			);
+			productName = "Publish Carracho";
+		};
 		2AD5497D30556A4100CD47B6 /* Sync Server */ = {
 			isa = PBXAggregateTarget;
 			buildConfigurationList = 2AD5497E30556A4100CD47B6 /* Build configuration list for PBXAggregateTarget "Sync Server" */;
@@ -226,6 +252,9 @@
 				LastSwiftUpdateCheck = 2660;
 				LastUpgradeCheck = 2660;
 				TargetAttributes = {
+					2A80A9BF305D5B9600ECFBC3 = {
+						CreatedOnToolsVersion = 26.6;
+					};
 					2AD52C513052E26B00CD47B6 = {
 						CreatedOnToolsVersion = 26.6;
 					};
@@ -255,6 +284,8 @@
 				2AD52C513052E26B00CD47B6 /* Carracho */,
 				2AD53F443054732E00CD47B6 /* Carracho Server */,
 				2AD5497D30556A4100CD47B6 /* Sync Server */,
+				2A80A9BF305D5B9600ECFBC3 /* Publish Carracho */,
+				2A80A9C4305D5EF400ECFBC3 /* Publish Carracho Server */,
 			);
 		};
 /* End PBXProject section */
@@ -277,6 +308,40 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
+		2A80A9C3305D5BA600ECFBC3 /* ShellScript */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "MAIN_APP_PATH=\"${BUILT_PRODUCTS_DIR}/Carracho.app\"\n\n# Prüft Signierung\nif ! spctl --assess --type execute --verbose=4 \"$MAIN_APP_PATH\"; then\n    echo \"❌ Gatekeeper hat die App abgelehnt.\"\n    exit 1\nfi\n\nif ! codesign --verify --deep --strict --verbose=4 \"$MAIN_APP_PATH\"; then\n    echo \"❌ Signaturprüfung fehlgeschlagen.\"\n    exit 1\nfi\n\nERRORS=0\n\nfind \"$MAIN_APP_PATH\" -type f -perm -111 | while IFS= read -r file; do\n    if ! codesign --verify --verbose=4 \"$file\" >/dev/null 2>&1; then\n        echo \"❌ Fehlerhafte Signatur: $file\"\n        ERRORS=1\n    fi\ndone\n\nif [ \"$ERRORS\" -ne 0 ]; then\n    echo \"❌ Mindestens eine Datei im Bundle ist falsch signiert.\"\n    exit 1\nfi\n\n# Prüfen, ob das Upload-Verzeichnis existiert, und Dateien vorbereiten\nUPLOAD_DIR=\"/Volumes/Homeshare/Xcode/CarrachoClient/upload\"\nif [ -d \"$UPLOAD_DIR\" ]; then\n\n    # HTML-Datei kopieren\n    cp \"$HOME/Documents/Xcode/Carracho/carrachoclient.html\" \"$UPLOAD_DIR/\"\n    \n    # App als ZIP-Archiv erstellen\n    ditto -c -k --sequesterRsrc --keepParent \"$MAIN_APP_PATH\" \"$UPLOAD_DIR/carrachoclient.zip\"\nfi\n\n# Sicherstellen, dass keine alte Version der App auf dem Desktop existiert\nDESKTOP_APP=\"$HOME/Desktop/${PROJECT_NAME}.app\"\nif [ -d \"$DESKTOP_APP\" ]; then\n    rm -rf \"$DESKTOP_APP\"\nfi\n\n# App auf den Desktop kopieren\ncp -a \"$MAIN_APP_PATH\" \"$HOME/Desktop/\"\n";
+		};
+		2A80A9C5305D5EF400ECFBC3 /* ShellScript */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "MAIN_APP_PATH=\"${BUILT_PRODUCTS_DIR}/Carracho Server.app\"\n\n# Prüft Signierung\nif ! spctl --assess --type execute --verbose=4 \"$MAIN_APP_PATH\"; then\n    echo \"❌ Gatekeeper hat die App abgelehnt.\"\n    exit 1\nfi\n\nif ! codesign --verify --deep --strict --verbose=4 \"$MAIN_APP_PATH\"; then\n    echo \"❌ Signaturprüfung fehlgeschlagen.\"\n    exit 1\nfi\n\nERRORS=0\n\nfind \"$MAIN_APP_PATH\" -type f -perm -111 | while IFS= read -r file; do\n    if ! codesign --verify --verbose=4 \"$file\" >/dev/null 2>&1; then\n        echo \"❌ Fehlerhafte Signatur: $file\"\n        ERRORS=1\n    fi\ndone\n\nif [ \"$ERRORS\" -ne 0 ]; then\n    echo \"❌ Mindestens eine Datei im Bundle ist falsch signiert.\"\n    exit 1\nfi\n\n# Prüfen, ob das Upload-Verzeichnis existiert, und Dateien vorbereiten\nUPLOAD_DIR=\"/Volumes/Homeshare/Xcode/CarrachoServer/upload\"\nif [ -d \"$UPLOAD_DIR\" ]; then\n\n    # HTML-Datei kopieren\n    cp \"$HOME/Documents/Xcode/Carracho/carrachoserver.html\" \"$UPLOAD_DIR/\"\n    \n    # App als ZIP-Archiv erstellen\n    ditto -c -k --sequesterRsrc --keepParent \"$MAIN_APP_PATH\" \"$UPLOAD_DIR/carrachoserver.zip\"\nfi\n\n# Sicherstellen, dass keine alte Version der App auf dem Desktop existiert\nDESKTOP_APP=\"$HOME/Desktop/${PROJECT_NAME}.app\"\nif [ -d \"$DESKTOP_APP\" ]; then\n    rm -rf \"$DESKTOP_APP\"\nfi\n\n# App auf den Desktop kopieren\ncp -a \"$MAIN_APP_PATH\" \"$HOME/Desktop/\"\n";
+		};
 		2AD5498230556A4900CD47B6 /* Sync Server */ = {
 			isa = PBXShellScriptBuildPhase;
 			buildActionMask = 2147483647;
@@ -315,6 +380,42 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin XCBuildConfiguration section */
+		2A80A9C1305D5B9600ECFBC3 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+			};
+			name = Debug;
+		};
+		2A80A9C2305D5B9600ECFBC3 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+			};
+			name = Release;
+		};
+		2A80A9C7305D5EF400ECFBC3 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+			};
+			name = Debug;
+		};
+		2A80A9C8305D5EF400ECFBC3 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+			};
+			name = Release;
+		};
 		2AD52C5E3052E26C00CD47B6 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -586,6 +687,24 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		2A80A9C0305D5B9600ECFBC3 /* Build configuration list for PBXAggregateTarget "Publish Carracho" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				2A80A9C1305D5B9600ECFBC3 /* Debug */,
+				2A80A9C2305D5B9600ECFBC3 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		2A80A9C6305D5EF400ECFBC3 /* Build configuration list for PBXAggregateTarget "Publish Carracho Server" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				2A80A9C7305D5EF400ECFBC3 /* Debug */,
+				2A80A9C8305D5EF400ECFBC3 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		2AD52C4D3052E26B00CD47B6 /* Build configuration list for PBXProject "Carracho" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

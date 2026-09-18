@@ -584,7 +584,7 @@ extension ViewController {
             let nickname = Self.macRomanString(last.senderNickname).trimmingCharacters(in: .whitespacesAndNewlines)
             let login = Self.macRomanString(last.senderLogin).trimmingCharacters(in: .whitespacesAndNewlines)
             let sender = nickname.isEmpty ? login : nickname
-            let body = CarrachoHTMLText.plainText(fromWire: last.message).replacingOccurrences(of: "\n", with: " ")
+            let body = CarrachoHTMLText.plainText(fromWire: last.message, expandLegacyEmoticons: true).replacingOccurrences(of: "\n", with: " ")
             previewText = sender.isEmpty ? body : "\(sender): \(body)"
         } else {
             previewText = L("Messages received while you were offline")
@@ -636,7 +636,7 @@ extension ViewController {
         deleteButton.setContentHuggingPriority(.required, for: .horizontal)
         let header = horizontalStack([sender, NSView(), time, deleteButton], spacing: 8)
 
-        let body = NSTextField(wrappingLabelWithString: CarrachoHTMLText.plainText(fromWire: message.message))
+        let body = NSTextField(wrappingLabelWithString: CarrachoHTMLText.plainText(fromWire: message.message, expandLegacyEmoticons: true))
         body.font = .systemFont(ofSize: messageCenterFontSize)
         body.maximumNumberOfLines = 0
         body.isSelectable = true
@@ -792,7 +792,7 @@ extension ViewController {
 
         let previewText: String
         if let last = conversation.entries.last {
-            let plain = CarrachoHTMLText.plainText(fromWire: last.message).replacingOccurrences(of: "\n", with: " ")
+            let plain = CarrachoHTMLText.plainText(fromWire: last.message, expandLegacyEmoticons: true).replacingOccurrences(of: "\n", with: " ")
             previewText = (last.outgoing ? L("You: ") : "") + plain
         } else {
             previewText = conversation.isLegacyTransport ? L("Classic client · one PM per message") : L("No messages yet")
@@ -842,7 +842,7 @@ extension ViewController {
         time.setContentHuggingPriority(.required, for: .horizontal)
         let header = horizontalStack([sender, NSView(), time], spacing: 8)
 
-        let plain = CarrachoHTMLText.plainText(fromWire: entry.message)
+        let plain = CarrachoHTMLText.plainText(fromWire: entry.message, expandLegacyEmoticons: true)
         let body = NSTextField(wrappingLabelWithString: plain)
         body.font = .systemFont(ofSize: messageCenterFontSize)
         body.maximumNumberOfLines = 0

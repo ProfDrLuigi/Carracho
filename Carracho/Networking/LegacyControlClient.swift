@@ -514,19 +514,29 @@ final class LegacyControlClient {
         }
     }
 
+    private func textForCurrentServer(_ message: Data, maximumBytes: Int) -> Data? {
+        guard message.count <= maximumBytes else { return nil }
+        if CarrachoTextWire.isTaggedUTF8(message), transferSession?.usesModernCrypto != true {
+            return CarrachoTextWire.macRomanDescribingEmoji(from: message, maximumBytes: maximumBytes)
+        }
+        return message
+    }
+
     func sendChannelMessage(channelID: UInt32,
                             message: Data,
                             attribute: UInt8 = 0,
                             completion: @escaping (Result<Void, Error>) -> Void) {
-        guard !message.isEmpty, message.count <= 0x800 else {
+        guard !message.isEmpty,
+              let wireMessage = textForCurrentServer(message, maximumBytes: 0x800),
+              !wireMessage.isEmpty else {
             completion(.failure(LegacyControlClientError.invalidInput(
-                "Eine Channel-Nachricht muss 1 bis 2048 Byte lang sein."
+                "Die Channel-Nachricht kann für diesen Server nicht innerhalb des 2048-Byte-Limits dargestellt werden."
             )))
             return
         }
         sendOneWay(command: LegacyCommand.channelChat, fields: [
             LegacyTLV(type: LegacyChannelField.channelID, value: LegacyWire.uint32BE(channelID)),
-            LegacyTLV(type: LegacyChannelField.message, value: message),
+            LegacyTLV(type: LegacyChannelField.message, value: wireMessage),
             LegacyTLV(type: LegacyChannelField.chatAttribute, value: Data([attribute])),
         ], completion: completion)
     }
@@ -844,16 +854,15 @@ final class LegacyControlClient {
             completion(.failure(LegacyControlClientError.invalidInput("Flat News darf nicht leer sein.")))
             return
         }
-        guard content.count <= Int(UInt16.max) else {
-            completion(.failure(LegacyControlClientError.invalidInput("Flat News darf höchstens 65535 Byte lang sein.")))
-            return
-        }
-        if CarrachoTextWire.isTaggedUTF8(content), transferSession?.usesModernCrypto != true {
-            completion(.failure(LegacyControlClientError.invalidInput("Emoji und Unicode in Flat News benötigen einen modernen Carracho-Server.")))
+        guard let wireContent = textForCurrentServer(content, maximumBytes: Int(UInt16.max)),
+              !wireContent.isEmpty else {
+            completion(.failure(LegacyControlClientError.invalidInput(
+                "Flat News kann für diesen Server nicht innerhalb des 65535-Byte-Limits dargestellt werden."
+            )))
             return
         }
         sendTaskCompleteRequest(command: LegacyCommand.flatNewsPost,
-                                fields: [LegacyTLV(type: LegacyCommand.flatNewsPost, value: content)],
+                                fields: [LegacyTLV(type: LegacyCommand.flatNewsPost, value: wireContent)],
                                 completion: completion)
     }
 
@@ -879,14 +888,12 @@ final class LegacyControlClient {
             completion(.failure(LegacyControlClientError.invalidInput("Broadcast muss gültigen Text mit höchstens 512 Byte enthalten.")))
             return
         }
-        var wireMessage = message
-        if CarrachoTextWire.isTaggedUTF8(message), transferSession?.usesModernCrypto != true {
-            guard let classic = CarrachoTextWire.macRomanFilteringEmoji(from: message),
-                  !classic.isEmpty, classic.count <= 0x200 else {
-                completion(.failure(LegacyControlClientError.invalidInput("Für Classic-Broadcasts werden Emoji entfernt; der übrige Text muss MacRoman-kompatibel und höchstens 512 Byte lang sein.")))
-                return
-            }
-            wireMessage = classic
+        guard let wireMessage = textForCurrentServer(message, maximumBytes: 0x200),
+              !wireMessage.isEmpty else {
+            completion(.failure(LegacyControlClientError.invalidInput(
+                "Für Classic-Broadcasts werden Emoji als *Unicode-Name* dargestellt; der Text muss danach in 512 Byte passen."
+            )))
+            return
         }
         sendTaskCompleteRequest(command: LegacyCommand.broadcastMessage,
                                 fields: [LegacyTLV(type: 1, value: wireMessage)], completion: completion)
@@ -896,22 +903,27 @@ final class LegacyControlClient {
 
     func sendPrivateMessage(to userID: UInt32, message: Data, secondaryPayload: Data = Data(),
                             completion: @escaping (Result<Void, Error>) -> Void) {
-        guard !message.isEmpty, message.count <= 0x8000, secondaryPayload.count <= 0x8000 else {
-            completion(.failure(LegacyControlClientError.invalidInput("Private Nachricht überschreitet das Protokoll-Limit."))); return
+        guard !message.isEmpty,
+              let wireMessage = textForCurrentServer(message, maximumBytes: 0x8000),
+              !wireMessage.isEmpty,
+              secondaryPayload.count <= 0x8000 else {
+            completion(.failure(LegacyControlClientError.invalidInput("Private Nachricht überschreitet das Protokoll-Limit oder ist für Classic nicht darstellbar."))); return
         }
-        var fields = [LegacyTLV(type: 1, value: LegacyWire.uint32BE(userID)), LegacyTLV(type: 2, value: message)]
+        var fields = [LegacyTLV(type: 1, value: LegacyWire.uint32BE(userID)), LegacyTLV(type: 2, value: wireMessage)]
         if !secondaryPayload.isEmpty { fields.append(LegacyTLV(type: 3, value: secondaryPayload)) }
         sendOneWay(command: LegacyCommand.privateMessage, fields: fields, completion: completion)
     }
 
     func sendOfflineCapableMessage(toLogin login: Data, message: Data,
                                    completion: @escaping (Result<Void, Error>) -> Void) {
-        guard !login.isEmpty, login.count <= 63, !message.isEmpty, message.count <= LegacyOfflineMessage.maximumMessageLength else {
-            completion(.failure(LegacyControlClientError.invalidInput("Offline messages are limited to 4096 bytes.")))
+        guard !login.isEmpty, login.count <= 63, !message.isEmpty,
+              let wireMessage = textForCurrentServer(message, maximumBytes: LegacyOfflineMessage.maximumMessageLength),
+              !wireMessage.isEmpty else {
+            completion(.failure(LegacyControlClientError.invalidInput("Offline messages are limited to 4096 bytes or are not Classic-representable.")))
             return
         }
         sendTaskCompleteRequest(command: LegacyCommand.offlineMessageSend,
-                                fields: [LegacyTLV(type: 1, value: login), LegacyTLV(type: 2, value: message)],
+                                fields: [LegacyTLV(type: 1, value: login), LegacyTLV(type: 2, value: wireMessage)],
                                 completion: completion)
     }
 

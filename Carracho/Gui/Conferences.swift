@@ -1063,13 +1063,13 @@ extension ViewController {
             case .text: return false
             }
         }) else {
-            return CarrachoHTMLText.attributedString(from: source, baseFont: baseFont)
+            return CarrachoHTMLText.attributedString(from: source, baseFont: baseFont, expandLegacyEmoticons: true)
         }
         let output = NSMutableAttributedString()
         for segment in segments {
             switch segment {
             case let .text(text):
-                output.append(CarrachoHTMLText.attributedString(from: text, baseFont: baseFont))
+                output.append(CarrachoHTMLText.attributedString(from: text, baseFont: baseFont, expandLegacyEmoticons: true))
             case let .image(id):
                 if hiddenMediaIDs.contains(id) { continue }
                 if let image = mediaCache?.image(id: id) {

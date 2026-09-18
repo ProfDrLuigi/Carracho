@@ -15,9 +15,9 @@
             buildForAnalyzing = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "2AD53F443054732E00CD47B6"
-               BuildableName = "Carracho Server.app"
-               BlueprintName = "Carracho Server"
+               BlueprintIdentifier = "2A80A9C4305D5EF400ECFBC3"
+               BuildableName = "Publish CarrachoServer"
+               BlueprintName = "Publish CarrachoServer"
                ReferencedContainer = "container:Carracho.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
@@ -41,16 +41,6 @@
       debugServiceExtension = "internal"
       allowLocationSimulation = "YES"
       queueDebuggingEnableBacktraceRecording = "Yes">
-      <BuildableProductRunnable
-         runnableDebuggingMode = "0">
-         <BuildableReference
-            BuildableIdentifier = "primary"
-            BlueprintIdentifier = "2AD53F443054732E00CD47B6"
-            BuildableName = "Carracho Server.app"
-            BlueprintName = "Carracho Server"
-            ReferencedContainer = "container:Carracho.xcodeproj">
-         </BuildableReference>
-      </BuildableProductRunnable>
    </LaunchAction>
    <ProfileAction
       buildConfiguration = "Release"
@@ -58,16 +48,15 @@
       savedToolIdentifier = ""
       useCustomWorkingDirectory = "NO"
       debugDocumentVersioning = "YES">
-      <BuildableProductRunnable
-         runnableDebuggingMode = "0">
+      <MacroExpansion>
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "2AD53F443054732E00CD47B6"
-            BuildableName = "Carracho Server.app"
-            BlueprintName = "Carracho Server"
+            BlueprintIdentifier = "2A80A9C4305D5EF400ECFBC3"
+            BuildableName = "Publish CarrachoServer"
+            BlueprintName = "Publish CarrachoServer"
             ReferencedContainer = "container:Carracho.xcodeproj">
          </BuildableReference>
-      </BuildableProductRunnable>
+      </MacroExpansion>
    </ProfileAction>
    <AnalyzeAction
       buildConfiguration = "Debug">
