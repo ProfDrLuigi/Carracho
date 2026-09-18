@@ -185,40 +185,104 @@ extension ViewController {
         alert.addButton(withTitle: L("Save"))
         alert.addButton(withTitle: L("Cancel"))
 
+        func editorLabel(_ text: String) -> NSTextField {
+            let field = NSTextField(labelWithString: text)
+            field.font = .systemFont(ofSize: 12.5, weight: .medium)
+            field.textColor = .secondaryLabelColor
+            field.alignment = .right
+            return field
+        }
+
+        func accessHeader(_ text: String) -> NSTextField {
+            let field = NSTextField(labelWithString: text)
+            field.font = .systemFont(ofSize: 11.5, weight: .semibold)
+            field.textColor = .secondaryLabelColor
+            field.alignment = .center
+            return field
+        }
+
+        func accessCheckbox(_ enabled: Bool, label: String) -> NSButton {
+            let button = NSButton(checkboxWithTitle: "", target: nil, action: nil)
+            button.state = enabled ? .on : .off
+            button.setAccessibilityLabel(label)
+            return button
+        }
+
         let name = NSTextField(string: existing?.name ?? "")
+        name.placeholderString = L("News Category")
+        name.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
         let amount = NSTextField(string: "1")
         amount.alignment = .right
-        amount.widthAnchor.constraint(equalToConstant: 70).isActive = true
+        amount.widthAnchor.constraint(equalToConstant: 64).isActive = true
+
         let unit = NSPopUpButton()
         unit.addItems(withTitles: [L("hours"), L("days"), L("weeks"), L("months"), L("years"), L("never")])
+        unit.widthAnchor.constraint(equalToConstant: 118).isActive = true
         let parts = expirationEditorParts(existing?.expireAfterSeconds ?? 604_800)
         amount.stringValue = parts.amount
         unit.selectItem(at: parts.unitIndex)
-        let expire = NSStackView(views: [NSTextField(labelWithString: L("Expire articles after")), amount, unit])
-        expire.orientation = .horizontal
-        expire.alignment = .centerY
-        expire.spacing = 8
+
+        let expirationControls = NSStackView(views: [amount, unit])
+        expirationControls.orientation = .horizontal
+        expirationControls.alignment = .centerY
+        expirationControls.spacing = 8
+
+        let details = NSGridView(views: [
+            [editorLabel(L("News Category")), name],
+            [editorLabel(L("Expire articles after")), expirationControls],
+        ])
+        details.rowSpacing = 10
+        details.columnSpacing = 12
+        details.column(at: 0).width = 148
+        details.column(at: 0).xPlacement = .trailing
+        details.column(at: 1).xPlacement = .fill
 
         let access = existing?.access ?? ServerNewsgroupAccess()
-        let adminRead = NSButton(checkboxWithTitle: L("Read"), target: nil, action: nil); adminRead.state = access.administratorsRead ? .on : .off
-        let adminPost = NSButton(checkboxWithTitle: L("Post"), target: nil, action: nil); adminPost.state = access.administratorsPost ? .on : .off
-        let holderRead = NSButton(checkboxWithTitle: L("Read"), target: nil, action: nil); holderRead.state = access.accountHoldersRead ? .on : .off
-        let holderPost = NSButton(checkboxWithTitle: L("Post"), target: nil, action: nil); holderPost.state = access.accountHoldersPost ? .on : .off
-        let guestRead = NSButton(checkboxWithTitle: L("Read"), target: nil, action: nil); guestRead.state = access.guestsRead ? .on : .off
-        let guestPost = NSButton(checkboxWithTitle: L("Post"), target: nil, action: nil); guestPost.state = access.guestsPost ? .on : .off
+        let adminRead = accessCheckbox(access.administratorsRead, label: L("Administrators can read"))
+        let adminPost = accessCheckbox(access.administratorsPost, label: L("Administrators can post"))
+        let holderRead = accessCheckbox(access.accountHoldersRead, label: L("Account holders can read"))
+        let holderPost = accessCheckbox(access.accountHoldersPost, label: L("Account holders can post"))
+        let guestRead = accessCheckbox(access.guestsRead, label: L("Guests can read"))
+        let guestPost = accessCheckbox(access.guestsPost, label: L("Guests can post"))
+
         let permissions = NSGridView(views: [
-            [NSTextField(labelWithString: L("Administrators can")), adminRead, adminPost],
-            [NSTextField(labelWithString: L("Account holders can")), holderRead, holderPost],
-            [NSTextField(labelWithString: L("Guests can")), guestRead, guestPost],
+            [NSTextField(labelWithString: ""), accessHeader(L("Read")), accessHeader(L("Post"))],
+            [editorLabel(L("Administrators can")), adminRead, adminPost],
+            [editorLabel(L("Account holders can")), holderRead, holderPost],
+            [editorLabel(L("Guests can")), guestRead, guestPost],
         ])
-        permissions.rowSpacing = 10
-        permissions.columnSpacing = 18
-        let stack = NSStackView(views: [sectionCaption(L("News Category")), name, expire, sectionCaption(L("User Access")), permissions])
-        stack.orientation = .vertical
-        stack.alignment = .width
-        stack.spacing = 12
-        stack.frame = NSRect(x: 0, y: 0, width: 560, height: 260)
-        alert.accessoryView = stack
+        permissions.rowSpacing = 8
+        permissions.columnSpacing = 16
+        permissions.column(at: 0).width = 148
+        permissions.column(at: 0).xPlacement = .trailing
+        permissions.column(at: 1).width = 72
+        permissions.column(at: 1).xPlacement = .center
+        permissions.column(at: 2).width = 72
+        permissions.column(at: 2).xPlacement = .center
+
+        let accessTitle = sectionCaption(L("User Access"))
+        let divider = CarrachoDividerView()
+
+        let content = NSStackView(views: [details, divider, accessTitle, permissions])
+        content.orientation = .vertical
+        content.alignment = .width
+        content.spacing = 10
+        content.translatesAutoresizingMaskIntoConstraints = false
+        content.setCustomSpacing(14, after: details)
+        content.setCustomSpacing(12, after: divider)
+        content.setCustomSpacing(7, after: accessTitle)
+
+        let accessory = NSView(frame: NSRect(x: 0, y: 0, width: 500, height: 205))
+        accessory.addSubview(content)
+        NSLayoutConstraint.activate([
+            content.leadingAnchor.constraint(equalTo: accessory.leadingAnchor, constant: 6),
+            content.trailingAnchor.constraint(equalTo: accessory.trailingAnchor, constant: -6),
+            content.topAnchor.constraint(equalTo: accessory.topAnchor, constant: 4),
+            content.bottomAnchor.constraint(lessThanOrEqualTo: accessory.bottomAnchor, constant: -4),
+            name.widthAnchor.constraint(greaterThanOrEqualToConstant: 300),
+        ])
+        alert.accessoryView = accessory
 
         alert.beginSheetModal(for: window) { [weak self] response in
             guard response == .alertFirstButtonReturn, let self else { return }

@@ -156,6 +156,8 @@
 #define CMD_BOT_SET_RSS_FEEDS 0xf0000705u
 #define CMD_BOT_TEST_RSS_FEED 0xf0000706u
 #define CMD_BOT_RSS_FEED_TEST_REPLY 0xf0000707u
+#define CMD_CHANNEL_DELETE 0xf0000800u
+#define CMD_CHANNEL_DELETED 0xf0000801u
 #define FILE_LABEL_FIELD 0xf0000600u
 #define DIRECTORY_LABELS_FIELD 0xf0000601u
 #define LOGIN_FIELD_MEDIA_CAPABILITIES 0xf0000200u
@@ -1771,7 +1773,7 @@ static int connect_local_bot(cr_server*s){
     snprintf(x->account_id,sizeof(x->account_id),"%s",account.id);snprintf(x->group_id,sizeof(x->group_id),"%s",account.group_id);
     snprintf(x->files_root_path,sizeof(x->files_root_path),"%s",bot_files_root_path);snprintf(x->files_root_name,sizeof(x->files_root_name),"%s",bot_files_root_name);
     x->group_color_rgb=account.color_rgb;x->has_group_color=account.has_color;
-    snprintf(x->login,sizeof(x->login),"%s",account.login);snprintf(x->profile_name,sizeof(x->profile_name),"%s",account.name);snprintf(x->email,sizeof(x->email),"%s",account.email);snprintf(x->about,sizeof(x->about),"%s",account.about);
+    snprintf(x->login,sizeof(x->login),"%s",account.login);snprintf(x->profile_name,sizeof(x->profile_name),"%s",account.profile_name[0]?account.profile_name:account.name);snprintf(x->email,sizeof(x->email),"%s",account.email);snprintf(x->about,sizeof(x->about),"%s",account.about);
     /* The Bot is an in-process session, not a TCP client. Keep its visible peer identity fixed
        to IPv4 loopback so no configuration or future caller can redirect it off-host. */
     snprintf(x->peer_ip,sizeof(x->peer_ip),"%s",CR_BOT_LOOPBACK_PEER);memcpy(x->nickname,nickname,nickname_len);x->nickname_len=nickname_len;
@@ -2157,6 +2159,53 @@ static int handle_channel_join(cr_session*s,const cr_packet*p){if(!account_perm(
     cr_server*server=s->server;pthread_mutex_lock(&server->mutex);size_t joined=0;for(size_t i=0;i<CR_SERVER_MAX_CHANNELS;i++)if(server->channels[i].used&&channel_member_index(&server->channels[i],s->user_id)>=0)joined++;if(joined>=6){pthread_mutex_unlock(&server->mutex);return send_error(s,p->transaction_id,0xd1);}cr_channel*c=requested?channel_by_id_locked(server,requested):NULL;if(!c&&!requested){for(size_t i=0;i<CR_SERVER_MAX_CHANNELS;i++){cr_channel*x=&server->channels[i];if(x->used&&x->name_len==nn&&!strncasecmp((const char*)x->name,(const char*)nv,nn)){c=x;break;}}}if(!c&&nn)c=allocate_channel_locked(server,nv,nn,pv,pn);if(!c){pthread_mutex_unlock(&server->mutex);return send_error(s,p->transaction_id,200);}if(c->password_len&&(c->password_len!=pn||memcmp(c->password,pv,pn))){pthread_mutex_unlock(&server->mutex);return send_error(s,p->transaction_id,0xca);}if(channel_member_index(c,s->user_id)>=0){pthread_mutex_unlock(&server->mutex);return send_error(s,p->transaction_id,0xce);}if(c->member_count>=CR_CHANNEL_MAX_MEMBERS){pthread_mutex_unlock(&server->mutex);return send_error(s,p->transaction_id,200);}uint8_t mode=0;if((c->member_count==0&&c->id!=1)||(c->id==1&&s->mode==CR_MODE_ADMIN))mode|=CHANNEL_OPERATOR;c->members[c->member_count++]=(cr_channel_member){s->user_id,mode};cr_buffer members;encode_channel_members(c,&members);uint8_t cid[4],settings[2];cr_write_be32(cid,c->id);cr_write_be16(settings,c->flags);uint32_t channel_id=c->id;uint8_t cname[64],topic[256];size_t cname_n=c->name_len,topic_n=c->topic_len;memcpy(cname,c->name,cname_n);memcpy(topic,c->topic,topic_n);uint8_t uid[4];cr_write_be32(uid,s->user_id);cr_tlv_out joinedf[]={{CHANNEL_FIELD_ID,cid,4},{CHANNEL_FIELD_USER_ID,uid,4},{CHANNEL_FIELD_USER_MODE,&mode,1}};for(size_t i=0;i<c->member_count;i++){if(c->members[i].user_id==s->user_id)continue;cr_session*x=find_session_locked(server,c->members[i].user_id);if(x)session_send(x,CMD_CHANNEL_USER_JOINED,0,joinedf,3);}pthread_mutex_unlock(&server->mutex);
     cr_tlv_out f[]={{CHANNEL_FIELD_ID,cid,4},{CHANNEL_FIELD_NAME,cname,(uint16_t)cname_n},{CHANNEL_FIELD_TOPIC,topic,(uint16_t)topic_n},{CHANNEL_FIELD_MEMBERS,members.data,(uint16_t)members.len},{CHANNEL_FIELD_SETTINGS,settings,2}};int rc=session_send(s,CMD_CHANNEL_JOIN,p->transaction_id,f,5);cr_buffer_free(&members);if(channel_id==1)bot_maybe_greet_session(s);log_msg("Channel %u joined by user %u",channel_id,s->user_id);return rc;}
 static int handle_channel_leave(cr_session*s,const cr_packet*p){const cr_tlv*id=cr_packet_field(p,CHANNEL_FIELD_ID);if(!id||id->length!=4)return send_error(s,p->transaction_id,200);uint32_t cid=cr_read_be32(id->value);uint8_t cb[4],ub[4];cr_write_be32(cb,cid);cr_write_be32(ub,s->user_id);cr_tlv_out f[]={{CHANNEL_FIELD_ID,cb,4},{CHANNEL_FIELD_USER_ID,ub,4}};pthread_mutex_lock(&s->server->mutex);cr_channel*c=channel_by_id_locked(s->server,cid);if(c){int idx=channel_member_index(c,s->user_id);if(idx>=0){memmove(&c->members[idx],&c->members[idx+1],(c->member_count-(size_t)idx-1)*sizeof(c->members[0]));c->member_count--;for(size_t i=0;i<c->member_count;i++){cr_session*x=find_session_locked(s->server,c->members[i].user_id);if(x)session_send(x,CMD_CHANNEL_USER_LEFT,0,f,2);}if(c->member_count==0&&c->id!=1&&(c->flags&CHANNEL_PERMANENT)==0)c->used=0;}}pthread_mutex_unlock(&s->server->mutex);return session_send(s,CMD_CHANNEL_LEAVE,p->transaction_id,NULL,0);}
+
+static int handle_channel_delete(cr_session*s,const cr_packet*p){
+    const cr_tlv*id=cr_packet_field(p,CHANNEL_FIELD_ID);
+    if(!s->modern_transport||s->mode!=CR_MODE_ADMIN||!id||id->length!=4)
+        return send_error(s,p->transaction_id,2);
+    uint32_t cid=cr_read_be32(id->value);
+    if(cid==1)return send_error(s,p->transaction_id,200);
+
+    uint8_t name[64];size_t name_len=0;
+    uint32_t member_ids[CR_CHANNEL_MAX_MEMBERS];size_t member_count=0;
+    cr_session*classic_members[CR_CHANNEL_MAX_MEMBERS];size_t classic_count=0;
+    cr_session*modern_recipients[CR_SERVER_MAX_SESSIONS];size_t modern_count=0;
+
+    pthread_mutex_lock(&s->server->mutex);
+    cr_channel*c=channel_by_id_locked(s->server,cid);
+    if(!c){pthread_mutex_unlock(&s->server->mutex);return send_error(s,p->transaction_id,200);}
+    name_len=c->name_len;memcpy(name,c->name,name_len);
+    member_count=c->member_count;
+    for(size_t i=0;i<member_count;i++){
+        member_ids[i]=c->members[i].user_id;
+        cr_session*x=find_session_locked(s->server,member_ids[i]);
+        if(x&&!x->local_only&&!x->modern_transport&&classic_count<CR_CHANNEL_MAX_MEMBERS)
+            classic_members[classic_count++]=x;
+    }
+    for(size_t i=0;i<s->server->allocated_session_count;i++){
+        cr_session*x=s->server->sessions[i];
+        if(session_ready_for_async(x)&&x->modern_transport&&modern_count<CR_SERVER_MAX_SESSIONS)
+            modern_recipients[modern_count++]=x;
+    }
+    memset(c,0,sizeof(*c));
+    pthread_mutex_unlock(&s->server->mutex);
+
+    int rc=send_task_complete(s,p->transaction_id);
+    uint8_t cb[4];cr_write_be32(cb,cid);
+    for(size_t r=0;r<classic_count;r++){
+        for(size_t i=0;i<member_count;i++){
+            uint8_t ub[4];cr_write_be32(ub,member_ids[i]);
+            cr_tlv_out left[]={{CHANNEL_FIELD_ID,cb,4},{CHANNEL_FIELD_USER_ID,ub,4}};
+            (void)session_send(classic_members[r],CMD_CHANNEL_USER_LEFT,0,left,2);
+        }
+    }
+    cr_tlv_out deleted[]={{CHANNEL_FIELD_ID,cb,4},{CHANNEL_FIELD_NAME,name,(uint16_t)name_len}};
+    for(size_t i=0;i<modern_count;i++)
+        (void)session_send(modern_recipients[i],CMD_CHANNEL_DELETED,0,deleted,2);
+    log_msg("Channel %u deleted by administrator user %u",cid,s->user_id);
+    return rc;
+}
 
 static int media_uuid_text_valid(const char*s){if(!s||strlen(s)!=36)return 0;for(int i=0;i<36;i++){if(i==8||i==13||i==18||i==23){if(s[i]!='-')return 0;}else if(!((s[i]>='0'&&s[i]<='9')||(s[i]>='a'&&s[i]<='f')||(s[i]>='A'&&s[i]<='F')))return 0;}return 1;}
 static int extract_media_ids(const uint8_t*data,size_t len,char ids[][37],size_t max,size_t*out_count){
@@ -2632,7 +2681,7 @@ static int command_is_user_activity(uint32_t command) {
     case CMD_SET_FILE_INFO: case CMD_FILE_LABEL_SET: case CMD_MOVE_FILE: case CMD_EMPTY_TRASH:
     case CMD_PRIVATE_MESSAGE: case CMD_OFFLINE_MESSAGE_SEND: case CMD_EXTENDED_OWN_USER_INFO:
     case CMD_USER_UPDATE: case CMD_CHANNEL_JOIN: case CMD_CHANNEL_LEAVE: case CMD_CHANNEL_CHAT:
-    case CMD_CHANNEL_SETTINGS: case CMD_CHANNEL_USER_MODE: case CMD_CHANNEL_INVITE: case CMD_CHANNEL_DECLINE:
+    case CMD_CHANNEL_SETTINGS: case CMD_CHANNEL_USER_MODE: case CMD_CHANNEL_INVITE: case CMD_CHANNEL_DECLINE: case CMD_CHANNEL_DELETE:
     case CMD_ARTICLE_READ: case CMD_FORUM_THREAD_ENTRIES:
     case CMD_FORUM_ARTICLE_REACTION_SET: case CMD_FORUM_ARTICLE_DELETE: case CMD_ARTICLE_DELETE:
     case CMD_FLAT_NEWS_LIST: case CMD_FLAT_NEWS_POST: case CMD_FLAT_NEWS_DELETE: case CMD_FLAT_NEWS_CLEAR:
@@ -3630,11 +3679,11 @@ static void refresh_connected_account_state(cr_server*server){
     if(refs)for(size_t i=0;i<server->allocated_session_count;i++){cr_session*x=server->sessions[i];if(session_ready_for_async(x)){refs[n].user_id=x->user_id;snprintf(refs[n].account_id,sizeof(refs[n].account_id),"%s",x->account_id);n++;}}
     pthread_mutex_unlock(&server->mutex);if(!refs)return;
     for(size_t i=0;i<n;i++){
-        cr_account_mode mode=CR_MODE_GUEST;cr_personal_mode personal=CR_PERSONAL_NONE;uint64_t bits=0;char group_id[64]="",login[256]="",name[512]="",files_root_path[1025]="",files_root_name[257]="Allgemein";uint32_t color=0;int has_color=0,local_only=0,found=0;uint8_t*picture=NULL;size_t picture_len=0;
+        cr_account_mode mode=CR_MODE_GUEST;cr_personal_mode personal=CR_PERSONAL_NONE;uint64_t bits=0;char group_id[64]="",login[256]="",name[512]="",profile_name[512]="",files_root_path[1025]="",files_root_name[257]="Allgemein";uint32_t color=0;int has_color=0,local_only=0,found=0;uint8_t*picture=NULL;size_t picture_len=0;
         pthread_mutex_lock(&server->state.mutex);
         for(size_t ai=0;ai<server->state.account_count;ai++){
             cr_account*a=&server->state.accounts[ai];if(strcmp(a->id,refs[i].account_id))continue;
-            found=1;mode=a->mode;personal=a->personal;bits=a->permission_bits;local_only=a->local_login_only;snprintf(group_id,sizeof(group_id),"%s",a->group_id);snprintf(login,sizeof(login),"%s",a->login);snprintf(name,sizeof(name),"%s",a->name);color=a->color_rgb;has_color=a->has_color;
+            found=1;mode=a->mode;personal=a->personal;bits=a->permission_bits;local_only=a->local_login_only;snprintf(group_id,sizeof(group_id),"%s",a->group_id);snprintf(login,sizeof(login),"%s",a->login);snprintf(name,sizeof(name),"%s",a->name);snprintf(profile_name,sizeof(profile_name),"%s",a->profile_name);color=a->color_rgb;has_color=a->has_color;
             for(size_t gi=0;gi<server->state.account_group_count;gi++)if(!strcasecmp(server->state.account_groups[gi].id,a->group_id)){snprintf(files_root_path,sizeof(files_root_path),"%s",server->state.account_groups[gi].files_root_path);snprintf(files_root_name,sizeof(files_root_name),"%s",server->state.account_groups[gi].files_root_path[0]?server->state.account_groups[gi].files_root_name:"Allgemein");break;}
             if(local_only&&a->picture_len){picture=malloc(a->picture_len);if(picture){memcpy(picture,a->picture,a->picture_len);picture_len=a->picture_len;}}
             break;
@@ -3642,7 +3691,7 @@ static void refresh_connected_account_state(cr_server*server){
         pthread_mutex_unlock(&server->state.mutex);if(!found){free(picture);continue;}
         pthread_mutex_lock(&server->mutex);cr_session*x=find_session_locked(server,refs[i].user_id);
         if(x&&!strcmp(x->account_id,refs[i].account_id)){
-            x->mode=mode;x->personal=personal;x->permission_bits=bits;snprintf(x->group_id,sizeof(x->group_id),"%s",group_id);snprintf(x->files_root_path,sizeof(x->files_root_path),"%s",files_root_path);snprintf(x->files_root_name,sizeof(x->files_root_name),"%s",files_root_name);x->has_group_color=has_color;x->group_color_rgb=color;snprintf(x->login,sizeof(x->login),"%s",login);snprintf(x->profile_name,sizeof(x->profile_name),"%s",name);
+            x->mode=mode;x->personal=personal;x->permission_bits=bits;snprintf(x->group_id,sizeof(x->group_id),"%s",group_id);snprintf(x->files_root_path,sizeof(x->files_root_path),"%s",files_root_path);snprintf(x->files_root_name,sizeof(x->files_root_name),"%s",files_root_name);x->has_group_color=has_color;x->group_color_rgb=color;snprintf(x->login,sizeof(x->login),"%s",login);snprintf(x->profile_name,sizeof(x->profile_name),"%s",profile_name[0]?profile_name:name);
             if(x->local_only&&local_only){uint8_t nick[512];size_t nn=0;const char*display=name[0]?name:login;if(!cr_utf8_to_macroman(display,nick,sizeof(nick),&nn)&&nn){if(nn>64)nn=64;memcpy(x->nickname,nick,nn);x->nickname_len=nn;}free(x->picture);x->picture=picture;x->picture_len=picture_len;picture=NULL;picture_len=0;}
         }
         pthread_mutex_unlock(&server->mutex);free(picture);
@@ -3904,7 +3953,7 @@ static void record_request_event(cr_session*s,const cr_packet*p){
         case CMD_FORUM_THREAD_ENTRIES:{event_packet_text(p,1,a,sizeof(a));const cr_tlv*f=cr_packet_field(p,2);unsigned id=f&&f->length==4?cr_read_be32(f->value):0;cat="news";action="read-thread";snprintf(detail,sizeof(detail),"category=%s thread=%u",a,id);break;}
         case CMD_FORUM_ARTICLE_DELETE:{event_packet_text(p,1,a,sizeof(a));const cr_tlv*f=cr_packet_field(p,2);unsigned id=f&&f->length==4?cr_read_be32(f->value):0;cat="news";action="delete-post";snprintf(detail,sizeof(detail),"category=%s article=%u",a,id);break;}
         case CMD_FLAT_NEWS_LIST:cat="news";action="read-flat-news";break;case CMD_FLAT_NEWS_POST:cat="news";action="post-flat-news";break;
-        case CMD_CHANNEL_JOIN:cat="chat";action="join";break;case CMD_CHANNEL_LEAVE:cat="chat";action="leave";break;case CMD_CHANNEL_CHAT:cat="chat";action="message";break;
+        case CMD_CHANNEL_JOIN:cat="chat";action="join";break;case CMD_CHANNEL_LEAVE:cat="chat";action="leave";break;case CMD_CHANNEL_CHAT:cat="chat";action="message";break;case CMD_CHANNEL_DELETE:cat="chat";action="delete";break;
         case CMD_PRIVATE_MESSAGE:cat="messages";action="private-message";break;case CMD_OFFLINE_MESSAGE_SEND:cat="messages";action="offline-message";break;case CMD_BROADCAST:cat="messages";action="broadcast";break;
         case CMD_ACCOUNT_SAVE:cat="administration";action="save-account";break;case CMD_ACCOUNT_DELETE:cat="administration";action="delete-account";break;case CMD_SET_SERVER_SETTINGS:cat="administration";action="change-server-settings";break;case CMD_BOT_SET_ENABLED:cat="administration";action="control-bot";break;case CMD_BOT_SET_GREETING:cat="administration";action="configure-bot-greeting";break;case CMD_BOT_SET_COMMAND_RULES:cat="administration";action="configure-bot-commands";break;case CMD_BOT_SET_RSS_FEEDS:cat="administration";action="configure-bot-rss";break;case CMD_BOT_TEST_RSS_FEED:cat="administration";action="test-bot-rss";break;case CMD_REBUILD_SEARCH_INDEX:cat="administration";action="rebuild-search-index";break;case CMD_CHANGE_OWN_PASSWORD:cat="account";action="change-password";break;
         default:break;
@@ -3929,7 +3978,7 @@ case CMD_ADMIN_NEWSGROUP_LIST:return handle_admin_newsgroup_list(s,p);case CMD_N
 case CMD_ARTICLE_READ:return handle_article_read(s,p);case CMD_FORUM_THREAD_LIST:return handle_forum_thread_list(s,p);case CMD_FORUM_THREAD_ENTRIES:return handle_forum_thread_entries(s,p);case CMD_FORUM_ARTICLE_REACTIONS:return handle_forum_article_reactions(s,p);case CMD_FORUM_ARTICLE_REACTION_SET:return handle_forum_article_reaction_set(s,p);case CMD_FORUM_ARTICLE_DELETE:return handle_forum_article_delete(s,p);case CMD_ARTICLE_DELETE:return handle_article_delete(s,p);
 case CMD_BROADCAST:return handle_broadcast(s,p);case CMD_CHANNEL_LIST:return handle_channel_list(s,p);case CMD_NEWSGROUP_LIST:return handle_newsgroups(s,p);
 case CMD_CHANNEL_JOIN:return handle_channel_join(s,p);case CMD_CHANNEL_LEAVE:return handle_channel_leave(s,p);case CMD_CHANNEL_CHAT:return handle_channel_chat(s,p);
-case CMD_CHANNEL_SETTINGS:return handle_channel_settings(s,p);case CMD_CHANNEL_USER_MODE:return handle_channel_user_mode(s,p);case CMD_CHANNEL_INVITE:return handle_channel_invite(s,p);case CMD_CHANNEL_DECLINE:return handle_channel_decline(s,p);
+case CMD_CHANNEL_SETTINGS:return handle_channel_settings(s,p);case CMD_CHANNEL_USER_MODE:return handle_channel_user_mode(s,p);case CMD_CHANNEL_INVITE:return handle_channel_invite(s,p);case CMD_CHANNEL_DECLINE:return handle_channel_decline(s,p);case CMD_CHANNEL_DELETE:return handle_channel_delete(s,p);
 default:if(p->transaction_id)return send_error(s,p->transaction_id,1);log_msg("Unhandled legacy command 0x%08x from user %u",p->command,s->user_id);return 0;}}
 
 static void copy_client_metadata_field(const cr_packet*p,uint32_t type,char*out,size_t cap){
@@ -3956,7 +4005,7 @@ static int register_authenticated(cr_session *s, const cr_account *a,
     s->mode=a->mode; s->personal=a->personal; s->permission_bits=a->permission_bits;
     snprintf(s->account_id,sizeof(s->account_id),"%s",a->id);snprintf(s->group_id,sizeof(s->group_id),"%s",a->group_id);snprintf(s->files_root_path,sizeof(s->files_root_path),"%s",files_root_path);snprintf(s->files_root_name,sizeof(s->files_root_name),"%s",files_root_path[0]?files_root_name:"Allgemein");s->has_group_color=has_group_color;s->group_color_rgb=group_color;
     snprintf(s->login,sizeof(s->login),"%s",a->login);
-    snprintf(s->profile_name,sizeof(s->profile_name),"%s",a->name);
+    snprintf(s->profile_name,sizeof(s->profile_name),"%s",a->profile_name[0]?a->profile_name:a->name);
     snprintf(s->email,sizeof(s->email),"%s",a->email);
     snprintf(s->about,sizeof(s->about),"%s",a->about);
     s->nickname_len=nickname_len?nickname_len:strlen(a->login);

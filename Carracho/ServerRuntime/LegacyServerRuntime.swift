@@ -1045,6 +1045,8 @@ final class LegacyServerRuntime {
             try handleChannelInvite(packet: packet, session: session)
         case LegacyCommand.channelDeclineInvitation:
             try handleChannelDeclineInvitation(packet: packet, session: session)
+        case LegacyCommand.channelDelete:
+            try handleChannelDelete(packet: packet, session: session)
 
         default:
             if packet.transactionID != 0 {
@@ -1064,7 +1066,7 @@ final class LegacyServerRuntime {
              LegacyCommand.extendedOwnUserInfo, LegacyCommand.userUpdate,
              LegacyCommand.channelJoin, LegacyCommand.channelLeave, LegacyCommand.channelChat,
              LegacyCommand.channelSettings, LegacyCommand.channelUserMode, LegacyCommand.channelInvite,
-             LegacyCommand.channelDeclineInvitation, LegacyCommand.forumArticleDelete,
+             LegacyCommand.channelDeclineInvitation, LegacyCommand.channelDelete, LegacyCommand.forumArticleDelete,
              LegacyCommand.articleRead, LegacyCommand.forumThreadEntries,
              LegacyCommand.forumArticleReactionSet,
              LegacyCommand.articleDelete, LegacyCommand.flatNewsList, LegacyCommand.flatNewsPost,
@@ -1405,7 +1407,7 @@ final class LegacyServerRuntime {
                 guard let index = state.accounts.firstIndex(where: { $0.id == account.id }) else {
                     throw ServerStateError.accountNotFound(account.id)
                 }
-                if let name { state.accounts[index].name = name }
+                if let name { state.accounts[index].profileName = name.isEmpty ? nil : name }
                 if let email { state.accounts[index].email = email.isEmpty ? nil : email }
                 if let about { state.accounts[index].aboutMe = about.isEmpty ? nil : about }
                 state.accounts[index].modifiedAt = Date()
@@ -1450,9 +1452,10 @@ final class LegacyServerRuntime {
             guard let target = authenticatedSession(userID: userID), let account = target.account else {
                 throw LegacyServerRuntimeError.protocolFailure("user-info target is not connected")
             }
+            let profileName = account.profileName?.isEmpty == false ? account.profileName! : account.name
             var fields = [
                 LegacyTLV(type: LegacyUserInfoField.nickname, value: target.nickname),
-                LegacyTLV(type: LegacyUserInfoField.name, value: Self.macRoman(account.name)),
+                LegacyTLV(type: LegacyUserInfoField.name, value: Self.macRoman(profileName)),
                 LegacyTLV(type: LegacyUserInfoField.email, value: Self.macRoman(account.email ?? "")),
                 LegacyTLV(type: LegacyUserInfoField.aboutMe, value: Self.macRoman(account.aboutMe ?? "")),
                 LegacyTLV(type: LegacyUserInfoField.picture, value: target.picture),
@@ -2834,6 +2837,7 @@ final class LegacyServerRuntime {
                 // override, but copy the new group's default color when the class changes.
                 replacement.colorRGB = requestedColor
                 replacement.lastLoginAt = existing.lastLoginAt
+                replacement.profileName = existing.profileName
                 replacement.email = existing.email
                 replacement.aboutMe = existing.aboutMe
                 if let requestedPicture { replacement.picture = requestedPicture.isEmpty ? nil : requestedPicture }
@@ -3703,6 +3707,53 @@ final class LegacyServerRuntime {
                                                     transactionID: packet.transactionID, fields: []))
     }
 
+    private func handleChannelDelete(packet: LegacyPacket, session: LegacyServerSession) throws {
+        guard !session.isLegacyTransport,
+              session.account?.mode == .administrator,
+              let idField = packet.firstField(type: LegacyChannelField.channelID),
+              idField.value.count == 4 else {
+            try session.sendAuthenticated(Self.errorPacket(transactionID: packet.transactionID, code: 2))
+            return
+        }
+        let channelID = try idField.uint32BE()
+        guard channelID != Self.publicChannelID else {
+            try session.sendAuthenticated(Self.errorPacket(transactionID: packet.transactionID, code: 200))
+            return
+        }
+
+        stateLock.lock()
+        guard let channel = channels.removeValue(forKey: channelID) else {
+            stateLock.unlock()
+            try session.sendAuthenticated(Self.errorPacket(transactionID: packet.transactionID, code: 200))
+            return
+        }
+        let memberIDs = channel.members.keys.sorted()
+        let classicMembers = memberIDs.compactMap { authenticatedByUserID[$0] }.filter { $0.isLegacyTransport }
+        let modernRecipients = authenticatedByUserID.values.filter { !$0.isLegacyTransport }
+        stateLock.unlock()
+
+        try sendTaskComplete(packet, to: session)
+
+        // Classic has no room-deleted command. Empty its visible member list using the historical
+        // leave event, but never send the modern extension to a Classic control connection.
+        for classic in classicMembers {
+            for userID in memberIDs {
+                let left = LegacyPacket(command: LegacyCommand.channelUserLeft, transactionID: 0, fields: [
+                    LegacyTLV(type: LegacyChannelField.channelID, value: LegacyWire.uint32BE(channelID)),
+                    LegacyTLV(type: LegacyChannelField.userID, value: LegacyWire.uint32BE(userID)),
+                ])
+                try? classic.sendAuthenticated(left)
+            }
+        }
+
+        let deleted = LegacyPacket(command: LegacyCommand.channelDeleted, transactionID: 0, fields: [
+            LegacyTLV(type: LegacyChannelField.channelID, value: LegacyWire.uint32BE(channelID)),
+            LegacyTLV(type: LegacyChannelField.name, value: channel.name),
+        ])
+        modernRecipients.forEach { try? $0.sendAuthenticated(deleted) }
+        log("Channel \(channelID) deleted by administrator user \(session.userID.map(String.init) ?? "?")")
+    }
+
     private func handleChannelChat(packet: LegacyPacket, session: LegacyServerSession) throws {
         guard let userID = session.userID,
               let channelField = packet.firstField(type: LegacyChannelField.channelID),
@@ -4081,6 +4132,7 @@ final class LegacyServerRuntime {
         case LegacyCommand.channelJoin: event = ("chat", "join", fieldText(LegacyChannelField.name).isEmpty ? "channel_id=requested" : "channel=\(fieldText(LegacyChannelField.name))")
         case LegacyCommand.channelLeave: event = ("chat", "leave", "")
         case LegacyCommand.channelChat: event = ("chat", "message", "")
+        case LegacyCommand.channelDelete: event = ("chat", "delete", "")
         case LegacyCommand.privateMessage: event = ("messages", "private-message", "")
         case LegacyCommand.offlineMessageSend: event = ("messages", "offline-message", "recipient=\(fieldText(1))")
         case LegacyCommand.broadcastMessage: event = ("messages", "broadcast", "")

@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 @preconcurrency import Network
 
 enum LegacyControlClientError: Error, LocalizedError {
@@ -186,6 +187,7 @@ enum LegacyControlEvent {
     case channelInvitationDeclined(channelID: UInt32, userID: UInt32)
     case channelMessage(LegacyChannelMessage)
     case channelSettings(channelID: UInt32, topic: Data, flags: UInt16)
+    case channelDeleted(channelID: UInt32, name: Data)
     case flatNewsPosted(Data)
     case flatNewsDeleted(UInt32)
     case flatNewsCleared
@@ -232,6 +234,30 @@ final class LegacyControlClient {
     private static let handshakeTimeout: TimeInterval = 12
     private static let requestTimeout: TimeInterval = 15
 
+    private static func runtimeCPUArchitecture() -> String {
+        var info = utsname()
+        if uname(&info) == 0 {
+            let machine = withUnsafePointer(to: &info.machine) { pointer in
+                pointer.withMemoryRebound(to: CChar.self, capacity: 1) {
+                    String(cString: $0)
+                }
+            }
+            if !machine.isEmpty { return machine }
+        }
+
+        // uname() should always succeed on macOS, but keep a compile-time fallback so
+        // metadata is still useful if the runtime query ever fails.
+        #if arch(arm64)
+        return "arm64"
+        #elseif arch(x86_64)
+        return "x86_64"
+        #elseif arch(i386)
+        return "i386"
+        #else
+        return "unknown"
+        #endif
+    }
+
     private static func clientMetadataFields() -> [LegacyTLV] {
         let version = ProcessInfo.processInfo.operatingSystemVersion
         #if os(macOS)
@@ -240,15 +266,7 @@ final class LegacyControlClient {
         let operatingSystem = ProcessInfo.processInfo.operatingSystemVersionString
         #endif
 
-        #if arch(arm64)
-        let architecture = "arm64"
-        #elseif arch(x86_64)
-        let architecture = "x86_64"
-        #elseif arch(i386)
-        let architecture = "i386"
-        #else
-        let architecture = "unknown"
-        #endif
+        let architecture = runtimeCPUArchitecture()
 
         let bundle = Bundle.main
         let clientVersion = (bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? ""
@@ -512,6 +530,22 @@ final class LegacyControlClient {
                 completion(.failure(error))
             }
         }
+    }
+
+    func deleteChannel(channelID: UInt32,
+                       completion: @escaping (Result<Void, Error>) -> Void) {
+        guard channelID != 0 && channelID != 1 else {
+            completion(.failure(LegacyControlClientError.invalidInput("Public cannot be deleted.")))
+            return
+        }
+        guard transferSession?.usesModernCrypto == true else {
+            completion(.failure(LegacyControlClientError.invalidInput("Room deletion requires a modern Carracho Server.")))
+            return
+        }
+        sendTaskCompleteRequest(command: LegacyCommand.channelDelete,
+                                fields: [LegacyTLV(type: LegacyChannelField.channelID,
+                                                   value: LegacyWire.uint32BE(channelID))],
+                                completion: completion)
     }
 
     private func textForCurrentServer(_ message: Data, maximumBytes: Int) -> Data? {
@@ -2118,6 +2152,12 @@ final class LegacyControlClient {
                 onEvent?(.channelSettings(channelID: try channelField.uint32BE(),
                                           topic: packet.firstField(type: LegacyChannelField.topic)?.value ?? Data(),
                                           flags: try flagsField.uint16BE()))
+            case LegacyCommand.channelDeleted:
+                guard let channelField = packet.firstField(type: LegacyChannelField.channelID) else {
+                    throw LegacyControlClientError.protocolFailure("unvollständiges Channel-Deleted-Event")
+                }
+                onEvent?(.channelDeleted(channelID: try channelField.uint32BE(),
+                                         name: packet.firstField(type: LegacyChannelField.name)?.value ?? Data()))
             case LegacyCommand.flatNewsPost:
                 guard let field = packet.firstField(type: LegacyCommand.flatNewsPost) else {
                     throw LegacyControlClientError.protocolFailure("unvollständiges Flat-News-Post-Event")

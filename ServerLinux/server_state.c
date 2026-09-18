@@ -463,7 +463,7 @@ int cr_state_refresh_parsed_locked(cr_server_state*s){
     if(json_object_object_get_ex(s->root,"accounts",&arr)&&json_object_is_type(arr,json_type_array)){
         size_t n=json_object_array_length(arr);if(n>CR_MAX_ACCOUNTS)n=CR_MAX_ACCOUNTS;
         for(size_t i=0;i<n;i++){
-            json_object*a=json_object_array_get_idx(arr,i);cr_account*dst=&s->accounts[s->account_count];memset(dst,0,sizeof(*dst));copy_json_string(a,"id",dst->id,sizeof(dst->id),"");copy_json_string(a,"login",dst->login,sizeof(dst->login),"");copy_json_string(a,"name",dst->name,sizeof(dst->name),"");copy_json_string(a,"groupID",dst->group_id,sizeof(dst->group_id),"");
+            json_object*a=json_object_array_get_idx(arr,i);cr_account*dst=&s->accounts[s->account_count];memset(dst,0,sizeof(*dst));copy_json_string(a,"id",dst->id,sizeof(dst->id),"");copy_json_string(a,"login",dst->login,sizeof(dst->login),"");copy_json_string(a,"name",dst->name,sizeof(dst->name),"");copy_json_string(a,"profileName",dst->profile_name,sizeof(dst->profile_name),"");copy_json_string(a,"groupID",dst->group_id,sizeof(dst->group_id),"");
             if(json_object_object_get_ex(a,"legacyPassword",&v)&&json_object_is_type(v,json_type_string)){snprintf(dst->legacy_password,sizeof(dst->legacy_password),"%s",json_object_get_string(v));dst->has_legacy_password=1;}
             char personal[64];copy_json_string(a,"personalDirectory",personal,sizeof(personal),"none");dst->personal=!strcmp(personal,"rootDirectory")?CR_PERSONAL_ROOT:!strcmp(personal,"nestedInRoot")?CR_PERSONAL_NESTED:CR_PERSONAL_NONE;
             dst->mode=json_legacy_mode(a,"mode");uint64_t direct=json_permission_bits(a);const cr_account_group*account_group=NULL;if(dst->group_id[0]){for(size_t gi=0;gi<s->account_group_count;gi++)if(!strcasecmp(s->account_groups[gi].id,dst->group_id)){account_group=&s->account_groups[gi];dst->mode=account_group->mode;break;}}
@@ -562,7 +562,10 @@ int cr_state_update_profile(cr_server_state *s, const char *account_id,
         }
     }
     if (!record) { pthread_mutex_unlock(&s->mutex); return -1; }
-    if (set_name) json_object_object_add(record, "name", json_object_new_string(name ? name : ""));
+    if (set_name) {
+        if (name && *name) json_object_object_add(record, "profileName", json_object_new_string(name));
+        else json_object_object_del(record, "profileName");
+    }
     if (set_email) {
         if (email && *email) json_object_object_add(record, "email", json_object_new_string(email));
         else json_object_object_del(record, "email");
@@ -586,7 +589,7 @@ int cr_state_update_profile(cr_server_state *s, const char *account_id,
         for (size_t i = 0; i < s->account_count; ++i) {
             cr_account *a = &s->accounts[i];
             if (strcmp(a->id, account_id)) continue;
-            if (set_name) snprintf(a->name, sizeof(a->name), "%s", name ? name : "");
+            if (set_name) snprintf(a->profile_name, sizeof(a->profile_name), "%s", name ? name : "");
             if (set_email) snprintf(a->email, sizeof(a->email), "%s", email ? email : "");
             if (set_about) snprintf(a->about, sizeof(a->about), "%s", about ? about : "");
             snprintf(a->modified_at, sizeof(a->modified_at), "%s", now);

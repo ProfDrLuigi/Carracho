@@ -584,6 +584,29 @@ extension ViewController {
         menu.addItem(message)
         if isActiveChannelOperator {
             menu.addItem(.separator())
+
+            let operatorEnabled = member.mode & Self.channelOperatorMode != 0
+            let operatorItem = NSMenuItem(
+                title: operatorEnabled ? L("Remove Operator Mode") : L("Grant Operator Mode"),
+                action: #selector(toggleSelectedChannelMemberOperatorMode(_:)),
+                keyEquivalent: ""
+            )
+            operatorItem.target = self
+            operatorItem.state = operatorEnabled ? .on : .off
+            operatorItem.isEnabled = client.isConnected
+            menu.addItem(operatorItem)
+
+            let speakEnabled = member.mode & Self.channelSpeechMode != 0
+            let speakItem = NSMenuItem(
+                title: speakEnabled ? L("Remove Speak Permission") : L("Grant Speak Permission"),
+                action: #selector(toggleSelectedChannelMemberSpeakPermission(_:)),
+                keyEquivalent: ""
+            )
+            speakItem.target = self
+            speakItem.state = speakEnabled ? .on : .off
+            speakItem.isEnabled = client.isConnected
+            menu.addItem(speakItem)
+
             let role = NSMenuItem(title: L("Manage Room Role…"), action: #selector(editSelectedChannelMemberMode(_:)), keyEquivalent: "")
             role.target = self
             role.isEnabled = client.isConnected
@@ -693,6 +716,74 @@ extension ViewController {
                 self?.showError(LF("Invitation failed: %@", Self.displayMessage(for: error)))
             }
         }
+    }
+
+    func updateSelectedChannelMemberModeButtons(member: LegacyChannelMember?) {
+        guard let member else {
+            channelToggleOperatorButton.state = .off
+            channelToggleSpeakButton.state = .off
+            channelToggleOperatorButton.contentTintColor = CarrachoTheme.secondaryText
+            channelToggleSpeakButton.contentTintColor = CarrachoTheme.secondaryText
+            channelToggleOperatorButton.toolTip = L("Toggle Operator Mode")
+            channelToggleSpeakButton.toolTip = L("Toggle Speak Permission")
+            channelToggleOperatorButton.setAccessibilityLabel(L("Toggle Operator Mode"))
+            channelToggleSpeakButton.setAccessibilityLabel(L("Toggle Speak Permission"))
+            return
+        }
+
+        let memberName = liveUsers[member.userID].map { Self.macRomanString($0.nickname) } ?? L("Unknown User")
+        let operatorEnabled = member.mode & Self.channelOperatorMode != 0
+        let speakEnabled = member.mode & Self.channelSpeechMode != 0
+
+        channelToggleOperatorButton.state = operatorEnabled ? .on : .off
+        channelToggleOperatorButton.contentTintColor = operatorEnabled ? CarrachoTheme.accent : CarrachoTheme.secondaryText
+        channelToggleOperatorButton.toolTip = operatorEnabled
+            ? LF("Remove Operator Mode from %@", memberName)
+            : LF("Grant Operator Mode to %@", memberName)
+        channelToggleOperatorButton.setAccessibilityLabel(channelToggleOperatorButton.toolTip ?? L("Toggle Operator Mode"))
+
+        channelToggleSpeakButton.state = speakEnabled ? .on : .off
+        channelToggleSpeakButton.contentTintColor = speakEnabled ? CarrachoTheme.accent : CarrachoTheme.secondaryText
+        channelToggleSpeakButton.image = symbolImage(
+            speakEnabled ? "speaker.wave.2.fill" : "speaker.slash.fill",
+            fallback: NSImage.actionTemplateName
+        )
+        channelToggleSpeakButton.toolTip = speakEnabled
+            ? LF("Remove Speak Permission from %@", memberName)
+            : LF("Grant Speak Permission to %@", memberName)
+        channelToggleSpeakButton.setAccessibilityLabel(channelToggleSpeakButton.toolTip ?? L("Toggle Speak Permission"))
+    }
+
+    private func toggleSelectedChannelMemberModeBit(_ bit: UInt8, failureMessage: String) {
+        guard client.isConnected,
+              let active = activeChannel,
+              isActiveChannelOperator,
+              let member = selectedChannelMember else { return }
+
+        let newMode = member.mode ^ bit
+        client.setChannelUserMode(channelID: active.channelID, userID: member.userID, mode: newMode) { [weak self] result in
+            if case let .failure(error) = result {
+                self?.showError(LF(failureMessage, Self.displayMessage(for: error)))
+            }
+        }
+        // Toggle buttons are driven by the authoritative channelUserMode event. AppKit flips
+        // a toggle button before invoking its action, so immediately restore the currently
+        // confirmed mode instead of pretending the server has already accepted the change.
+        updateSelectedChannelMemberModeButtons(member: member)
+    }
+
+    @objc func toggleSelectedChannelMemberOperatorMode(_ sender: Any?) {
+        toggleSelectedChannelMemberModeBit(
+            Self.channelOperatorMode,
+            failureMessage: L("Operator Mode could not be changed: %@")
+        )
+    }
+
+    @objc func toggleSelectedChannelMemberSpeakPermission(_ sender: Any?) {
+        toggleSelectedChannelMemberModeBit(
+            Self.channelSpeechMode,
+            failureMessage: L("Speak Permission could not be changed: %@")
+        )
     }
 
     @objc func editSelectedChannelMemberMode(_ sender: Any?) {
@@ -1378,8 +1469,12 @@ extension ViewController {
         let scroll = tableScroll(channelTable)
         scroll.heightAnchor.constraint(equalToConstant: 330).isActive = true
         channelJoinButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 92).isActive = true
+        channelDiscoveryDeleteButton.image = symbolImage("trash", fallback: NSImage.trashEmptyName)
+        channelDiscoveryDeleteButton.imagePosition = .imageLeading
+        channelDiscoveryDeleteButton.contentTintColor = .systemRed
         let footer = horizontalStack([
-            infoLabel(L("Double-click a room or select it and choose Join.")), NSView(), channelJoinButton,
+            infoLabel(L("Double-click a room or select it and choose Join.")), NSView(),
+            channelDiscoveryDeleteButton, channelJoinButton,
         ], spacing: 8)
         let stack = verticalStack([top, scroll, footer], spacing: 8)
         let accessory = NSView(frame: NSRect(x: 0, y: 0, width: 590, height: 380))
@@ -1411,9 +1506,14 @@ extension ViewController {
         guard row >= 0, row < displayedChannels.count else {
             channelJoinButton.title = L("Join")
             channelJoinButton.isEnabled = false
+            channelDiscoveryDeleteButton.isHidden = true
+            channelDiscoveryDeleteButton.isEnabled = false
             return
         }
         let summary = displayedChannels[row]
+        let canDelete = isRemoteAdministrator && !isConnectedToClassicServer && summary.channelID != 1
+        channelDiscoveryDeleteButton.isHidden = !canDelete
+        channelDiscoveryDeleteButton.isEnabled = canDelete
         if joinedChannels[summary.channelID] != nil {
             channelJoinButton.title = activeChannel?.channelID == summary.channelID ? L("Active") : L("Open")
             channelJoinButton.isEnabled = activeChannel?.channelID != summary.channelID
@@ -1514,6 +1614,61 @@ extension ViewController {
         reloadChannelTablePreservingSelection(preferredChannelID: channelID)
         reloadChannelView(reloadTables: false)
         view.window?.makeFirstResponder(channelMessageField)
+    }
+
+    @objc func deleteSelectedChannel(_ sender: Any?) {
+        let row = channelTable.clickedRow >= 0 ? channelTable.clickedRow : channelTable.selectedRow
+        guard row >= 0, row < displayedChannels.count else { return }
+        let summary = displayedChannels[row]
+        confirmDeleteChannel(channelID: summary.channelID, name: summary.name,
+                             parent: channelDiscoverySheet ?? view.window)
+    }
+
+    @objc func deleteCurrentChannel(_ sender: Any?) {
+        guard let active = activeChannel else { return }
+        confirmDeleteChannel(channelID: active.channelID, name: active.name, parent: view.window)
+    }
+
+    func confirmDeleteChannel(channelID: UInt32, name: Data, parent: NSWindow?) {
+        guard client.isConnected, isRemoteAdministrator, !isConnectedToClassicServer,
+              channelID != 1, let parent else { return }
+        let roomName = Self.macRomanString(name)
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = LF("Delete #%@?", roomName)
+        alert.informativeText = L("This permanently removes the room and removes all current participants from it.")
+        alert.addButton(withTitle: L("Delete Room"))
+        alert.addButton(withTitle: L("Cancel"))
+        if #available(macOS 11.0, *) {
+            alert.buttons.first?.hasDestructiveAction = true
+        }
+        alert.beginSheetModal(for: parent) { [weak self] response in
+            guard response == .alertFirstButtonReturn, let self else { return }
+            self.channelDeleteButton.isEnabled = false
+            self.channelDiscoveryDeleteButton.isEnabled = false
+            self.client.deleteChannel(channelID: channelID) { [weak self] result in
+                guard let self else { return }
+                switch result {
+                case .success:
+                    // The server also broadcasts channelDeleted. Remove immediately so the
+                    // initiating administrator never sees a stale row while that event is queued.
+                    self.lastChannels.removeAll { $0.channelID == channelID }
+                    if self.joinedChannels[channelID] != nil {
+                        self.leaveJoinedChannelLocally(channelID)
+                    } else {
+                        self.refreshChannelCatalog()
+                        if self.channelDiscoverySheet != nil {
+                            self.reloadChannelTablePreservingSelection()
+                            self.updateChannelDiscoverySelection()
+                        }
+                    }
+                case let .failure(error):
+                    self.showError(LF("Could not delete the chat room: %@", Self.displayMessage(for: error)))
+                    self.reloadChannelView()
+                    self.updateChannelDiscoverySelection()
+                }
+            }
+        }
     }
 
     @objc func leaveCurrentChannel(_ sender: Any?) {
@@ -1846,6 +2001,10 @@ extension ViewController {
             channelClearButton.isHidden = true
             channelSettingsButton.isHidden = true
             channelModeButton.isHidden = true
+            channelToggleOperatorButton.isHidden = true
+            channelToggleSpeakButton.isHidden = true
+            channelDeleteButton.isHidden = true
+            channelDeleteButton.isEnabled = false
             channelInviteButton.isEnabled = false
             channelLeaveButton.isEnabled = false
             updateChannelComposerPresentation()
@@ -1879,10 +2038,19 @@ extension ViewController {
         channelClearButton.isHidden = joinedChannels[active.channelID]?.transcript.isEmpty != false
         channelSettingsButton.isHidden = !(isActiveChannelOperator || canEditActiveChannelTopic)
         channelSettingsButton.isEnabled = connected && (isActiveChannelOperator || canEditActiveChannelTopic)
+        let selectedMember = selectedChannelMember
+        let canManageSelectedMember = connected && isActiveChannelOperator && selectedMember != nil
         channelModeButton.isHidden = !isActiveChannelOperator
-        channelModeButton.isEnabled = connected && isActiveChannelOperator
-            && channelMemberTable.selectedRow >= 0 && channelMemberTable.selectedRow < sortedChannelMembers.count
+        channelModeButton.isEnabled = canManageSelectedMember
+        channelToggleOperatorButton.isHidden = !isActiveChannelOperator
+        channelToggleSpeakButton.isHidden = !isActiveChannelOperator
+        channelToggleOperatorButton.isEnabled = canManageSelectedMember
+        channelToggleSpeakButton.isEnabled = canManageSelectedMember
+        updateSelectedChannelMemberModeButtons(member: selectedMember)
         channelInviteButton.isEnabled = connected && liveUsers.keys.contains(where: { channelMembers[$0] == nil })
+        let canDeleteActive = connected && isRemoteAdministrator && !isConnectedToClassicServer && active.channelID != 1
+        channelDeleteButton.isHidden = !canDeleteActive
+        channelDeleteButton.isEnabled = canDeleteActive
         channelLeaveButton.isEnabled = connected
 
         updateChannelComposerPresentation()

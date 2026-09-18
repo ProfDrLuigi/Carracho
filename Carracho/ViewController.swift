@@ -1072,12 +1072,16 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
     var channelComposerHeightConstraint: NSLayoutConstraint?
     let channelHeaderSettingsButton = NSButton()
     let channelRoomSwitchButton = NSButton()
+    let channelToggleOperatorButton = NSButton()
+    let channelToggleSpeakButton = NSButton()
     let channelMemberActionsButton = NSButton()
     let channelTopicEditButton = NSButton(title: L("Edit Topic"), target: nil, action: nil)
     let channelDiscoverButton = CarrachoSidebarButton(title: L("Discover Rooms"), target: nil, action: nil)
     let joinedChannelSidebarStack = NSStackView()
     let channelJoinButton = NSButton(title: L("Join"), target: nil, action: nil)
+    let channelDiscoveryDeleteButton = NSButton(title: L("Delete Room"), target: nil, action: nil)
     let channelLeaveButton = NSButton(title: L("Leave"), target: nil, action: nil)
+    let channelDeleteButton = NSButton(title: L("Delete Room"), target: nil, action: nil)
     let channelNewButton = CarrachoSidebarButton(title: L("New Room"), target: nil, action: nil)
     let channelSettingsButton = NSButton(title: L("Room Settings"), target: nil, action: nil)
     let channelInviteButton = NSButton(title: L("Invite User"), target: nil, action: nil)
@@ -1769,6 +1773,14 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         channelLeaveButton.action = #selector(leaveCurrentChannel(_:))
         channelLeaveButton.title = L("Leave Room")
 
+        channelDeleteButton.target = self
+        channelDeleteButton.action = #selector(deleteCurrentChannel(_:))
+        channelDeleteButton.title = L("Delete Room")
+
+        channelDiscoveryDeleteButton.target = self
+        channelDiscoveryDeleteButton.action = #selector(deleteSelectedChannel(_:))
+        channelDiscoveryDeleteButton.title = L("Delete Room")
+
         channelNewButton.target = self
         channelNewButton.action = #selector(createChannel(_:))
         channelNewButton.title = L("New Room")
@@ -1832,6 +1844,23 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         channelRoomSwitchButton.target = self
         channelRoomSwitchButton.action = #selector(showChannelRoomSwitchMenu(_:))
         styleIconButton(channelRoomSwitchButton, symbol: "chevron.down", help: L("Switch chat room"))
+
+        channelToggleOperatorButton.target = self
+        channelToggleOperatorButton.action = #selector(toggleSelectedChannelMemberOperatorMode(_:))
+        channelToggleOperatorButton.setButtonType(.toggle)
+        styleIconButton(channelToggleOperatorButton,
+                        symbol: "person.crop.circle.badge.checkmark",
+                        help: L("Toggle Operator Mode"))
+        channelToggleOperatorButton.isHidden = true
+
+        channelToggleSpeakButton.target = self
+        channelToggleSpeakButton.action = #selector(toggleSelectedChannelMemberSpeakPermission(_:))
+        channelToggleSpeakButton.setButtonType(.toggle)
+        styleIconButton(channelToggleSpeakButton,
+                        symbol: "speaker.wave.2.fill",
+                        help: L("Toggle Speak Permission"))
+        channelToggleSpeakButton.isHidden = true
+
         channelMemberActionsButton.target = self
         channelMemberActionsButton.action = #selector(showChannelMemberActions(_:))
         styleIconButton(channelMemberActionsButton, symbol: "ellipsis", help: L("Participant actions"))
@@ -2855,6 +2884,12 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
             channelInviteButton.isEnabled = false
             channelSettingsButton.isHidden = true
             channelModeButton.isHidden = true
+            channelToggleOperatorButton.isHidden = true
+            channelToggleSpeakButton.isHidden = true
+            channelToggleOperatorButton.isEnabled = false
+            channelToggleSpeakButton.isEnabled = false
+            channelDeleteButton.isHidden = true
+            channelDeleteButton.isEnabled = false
             channelLeaveButton.isEnabled = false
             channelMemberActionsButton.isEnabled = false
             return
@@ -2878,9 +2913,18 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         channelInviteButton.isEnabled = connected && hasInviteCandidate
         channelSettingsButton.isHidden = !(isActiveChannelOperator || canEditActiveChannelTopic)
         channelSettingsButton.isEnabled = connected && (isActiveChannelOperator || canEditActiveChannelTopic)
+        let selectedMember = selectedChannelMember
+        let canManageSelectedMember = connected && isActiveChannelOperator && selectedMember != nil
         channelModeButton.isHidden = !isActiveChannelOperator
-        channelModeButton.isEnabled = connected && isActiveChannelOperator
-            && channelMemberTable.selectedRow >= 0 && channelMemberTable.selectedRow < sortedChannelMembers.count
+        channelModeButton.isEnabled = canManageSelectedMember
+        channelToggleOperatorButton.isHidden = !isActiveChannelOperator
+        channelToggleSpeakButton.isHidden = !isActiveChannelOperator
+        channelToggleOperatorButton.isEnabled = canManageSelectedMember
+        channelToggleSpeakButton.isEnabled = canManageSelectedMember
+        updateSelectedChannelMemberModeButtons(member: selectedMember)
+        let canDeleteActive = connected && isRemoteAdministrator && !isConnectedToClassicServer && active.channelID != 1
+        channelDeleteButton.isHidden = !canDeleteActive
+        channelDeleteButton.isEnabled = canDeleteActive
         channelLeaveButton.isEnabled = connected
         channelMemberActionsButton.isEnabled = channelMemberTable.selectedRow >= 0
             && channelMemberTable.selectedRow < sortedChannelMembers.count
@@ -6647,6 +6691,19 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
                     reloadChannelView()
                 }
             }
+        case let .channelDeleted(channelID, name):
+            let displayName = name.isEmpty ? channelDisplayName(channelID) : Self.macRomanString(name)
+            lastChannels.removeAll { $0.channelID == channelID }
+            if joinedChannels[channelID] != nil {
+                leaveJoinedChannelLocally(channelID)
+            } else {
+                if channelDiscoverySheet != nil {
+                    reloadChannelTablePreservingSelection()
+                    updateChannelDiscoverySelection()
+                }
+                reloadJoinedChannelSidebar()
+            }
+            appendLine("\n" + LF("Room #%@ was deleted by an administrator.", displayName))
         case let .flatNewsPosted(article):
             let newsText = CarrachoHTMLText.plainText(fromWire: article)
             emitClientEvent(.newsPost,
@@ -6988,7 +7045,11 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
                 trailingInset: 6
             )
         } else if tableView === channelTable && identifier == "name", row < displayedChannels.count {
-            return verticallyCenteredTableContent(channelRoomCell(for: displayedChannels[row]))
+            return verticallyCenteredTableContent(
+                channelRoomCell(for: displayedChannels[row]),
+                leadingInset: 12,
+                trailingInset: 8
+            )
         } else {
             icon = nil
         }
@@ -7203,10 +7264,9 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
     var sortedChannelMembers: [LegacyChannelMember] {
         let members = channelMembers.map { LegacyChannelMember(userID: $0.key, mode: $0.value) }
         return sortedForTable(members, table: channelMemberTable, defaultCompare: { lhs, rhs in
-            let left = self.liveUsers[lhs.userID].map { Self.macRomanString($0.nickname) } ?? String(lhs.userID)
-            let right = self.liveUsers[rhs.userID].map { Self.macRomanString($0.nickname) } ?? String(rhs.userID)
-            let comparison = Self.compareText(left, right)
-            return comparison == .orderedSame ? Self.compareNumber(lhs.userID, rhs.userID) : comparison
+            // User IDs are assigned monotonically by the server at login time.
+            // Sorting ascending therefore keeps the longest-connected session at the top.
+            Self.compareNumber(lhs.userID, rhs.userID)
         }) { lhs, rhs, key in
             switch key {
             case "nickname":

@@ -183,6 +183,7 @@ final class ModernServerBackend {
             value.localLoginOnly = state.accounts[index].localLoginOnly
             value.acceptsOfflineMessages = state.accounts[index].acceptsOfflineMessages
             value.lastNickname = state.accounts[index].lastNickname
+            value.profileName = state.accounts[index].profileName
             value.modifiedAt = Date()
             try Self.applyGroup(to: &value, in: state, existing: state.accounts[index])
             try Self.applyCredentials(to: &value,

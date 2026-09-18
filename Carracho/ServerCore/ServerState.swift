@@ -198,6 +198,9 @@ struct ServerAccount: Codable, Equatable, Identifiable {
     var createdAt: Date
     var modifiedAt: Date
     var lastLoginAt: Date?
+    /// User-editable profile name from Classic Extended Own User Info. This is deliberately
+    /// separate from the administrator-owned account name shown in Accounts.
+    var profileName: String?
     var email: String?
     var aboutMe: String?
     var picture: Data?
@@ -218,7 +221,7 @@ struct ServerAccount: Codable, Equatable, Identifiable {
          permissions: Set<ServerPermission> = [], colorRGB: UInt32? = nil,
          permissionsOverrideGroupDefaults: Bool? = nil, colorOverridesGroupDefault: Bool? = nil,
          createdAt: Date = Date(), modifiedAt: Date = Date(), lastLoginAt: Date? = nil,
-         email: String? = nil, aboutMe: String? = nil, picture: Data? = nil,
+         profileName: String? = nil, email: String? = nil, aboutMe: String? = nil, picture: Data? = nil,
          localLoginOnly: Bool? = nil, acceptsOfflineMessages: Bool? = true, lastNickname: String? = nil) {
         self.id = id
         self.login = login
@@ -235,6 +238,7 @@ struct ServerAccount: Codable, Equatable, Identifiable {
         self.createdAt = createdAt
         self.modifiedAt = modifiedAt
         self.lastLoginAt = lastLoginAt
+        self.profileName = profileName
         self.email = email
         self.aboutMe = aboutMe
         self.picture = picture

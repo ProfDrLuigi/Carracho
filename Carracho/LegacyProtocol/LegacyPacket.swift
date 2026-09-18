@@ -215,6 +215,10 @@ enum LegacyCommand {
     static let botSetRSSFeeds: UInt32 = 0xf0000705
     static let botTestRSSFeed: UInt32 = 0xf0000706
     static let botRSSFeedTestReply: UInt32 = 0xf0000707
+    /// Modern-only administrator request to permanently remove a non-Public room.
+    static let channelDelete: UInt32 = 0xf0000800
+    /// Modern-only asynchronous notification that a room was deleted by an administrator.
+    static let channelDeleted: UInt32 = 0xf0000801
 }
 
 enum LegacyBotAdminField {

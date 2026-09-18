@@ -34,6 +34,7 @@ typedef struct cr_account {
     char id[64];
     char login[256];
     char name[512];
+    char profile_name[512];
     char legacy_password[512];
     int has_legacy_password;
     cr_account_mode mode;

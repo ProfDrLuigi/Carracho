@@ -13,8 +13,8 @@ extension ViewController {
             ("uploads", "Uploads", 90), ("uploadBytes", "Upload data", 120),
         ])
         adminAccountTable.columnAutoresizingStyle = .noColumnAutoresizing
-        for identifier in ["downloads", "downloadBytes", "uploads", "uploadBytes"] {
-            adminAccountTable.tableColumn(withIdentifier: NSUserInterfaceItemIdentifier(identifier))?.headerCell.alignment = .right
+        for column in adminAccountTable.tableColumns {
+            column.headerCell.alignment = .left
         }
         adminAccountTable.target = self
         adminAccountTable.doubleAction = #selector(modifySelectedAccount(_:))

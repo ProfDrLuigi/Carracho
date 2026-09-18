@@ -33,7 +33,8 @@ extension ViewController {
         conferenceInspectorParticipantsLabel.textColor = CarrachoTheme.secondaryText
         conferenceInspectorParticipantsLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         let participantsHeader = horizontalStack([
-            conferenceInspectorParticipantsLabel, NSView(), channelMemberActionsButton,
+            conferenceInspectorParticipantsLabel, NSView(),
+            channelToggleOperatorButton, channelToggleSpeakButton, channelMemberActionsButton,
         ], spacing: 6)
 
         channelMemberTable.backgroundColor = .clear
@@ -69,6 +70,12 @@ extension ViewController {
         channelLeaveButton.bezelStyle = .inline
         channelLeaveButton.alignment = .left
         channelLeaveButton.contentTintColor = .systemRed
+        channelDeleteButton.image = symbolImage("trash", fallback: NSImage.trashEmptyName)
+        channelDeleteButton.imagePosition = .imageLeading
+        channelDeleteButton.bezelStyle = .inline
+        channelDeleteButton.alignment = .left
+        channelDeleteButton.contentTintColor = .systemRed
+        channelDeleteButton.isHidden = true
 
         let roomDivider = CarrachoDividerView()
         roomDivider.heightAnchor.constraint(equalToConstant: 1).isActive = true
@@ -79,7 +86,7 @@ extension ViewController {
         let conferenceContent = verticalStack([
             roomIdentity, roomDivider,
             participantsHeader, membersScroll, channelInviteButton,
-            managementTitle, channelSettingsButton, channelModeButton, channelLeaveButton,
+            managementTitle, channelSettingsButton, channelModeButton, channelLeaveButton, channelDeleteButton,
         ], spacing: 8)
         conferenceInspectorContent = conferenceContent
 
