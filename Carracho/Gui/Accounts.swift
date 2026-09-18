@@ -20,6 +20,9 @@ extension ViewController {
         adminAccountTable.doubleAction = #selector(modifySelectedAccount(_:))
         let scroll = tableScroll(adminAccountTable)
         scroll.hasHorizontalScroller = true
+        scroll.drawsBackground = true
+        scroll.backgroundColor = CarrachoTheme.conferenceTranscriptBackground
+        adminAccountTable.backgroundColor = CarrachoTheme.conferenceTranscriptBackground
         adminAccountNewButton.target = self
         adminAccountNewButton.action = #selector(showAccountEditor(_:))
         adminAccountModifyButton.target = self

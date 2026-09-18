@@ -13,6 +13,9 @@ extension ViewController {
         adminNewsgroupTable.target = self
         adminNewsgroupTable.doubleAction = #selector(modifySelectedNewsgroup(_:))
         let groupScroll = tableScroll(adminNewsgroupTable)
+        groupScroll.drawsBackground = true
+        groupScroll.backgroundColor = CarrachoTheme.conferenceTranscriptBackground
+        adminNewsgroupTable.backgroundColor = CarrachoTheme.conferenceTranscriptBackground
         let add = NSButton(title: L("Add"), target: self, action: #selector(showNewsgroupEditor(_:)))
         adminNewsgroupModifyButton.target = self
         adminNewsgroupModifyButton.action = #selector(modifySelectedNewsgroup(_:))

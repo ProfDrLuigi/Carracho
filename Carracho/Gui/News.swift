@@ -7,7 +7,7 @@ extension ViewController {
 
     func makeNewsClientPage() -> NSView {
         let page = CarrachoBackgroundView()
-        page.fillColor = CarrachoTheme.card
+        page.fillColor = CarrachoTheme.conferenceTranscriptBackground
 
         let pageTitle = NSTextField(labelWithString: L("News"))
         pageTitle.font = .systemFont(ofSize: 22, weight: .bold)
@@ -44,8 +44,11 @@ extension ViewController {
         ])
 
         let categoriesPane = CarrachoBackgroundView()
-        categoriesPane.fillColor = CarrachoTheme.card
+        categoriesPane.fillColor = CarrachoTheme.conferenceTranscriptBackground
         let categoriesScroll = tableScroll(newsTable, tracksViewportWidth: true)
+        categoriesScroll.drawsBackground = true
+        categoriesScroll.backgroundColor = CarrachoTheme.conferenceTranscriptBackground
+        newsTable.backgroundColor = CarrachoTheme.conferenceTranscriptBackground
         let categoryHeader = horizontalStack([
             newsCategoryHeaderLabel, NSView(), newsNewCategoryButton,
         ], spacing: 5)
@@ -65,8 +68,11 @@ extension ViewController {
         ])
 
         let topicsPane = CarrachoBackgroundView()
-        topicsPane.fillColor = CarrachoTheme.card
+        topicsPane.fillColor = CarrachoTheme.conferenceTranscriptBackground
         let topicsScroll = tableScroll(newsArticleTable, tracksViewportWidth: true)
+        topicsScroll.drawsBackground = true
+        topicsScroll.backgroundColor = CarrachoTheme.conferenceTranscriptBackground
+        newsArticleTable.backgroundColor = CarrachoTheme.conferenceTranscriptBackground
         topicsScroll.translatesAutoresizingMaskIntoConstraints = false
         topicsPane.addSubview(topicsScroll)
         NSLayoutConstraint.activate([
@@ -80,7 +86,7 @@ extension ViewController {
         ])
 
         let conversationPane = CarrachoBackgroundView()
-        conversationPane.fillColor = CarrachoTheme.card
+        conversationPane.fillColor = CarrachoTheme.conferenceTranscriptBackground
         let conversationHeader = NSView()
         let titleColumn = verticalStack([newsBreadcrumbLabel, newsTitleLabel, newsThreadMetaLabel], spacing: 4)
         // Let the topic identity consume the entire header width minus the compact actions button.
@@ -111,8 +117,9 @@ extension ViewController {
         ])
 
         let articleScroll = textScroll(newsArticleTextView, border: false)
-        articleScroll.backgroundColor = CarrachoTheme.card
+        articleScroll.backgroundColor = CarrachoTheme.conferenceTranscriptBackground
         articleScroll.drawsBackground = true
+        newsArticleTextView.backgroundColor = CarrachoTheme.conferenceTranscriptBackground
 
         let composer = CarrachoBackgroundView()
         composer.fillColor = CarrachoTheme.elevatedCard
@@ -935,23 +942,10 @@ extension ViewController {
     }
 
     func reloadNewsViewPreservingArticleScrollPosition() {
-        guard let scroll = newsArticleTextView.enclosingScrollView else {
-            reloadNewsView()
-            return
-        }
-        let oldOrigin = scroll.contentView.bounds.origin
+        // reloadNewsView() now preserves the visible position synchronously whenever the same
+        // thread is being redrawn. Avoid queuing a delayed clip-view restore that can fight
+        // subsequent trackpad/wheel events and make the reader appear to jitter in place.
         reloadNewsView()
-        DispatchQueue.main.async { [weak self, weak scroll] in
-            guard let self, let scroll else { return }
-            if let layoutManager = self.newsArticleTextView.layoutManager,
-               let textContainer = self.newsArticleTextView.textContainer {
-                layoutManager.ensureLayout(for: textContainer)
-            }
-            let maxY = max(0, (scroll.documentView?.bounds.height ?? 0) - scroll.contentView.bounds.height)
-            let y = min(max(0, oldOrigin.y), maxY)
-            scroll.contentView.scroll(to: NSPoint(x: oldOrigin.x, y: y))
-            scroll.reflectScrolledClipView(scroll.contentView)
-        }
     }
 
     func loadNewsReactions(group: Data, posts: [LegacyNewsThreadPostSummary], index: Int) {
@@ -1861,6 +1855,15 @@ extension ViewController {
     }
 
     func reloadNewsView() {
+        let articleScroll = newsArticleTextView.enclosingScrollView
+        let sameRenderedThread =
+            renderedNewsCategory == currentNewsCategory
+            && renderedNewsThreadID == currentNewsThreadID
+            && renderedNewsReadScope == newsReadScope
+        let preservedArticleOrigin = sameRenderedThread
+            ? articleScroll?.contentView.bounds.origin
+            : nil
+
         reloadNewsTablesPreservingSelection()
         let connected = client.isConnected
         let activeCategory = selectedRemoteNewsgroup ?? currentNewsCategory
@@ -1914,6 +1917,12 @@ extension ViewController {
                 newsArticleTextView.string = L("This category has no topics yet. Use New Thread to start the conversation.")
             } else {
                 newsArticleTextView.string = L("Select a topic on the left to read the conversation.")
+            }
+            renderedNewsCategory = currentNewsCategory
+            renderedNewsThreadID = currentNewsThreadID
+            renderedNewsReadScope = newsReadScope
+            if !sameRenderedThread {
+                newsArticleTextView.scrollRangeToVisible(NSRange(location: 0, length: 0))
             }
             return
         }
@@ -2076,7 +2085,24 @@ extension ViewController {
             }
         }
         newsArticleTextView.textStorage?.setAttributedString(output)
-        newsArticleTextView.scrollRangeToVisible(NSRange(location: 0, length: 0))
+
+        renderedNewsCategory = currentNewsCategory
+        renderedNewsThreadID = currentNewsThreadID
+        renderedNewsReadScope = newsReadScope
+
+        if let origin = preservedArticleOrigin, let scroll = articleScroll {
+            if let layoutManager = newsArticleTextView.layoutManager,
+               let textContainer = newsArticleTextView.textContainer {
+                layoutManager.ensureLayout(for: textContainer)
+            }
+            let maxY = max(0, (scroll.documentView?.bounds.height ?? 0) - scroll.contentView.bounds.height)
+            let y = min(max(0, origin.y), maxY)
+            scroll.contentView.scroll(to: NSPoint(x: origin.x, y: y))
+            scroll.reflectScrolledClipView(scroll.contentView)
+        } else {
+            // A newly selected topic should still start at its first post.
+            newsArticleTextView.scrollRangeToVisible(NSRange(location: 0, length: 0))
+        }
     }
 
     func newsBadgeLabel(_ count: Int) -> NSTextField {

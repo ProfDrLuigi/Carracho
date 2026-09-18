@@ -8,8 +8,8 @@ extension ViewController {
         adminBotRSSTable.dataSource = self
         adminBotRSSTable.target = self
         adminBotRSSTable.action = #selector(botRSSTableClicked(_:))
-        adminBotRSSTable.usesAlternatingRowBackgroundColors = true
-        adminBotRSSTable.backgroundColor = CarrachoTheme.tableBackground
+        adminBotRSSTable.usesAlternatingRowBackgroundColors = false
+        adminBotRSSTable.backgroundColor = CarrachoTheme.conferenceTranscriptBackground
         adminBotRSSTable.gridStyleMask = [.solidVerticalGridLineMask]
         adminBotRSSTable.gridColor = NSColor.separatorColor.withAlphaComponent(0.35)
         adminBotRSSTable.rowHeight = 30
@@ -37,6 +37,8 @@ extension ViewController {
         }
 
         let scroll = tableScroll(adminBotRSSTable, tracksViewportWidth: true)
+        scroll.drawsBackground = true
+        scroll.backgroundColor = CarrachoTheme.conferenceTranscriptBackground
         scroll.borderType = .bezelBorder
         scroll.heightAnchor.constraint(equalToConstant: 220).isActive = true
 

@@ -170,7 +170,8 @@ extension ViewController {
         content.translatesAutoresizingMaskIntoConstraints = false
 
         let scroll = NSScrollView()
-        scroll.drawsBackground = false
+        scroll.drawsBackground = true
+        scroll.backgroundColor = CarrachoTheme.conferenceTranscriptBackground
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
         scroll.borderType = .noBorder

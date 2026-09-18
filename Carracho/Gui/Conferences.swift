@@ -322,9 +322,12 @@ extension ViewController {
         let headerDivider = CarrachoDividerView()
         headerDivider.heightAnchor.constraint(equalToConstant: 1).isActive = true
 
-        channelChatTextView.textContainerInset = NSSize(width: 12, height: 10)
+        channelChatTextView.textContainerInset = NSSize(width: 18, height: 16)
+        channelChatTextView.drawsBackground = true
+        channelChatTextView.backgroundColor = CarrachoTheme.conferenceTranscriptBackground
         let chatScroll = textScroll(channelChatTextView, border: false)
-        chatScroll.drawsBackground = false
+        chatScroll.drawsBackground = true
+        chatScroll.backgroundColor = CarrachoTheme.conferenceTranscriptBackground
         chatScroll.setContentHuggingPriority(.defaultLow, for: .vertical)
         chatScroll.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
         chatScroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 92).isActive = true
@@ -1263,11 +1266,25 @@ extension ViewController {
     func renderActiveChannelTranscript() {
         let wasAtBottom = channelTranscriptIsNearBottom()
         let oldY = channelChatTextView.enclosingScrollView?.contentView.bounds.origin.y ?? 0
+
+        // Rebuilding NSTextStorage normally resets the selection to insertion point 0. Keep a
+        // user's selected transcript text intact so asynchronous media/user updates do not make
+        // Copy appear broken.
+        let oldSelectedRanges = channelChatTextView.selectedRanges
+        let hadTextSelection = oldSelectedRanges.contains { value in
+            value.rangeValue.location != NSNotFound && value.rangeValue.length > 0
+        }
         guard let active = activeChannel, let session = joinedChannels[active.channelID] else {
+            let emptyParagraph = NSMutableParagraphStyle()
+            emptyParagraph.firstLineHeadIndent = 8
+            emptyParagraph.headIndent = 8
             channelChatTextView.textStorage?.setAttributedString(NSAttributedString(
                 string: L("Choose a joined room to open its conversation."),
-                attributes: [.font: NSFont.systemFont(ofSize: channelChatFontSize),
-                             .foregroundColor: CarrachoTheme.secondaryText]
+                attributes: [
+                    .font: NSFont.systemFont(ofSize: channelChatFontSize),
+                    .foregroundColor: CarrachoTheme.secondaryText,
+                    .paragraphStyle: emptyParagraph,
+                ]
             ))
             return
         }
@@ -1275,113 +1292,167 @@ extension ViewController {
         let output = NSMutableAttributedString()
         let timeFormatter = DateFormatter()
         timeFormatter.dateFormat = "HH:mm"
-        let baseFont = NSFont.systemFont(ofSize: channelChatFontSize)
-        let authorFont = NSFont.systemFont(ofSize: channelChatFontSize, weight: .semibold)
-        let metaFont = NSFont.systemFont(ofSize: max(9.5, channelChatFontSize - 1))
-        let systemFont = NSFont.systemFont(ofSize: max(10, channelChatFontSize - 1))
-        let viewportWidth = channelChatTextView.enclosingScrollView?.contentView.bounds.width ?? channelChatTextView.bounds.width
-        let lineFragmentPadding = channelChatTextView.textContainer?.lineFragmentPadding ?? 0
-        let dividerWidth = max(1, viewportWidth - (channelChatTextView.textContainerInset.width * 2) - (lineFragmentPadding * 2))
-        let backingScale = channelChatTextView.window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 1
-        let dividerThickness = max(1.0 / backingScale, 2.0 / backingScale)
-        let dividerImage = NSImage(size: NSSize(width: 1, height: dividerThickness))
-        dividerImage.lockFocus()
-        CarrachoTheme.hairline.setFill()
-        NSRect(x: 0, y: 0, width: 1, height: dividerThickness).fill()
-        dividerImage.unlockFocus()
 
-        func appendMessageDivider() {
-            let attachment = NSTextAttachment()
-            attachment.image = dividerImage
-            attachment.bounds = NSRect(x: 0, y: 0, width: dividerWidth, height: dividerThickness)
-            let line = NSMutableAttributedString(attachment: attachment)
-            let paragraph = NSMutableParagraphStyle()
-            paragraph.minimumLineHeight = dividerThickness
-            paragraph.maximumLineHeight = dividerThickness
-            paragraph.paragraphSpacing = 5
-            paragraph.paragraphSpacingBefore = 5
-            line.addAttribute(.paragraphStyle, value: paragraph, range: NSRange(location: 0, length: line.length))
-            output.append(line)
-            output.append(NSAttributedString(string: "\n"))
+        let baseFont = NSFont.systemFont(ofSize: channelChatFontSize)
+        let authorFont = NSFont.systemFont(ofSize: max(12, channelChatFontSize + 1), weight: .semibold)
+        let metaFont = NSFont.systemFont(ofSize: max(10, channelChatFontSize - 1))
+        let systemFont = NSFont.systemFont(ofSize: max(10.5, channelChatFontSize - 1))
+
+        let avatarSize: CGFloat = max(28, min(36, channelChatFontSize + 19))
+        let contentIndent = avatarSize + 14
+
+        func appendSpacer() {
+            output.append(NSAttributedString(
+                string: "\n",
+                attributes: [.font: NSFont.systemFont(ofSize: max(7, channelChatFontSize - 5))]
+            ))
         }
 
         if session.transcript.isEmpty {
             let name = Self.macRomanString(active.name)
+            let welcomeParagraph = NSMutableParagraphStyle()
+            welcomeParagraph.firstLineHeadIndent = 8
+            welcomeParagraph.headIndent = 8
+            welcomeParagraph.paragraphSpacing = 5
+
             let welcome = NSMutableAttributedString(
                 string: LF("Welcome to #%@\n", name),
-                attributes: [.font: NSFont.systemFont(ofSize: max(16, channelChatFontSize + 3), weight: .semibold),
-                             .foregroundColor: NSColor.labelColor]
+                attributes: [
+                    .font: NSFont.systemFont(ofSize: max(17, channelChatFontSize + 4), weight: .semibold),
+                    .foregroundColor: NSColor.labelColor,
+                    .paragraphStyle: welcomeParagraph,
+                ]
             )
             welcome.append(NSAttributedString(
                 string: L("No messages in this local session yet."),
-                attributes: [.font: systemFont, .foregroundColor: CarrachoTheme.secondaryText]
+                attributes: [
+                    .font: systemFont,
+                    .foregroundColor: CarrachoTheme.secondaryText,
+                    .paragraphStyle: welcomeParagraph,
+                ]
             ))
             output.append(welcome)
         } else {
-            var messageStripeIndex = 0
             for (index, entry) in session.transcript.enumerated() {
                 let time = timeFormatter.string(from: entry.timestamp)
-                var messageStart: Int?
-                var messageAlternate = false
+
                 switch entry.kind {
                 case let .system(text):
                     let paragraph = NSMutableParagraphStyle()
-                    paragraph.paragraphSpacing = 4
+                    paragraph.firstLineHeadIndent = contentIndent
+                    paragraph.headIndent = contentIndent
+                    paragraph.tailIndent = -12
+                    paragraph.lineSpacing = 1
+                    paragraph.paragraphSpacing = 3
+
                     output.append(NSAttributedString(
-                        string: "\(time)  ·  \(text)",
-                        attributes: [.font: systemFont,
-                                     .foregroundColor: CarrachoTheme.secondaryText,
-                                     .paragraphStyle: paragraph]
+                        string: "\(time)  ",
+                        attributes: [
+                            .font: metaFont,
+                            .foregroundColor: CarrachoTheme.tertiaryText,
+                            .paragraphStyle: paragraph,
+                        ]
                     ))
+                    output.append(NSAttributedString(
+                        string: text,
+                        attributes: [
+                            .font: systemFont,
+                            .foregroundColor: CarrachoTheme.secondaryText,
+                            .paragraphStyle: paragraph,
+                        ]
+                    ))
+
                 case let .message(senderUserID, message, attribute):
-                    messageStart = output.length
-                    messageAlternate = messageStripeIndex % 2 != 0
-                    messageStripeIndex += 1
                     let sender = liveUsers[senderUserID].map { Self.macRomanString($0.nickname) } ?? L("Unknown User")
+                    let authorColor = userGroupColors[senderUserID].map(Self.colorFromRGB) ?? CarrachoTheme.accent
+
                     let headerParagraph = NSMutableParagraphStyle()
-                    headerParagraph.paragraphSpacing = 2
-                    output.append(channelAvatarAttachment(userID: senderUserID))
-                    let attributeSuffix = attribute == 0 ? "" : String(format: " · 0x%02X", attribute)
+                    headerParagraph.firstLineHeadIndent = 0
+                    headerParagraph.headIndent = contentIndent
+                    headerParagraph.tailIndent = -12
+                    headerParagraph.paragraphSpacing = 0
+
+                    output.append(channelAvatarAttachment(userID: senderUserID, size: avatarSize))
                     output.append(NSAttributedString(
-                        string: "  \(time)\(attributeSuffix)  ",
-                        attributes: [.font: metaFont, .foregroundColor: CarrachoTheme.secondaryText,
-                                     .paragraphStyle: headerParagraph]
+                        string: "  \(sender)",
+                        attributes: [
+                            .font: authorFont,
+                            .foregroundColor: authorColor,
+                            .paragraphStyle: headerParagraph,
+                        ]
                     ))
                     output.append(NSAttributedString(
-                        string: "\(sender)\n",
-                        attributes: [.font: authorFont, .foregroundColor: NSColor.labelColor,
-                                     .paragraphStyle: headerParagraph]
+                        string: "  \(time)",
+                        attributes: [
+                            .font: metaFont,
+                            .foregroundColor: CarrachoTheme.tertiaryText,
+                            .paragraphStyle: headerParagraph,
+                        ]
                     ))
-                    appendMessageDivider()
+                    if attribute != 0 {
+                        output.append(NSAttributedString(
+                            string: String(format: "  · 0x%02X", attribute),
+                            attributes: [
+                                .font: metaFont,
+                                .foregroundColor: CarrachoTheme.tertiaryText,
+                                .paragraphStyle: headerParagraph,
+                            ]
+                        ))
+                    }
+                    output.append(NSAttributedString(
+                        string: "\n",
+                        attributes: [.font: NSFont.systemFont(ofSize: max(2, channelChatFontSize - 9))]
+                    ))
+
                     let bodyParagraph = NSMutableParagraphStyle()
-                    bodyParagraph.headIndent = 38
-                    bodyParagraph.firstLineHeadIndent = 38
-                    bodyParagraph.tailIndent = -10
-                    bodyParagraph.paragraphSpacing = 5
+                    bodyParagraph.firstLineHeadIndent = contentIndent
+                    bodyParagraph.headIndent = contentIndent
+                    bodyParagraph.tailIndent = -12
+                    bodyParagraph.lineSpacing = 1.5
+                    bodyParagraph.paragraphSpacing = 2
+
                     let body = NSMutableAttributedString(attributedString: mediaAttributedString(
-                        fromWire: message, context: .channel(active.channelID), baseFont: baseFont,
-                        maximumWidth: 560, maximumHeight: 360
+                        fromWire: message,
+                        context: .channel(active.channelID),
+                        baseFont: baseFont,
+                        maximumWidth: 560,
+                        maximumHeight: 360
                     ) { [weak self] in
                         self?.renderActiveChannelTranscript()
                     })
                     if body.length > 0 {
-                        body.addAttribute(.paragraphStyle, value: bodyParagraph,
-                                          range: NSRange(location: 0, length: body.length))
+                        body.addAttribute(
+                            .paragraphStyle,
+                            value: bodyParagraph,
+                            range: NSRange(location: 0, length: body.length)
+                        )
                     }
                     output.append(body)
                 }
+
                 if index + 1 < session.transcript.count {
-                    output.append(NSAttributedString(string: "\n\n"))
-                }
-                if let messageStart {
-                    let messageRange = NSRange(location: messageStart, length: output.length - messageStart)
-                    if messageRange.length > 0 {
-                        output.addAttribute(.carrachoPostBackground, value: messageAlternate, range: messageRange)
-                    }
+                    appendSpacer()
+                    appendSpacer()
                 }
             }
         }
+
         channelChatTextView.textStorage?.setAttributedString(output)
+        if hadTextSelection {
+            let length = output.length
+            let restored = oldSelectedRanges.compactMap { value -> NSValue? in
+                let range = value.rangeValue
+                guard range.location != NSNotFound, range.location < length else { return nil }
+                let end = min(length, range.location + range.length)
+                guard end > range.location else { return nil }
+                return NSValue(range: NSRange(location: range.location, length: end - range.location))
+            }
+            if !restored.isEmpty {
+                channelChatTextView.setSelectedRanges(restored, affinity: .downstream, stillSelecting: false)
+            }
+        }
+        channelChatTextView.needsDisplay = true
+
         DispatchQueue.main.async { [weak self] in
             guard let self, self.activeChannel?.channelID == active.channelID,
                   let scroll = self.channelChatTextView.enclosingScrollView else { return }
@@ -1445,7 +1516,7 @@ extension ViewController {
                 let selectedID = self.selectedChannelID()
                 self.lastChannels = channels
                 self.reloadChannelTablePreservingSelection(preferredChannelID: selectedID)
-                self.reloadChannelView(reloadTables: false)
+                self.reloadChannelView(reloadTables: false, renderTranscript: false)
                 self.refreshShellChrome()
             }
         }
@@ -1974,7 +2045,7 @@ extension ViewController {
         updateTransferMonitorPolling()
     }
 
-    func reloadChannelView(reloadTables: Bool = true) {
+    func reloadChannelView(reloadTables: Bool = true, renderTranscript: Bool = true) {
         if reloadTables {
             if channelDiscoverySheet != nil { reloadChannelTablePreservingSelection() }
             channelMemberTable.reloadData()
@@ -2008,7 +2079,7 @@ extension ViewController {
             channelInviteButton.isEnabled = false
             channelLeaveButton.isEnabled = false
             updateChannelComposerPresentation()
-            renderActiveChannelTranscript()
+            if renderTranscript { renderActiveChannelTranscript() }
             updateInspectorContext()
             reloadJoinedChannelSidebar()
             refreshShellChrome()
@@ -2055,7 +2126,7 @@ extension ViewController {
 
         updateChannelComposerPresentation()
         updateChannelComposerHeight()
-        renderActiveChannelTranscript()
+        if renderTranscript { renderActiveChannelTranscript() }
         updateInspectorContext()
         reloadJoinedChannelSidebar()
         updateChannelDiscoverySelection()

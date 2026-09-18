@@ -41,7 +41,8 @@ extension ViewController {
         document.translatesAutoresizingMaskIntoConstraints = false
         scroll.documentView = document
 
-        let card = cardView()
+        let card = CarrachoCardView()
+        card.fillColor = CarrachoTheme.conferenceTranscriptBackground
         let stack = NSStackView(views: views)
         stack.orientation = .vertical; stack.alignment = .width; stack.spacing = 12
         stack.translatesAutoresizingMaskIntoConstraints = false
@@ -504,8 +505,10 @@ extension ViewController {
         let commandsTitle = sectionCaption(L("Bot commands"))
         adminBotCommandTable.delegate = self
         adminBotCommandTable.dataSource = self
-        adminBotCommandTable.usesAlternatingRowBackgroundColors = true
-        adminBotCommandTable.backgroundColor = CarrachoTheme.tableBackground
+        adminBotCommandTable.target = self
+        adminBotCommandTable.action = #selector(botCommandTableClicked(_:))
+        adminBotCommandTable.usesAlternatingRowBackgroundColors = false
+        adminBotCommandTable.backgroundColor = CarrachoTheme.conferenceTranscriptBackground
         adminBotCommandTable.gridStyleMask = [.solidVerticalGridLineMask]
         adminBotCommandTable.gridColor = NSColor.separatorColor.withAlphaComponent(0.35)
         adminBotCommandTable.rowHeight = 30
@@ -534,6 +537,8 @@ extension ViewController {
             adminBotCommandTable.addTableColumn(responseColumn)
         }
         let commandScroll = tableScroll(adminBotCommandTable, tracksViewportWidth: true)
+        commandScroll.drawsBackground = true
+        commandScroll.backgroundColor = CarrachoTheme.conferenceTranscriptBackground
         commandScroll.borderType = .bezelBorder
         commandScroll.heightAnchor.constraint(equalToConstant: 190).isActive = true
 
@@ -739,11 +744,40 @@ extension ViewController {
         field.lineBreakMode = .byTruncatingTail
         field.isEditable = canEditBotCommandRules
         field.isSelectable = canEditBotCommandRules
+        field.isEnabled = canEditBotCommandRules
         field.placeholderString = identifier == "botRuleCommand" ? "Hello" : "Hello {name} how are you?"
         field.delegate = self
         field.target = self
         field.action = #selector(botCommandRuleTextEdited(_:))
+        (field.cell as? NSTextFieldCell)?.sendsActionOnEndEditing = true
         return verticallyCenteredTableContent(field, fillWidth: true, leadingInset: 2, trailingInset: 2)
+    }
+
+    @objc func botCommandTableClicked(_ sender: NSTableView) {
+        guard sender === adminBotCommandTable, canEditBotCommandRules else { return }
+        let row = sender.clickedRow
+        let column = sender.clickedColumn
+        guard row >= 0, row < remoteBotCommandRuleDraft.count,
+              column >= 0, column < sender.tableColumns.count else { return }
+        let identifier = sender.tableColumns[column].identifier.rawValue
+        guard identifier == "botRuleCommand" || identifier == "botRuleResponse",
+              let cellView = sender.view(atColumn: column, row: row, makeIfNecessary: true),
+              let field = botCommandTextField(in: cellView, identifier: identifier) else { return }
+
+        view.window?.makeFirstResponder(field)
+        if let editor = field.currentEditor() {
+            // Put the insertion caret where the user clicked instead of selecting/replacing
+            // the whole saved rule. The exact click location is handled by the field editor.
+            editor.selectedRange = NSRange(location: editor.selectedRange.location, length: 0)
+        }
+    }
+
+    private func botCommandTextField(in view: NSView, identifier: String) -> NSTextField? {
+        if let field = view as? NSTextField, field.identifier?.rawValue == identifier { return field }
+        for subview in view.subviews {
+            if let field = botCommandTextField(in: subview, identifier: identifier) { return field }
+        }
+        return nil
     }
 
     func markBotCommandRulesDirty() {

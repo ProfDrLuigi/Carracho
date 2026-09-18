@@ -7,7 +7,7 @@ extension ViewController {
 
     func makeMessageCenterPage() -> NSView {
         let page = CarrachoBackgroundView()
-        page.fillColor = CarrachoTheme.card
+        page.fillColor = CarrachoTheme.conferenceTranscriptBackground
 
         let title = NSTextField(labelWithString: L("Message Center"))
         title.font = .systemFont(ofSize: 22, weight: .bold)
@@ -44,7 +44,7 @@ extension ViewController {
         ])
 
         let conversationsPane = CarrachoBackgroundView()
-        conversationsPane.fillColor = CarrachoTheme.card
+        conversationsPane.fillColor = CarrachoTheme.conferenceTranscriptBackground
         privateMessageSearchField.placeholderString = L("Search conversations…")
         privateMessageSearchField.target = self
         privateMessageSearchField.action = #selector(privateMessageSearchChanged(_:))
@@ -64,7 +64,9 @@ extension ViewController {
             column.resizingMask = [.autoresizingMask]
         }
         let conversationScroll = tableScroll(privateMessageConversationTable, tracksViewportWidth: true)
-        conversationScroll.drawsBackground = false
+        conversationScroll.drawsBackground = true
+        conversationScroll.backgroundColor = CarrachoTheme.conferenceTranscriptBackground
+        privateMessageConversationTable.backgroundColor = CarrachoTheme.conferenceTranscriptBackground
         conversationScroll.borderType = .noBorder
         conversationScroll.translatesAutoresizingMaskIntoConstraints = false
         conversationsPane.addSubview(privateMessageSearchField)
@@ -80,7 +82,7 @@ extension ViewController {
         ])
 
         let conversationPane = CarrachoBackgroundView()
-        conversationPane.fillColor = CarrachoTheme.card
+        conversationPane.fillColor = CarrachoTheme.conferenceTranscriptBackground
 
         privateMessageHeaderAvatar.imageScaling = .scaleProportionallyUpOrDown
         privateMessageHeaderAvatar.wantsLayer = true

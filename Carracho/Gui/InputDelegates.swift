@@ -20,6 +20,11 @@ extension ViewController {
             markTrackerDraftChanged()
             return
         }
+        if let identifier = field.identifier?.rawValue,
+           identifier == "botRuleCommand" || identifier == "botRuleResponse" {
+            botCommandRuleTextEdited(field)
+            return
+        }
         let tracked = [adminMaxConnectionsField, adminMaxConnectionsPerIPField,
                        adminMaxTransfersField, adminMaxTransfersPerUserField,
                        adminMaxFolderDepthField, adminLegacyFilesRootField,

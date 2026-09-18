@@ -858,7 +858,9 @@ final class CarrachoMediaDisplayTextView: NSTextView, NSTextViewDelegate {
             let block = NSRect(x: bounds.minX, y: contentRect.minY - 6,
                                width: bounds.width, height: contentRect.height + 12)
             guard block.intersects(dirtyRect) else { return }
-            let color = alternate ? CarrachoTheme.stripedRowAlternateBackground : CarrachoTheme.stripedRowBackground
+            let color = alternate
+                ? CarrachoTheme.conferenceTranscriptAlternateBackground
+                : CarrachoTheme.conferenceTranscriptBackground
             color.setFill()
             block.fill()
         }

@@ -7,7 +7,7 @@ extension ViewController {
 
     func makeRightPanel() -> NSView {
         let container = CarrachoBackgroundView()
-        container.fillColor = CarrachoTheme.card
+        container.fillColor = CarrachoTheme.sideColumnBackground
 
         userTable.usesAlternatingRowBackgroundColors = false
         userTable.backgroundColor = .clear

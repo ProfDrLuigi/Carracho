@@ -1264,6 +1264,9 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
     var currentNewsThreadID: UInt32?
     var currentNewsThreadPosts: [LegacyNewsThreadPostSummary] = []
     var currentNewsThreadArticles: [LegacyArticleReply] = []
+    var renderedNewsCategory: Data?
+    var renderedNewsThreadID: UInt32?
+    var renderedNewsReadScope: String?
     var currentNewsReactions: [UInt32: [LegacyNewsReactionSummary]] = [:]
     var currentNewsPostCapabilities: [UInt32: LegacyNewsPostCapability] = [:]
     var newsReactionsSupported = true
@@ -1924,7 +1927,8 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         channelChatTextView.isRichText = true
         channelChatTextView.isAutomaticLinkDetectionEnabled = true
         channelChatTextView.useCarrachoLinkAppearance()
-        channelChatTextView.drawsBackground = false
+        channelChatTextView.drawsBackground = true
+        channelChatTextView.backgroundColor = CarrachoTheme.conferenceTranscriptBackground
         channelChatTextView.font = NSFont.systemFont(ofSize: channelChatFontSize)
         channelChatTextView.textContainerInset = NSSize(width: 18, height: 16)
 
@@ -2345,7 +2349,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
 
     func makeSidebar() -> NSView {
         let sidebar = CarrachoBackgroundView()
-        sidebar.fillColor = CarrachoTheme.sidebar
+        sidebar.fillColor = CarrachoTheme.sideColumnBackground
         let logo = NSImageView()
         logo.image = NSImage(named: "CarrachoLogo")
         logo.imageScaling = .scaleProportionallyDown
@@ -2599,8 +2603,29 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         tabView.addTabViewItem(makeDeckItem(id: "agreement", view: makeAgreementAdminPage()))
         tabView.addTabViewItem(makeDeckItem(id: "statistics", view: makeStatisticsAdminPage()))
 
+        // Keep the compact transfer bar inside the main workspace pane. The inspector is a
+        // sibling pane in the horizontal split and therefore extends all the way to the bottom
+        // instead of having the transfer bar run underneath it.
+        let mainColumn = CarrachoBackgroundView()
+        mainColumn.fillColor = CarrachoTheme.canvas
+        for child in [tabView, transferBar] {
+            child.translatesAutoresizingMaskIntoConstraints = false
+            mainColumn.addSubview(child)
+        }
+        NSLayoutConstraint.activate([
+            tabView.leadingAnchor.constraint(equalTo: mainColumn.leadingAnchor),
+            tabView.trailingAnchor.constraint(equalTo: mainColumn.trailingAnchor),
+            tabView.topAnchor.constraint(equalTo: mainColumn.topAnchor),
+            tabView.bottomAnchor.constraint(equalTo: transferBar.topAnchor),
+
+            transferBar.leadingAnchor.constraint(equalTo: mainColumn.leadingAnchor),
+            transferBar.trailingAnchor.constraint(equalTo: mainColumn.trailingAnchor),
+            transferBar.bottomAnchor.constraint(equalTo: mainColumn.bottomAnchor),
+            transferBarHeight,
+        ])
+
         let bodySplit = makeResizableColumnSplit(
-            panes: [tabView, rightPanel],
+            panes: [mainColumn, rightPanel],
             autosaveName: "Carracho.WorkspaceColumns",
             edge: .trailing,
             initialEdgeWidth: 286,
@@ -2609,7 +2634,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         bodySplit.identifier = NSUserInterfaceItemIdentifier("workspaceColumnSplit")
         workspaceColumnSplit = bodySplit
 
-        for child in [serverHeader, bodySplit, transferBar] {
+        for child in [serverHeader, bodySplit] {
             child.translatesAutoresizingMaskIntoConstraints = false
             container.addSubview(child)
         }
@@ -2621,12 +2646,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
             bodySplit.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             bodySplit.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             bodySplit.topAnchor.constraint(equalTo: serverHeader.bottomAnchor),
-            bodySplit.bottomAnchor.constraint(equalTo: transferBar.topAnchor),
-
-            transferBar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            transferBar.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            transferBar.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-            transferBarHeight,
+            bodySplit.bottomAnchor.constraint(equalTo: container.bottomAnchor),
         ])
         updateInspectorToggleButton()
         return container
@@ -2634,7 +2654,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
 
     func makeServerHeader() -> NSView {
         let container = CarrachoBackgroundView()
-        container.fillColor = CarrachoTheme.sidebar
+        container.fillColor = CarrachoTheme.sideColumnBackground
 
         let bannerHost = CarrachoBackgroundView()
         bannerHost.fillColor = .clear
@@ -3433,7 +3453,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
             conferencesSidebarHeader, title: "Conferences",
             collapsed: conferencesSidebarContent?.isHidden ?? false
         )
-        for table in [fileTable, transferTable, trackerBrowserTable, privateMessageConversationTable, userTable, channelTable, channelMemberTable, newsTable, newsArticleTable, adminAccountTable, adminNewsgroupTable, adminTrackerTable] {
+        for table in [fileTable, transferTable, trackerBrowserTable, privateMessageConversationTable, userTable, channelTable, channelMemberTable, newsTable, newsArticleTable, adminAccountTable, adminNewsgroupTable, adminTrackerTable, adminBotCommandTable, adminBotRSSTable] {
             table.backgroundColor = CarrachoTheme.tableBackground
             table.gridColor = NSColor.separatorColor.withAlphaComponent(0.35)
         }
@@ -3441,6 +3461,12 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         // a nested table card after an Appearance switch.
         userTable.backgroundColor = .clear
         channelMemberTable.backgroundColor = .clear
+        for table in [fileTable, transferTable, newsTable, newsArticleTable, privateMessageConversationTable,
+                      adminAccountTable, adminNewsgroupTable, adminBotCommandTable, adminBotRSSTable] {
+            table.backgroundColor = CarrachoTheme.conferenceTranscriptBackground
+            table.enclosingScrollView?.backgroundColor = CarrachoTheme.conferenceTranscriptBackground
+            table.enclosingScrollView?.drawsBackground = true
+        }
         reloadJoinedChannelSidebar()
         updateInspectorContext()
         reloadTrackerStack()
@@ -3873,6 +3899,9 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         currentNewsThreadID = nil
         currentNewsThreadPosts = []
         currentNewsThreadArticles = []
+        renderedNewsCategory = nil
+        renderedNewsThreadID = nil
+        renderedNewsReadScope = nil
         currentNewsReactions = [:]
         currentNewsPostCapabilities = [:]
         newsReactionsSupported = true
@@ -5590,6 +5619,9 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         currentNewsThreadID = nil
         currentNewsThreadPosts = []
         currentNewsThreadArticles = []
+        renderedNewsCategory = nil
+        renderedNewsThreadID = nil
+        renderedNewsReadScope = nil
         currentNewsReactions = [:]
         currentNewsPostCapabilities = [:]
         newsReactionsSupported = true
@@ -6535,7 +6567,10 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
             if let colorRGB { userGroupColors[userID] = colorRGB }
             else { userGroupColors.removeValue(forKey: userID) }
             reloadUserTablePreservingSelection()
-            if channelMembers[userID] != nil { channelMemberTable.reloadData() }
+            if channelMembers[userID] != nil {
+                channelMemberTable.reloadData()
+                renderActiveChannelTranscript()
+            }
         case let .ownPermissionsChanged(permissionWord0, permissionWord1):
             guard var login = lastLoginResult else { break }
             let changed = login.session.permissionWord0 != permissionWord0 ||
@@ -7095,10 +7130,20 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
     }
 
     func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
-        if tableView === fileTable || tableView === transferTable || tableView === newsArticleTable {
+        if tableView === fileTable || tableView === transferTable || tableView === newsArticleTable
+            || tableView === adminAccountTable || tableView === adminNewsgroupTable
+            || tableView === adminBotCommandTable || tableView === adminBotRSSTable {
             let rowView = CarrachoStripedTableRowView()
             rowView.alternate = row % 2 != 0
-            if tableView === fileTable { rowView.rowTintColor = fileRowLabelTint(at: row) }
+            if tableView === fileTable || tableView === transferTable || tableView === newsArticleTable
+                || tableView === adminAccountTable || tableView === adminNewsgroupTable
+                || tableView === adminBotCommandTable || tableView === adminBotRSSTable {
+                rowView.baseBackgroundColor = CarrachoTheme.conferenceTranscriptBackground
+                rowView.alternateBackgroundColor = CarrachoTheme.conferenceTranscriptAlternateBackground
+            }
+            if tableView === fileTable {
+                rowView.rowTintColor = fileRowLabelTint(at: row)
+            }
             return rowView
         }
         if tableView === privateMessageConversationTable || tableView === newsTable || tableView === adminTrackerTable {

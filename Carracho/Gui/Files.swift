@@ -613,6 +613,9 @@ extension ViewController {
 
         let tableScrollView = tableScroll(fileTable)
         tableScrollView.hasHorizontalScroller = true
+        tableScrollView.drawsBackground = true
+        tableScrollView.backgroundColor = CarrachoTheme.conferenceTranscriptBackground
+        fileTable.backgroundColor = CarrachoTheme.conferenceTranscriptBackground
         tableScrollView.translatesAutoresizingMaskIntoConstraints = false
         let listHost = NSView()
         listHost.translatesAutoresizingMaskIntoConstraints = false

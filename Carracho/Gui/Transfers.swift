@@ -61,7 +61,7 @@ extension ViewController {
 
     func makeTransferMonitorPage() -> NSView {
         let page = CarrachoBackgroundView()
-        page.fillColor = CarrachoTheme.card
+        page.fillColor = CarrachoTheme.conferenceTranscriptBackground
 
         let title = NSTextField(labelWithString: L("Transfers"))
         title.font = .systemFont(ofSize: 20, weight: .semibold)
@@ -106,7 +106,9 @@ extension ViewController {
         // Keep the table document locked to the live viewport. Otherwise the table can retain
         // its construction width and the right-hand row actions get clipped until a resize.
         let scroll = tableScroll(transferTable, tracksViewportWidth: true)
-        scroll.drawsBackground = false
+        scroll.drawsBackground = true
+        scroll.backgroundColor = CarrachoTheme.conferenceTranscriptBackground
+        transferTable.backgroundColor = CarrachoTheme.conferenceTranscriptBackground
         scroll.borderType = .noBorder
         scroll.hasHorizontalScroller = false
         scroll.translatesAutoresizingMaskIntoConstraints = false
@@ -160,7 +162,7 @@ extension ViewController {
         let footer = horizontalStack([transferMonitorStatusLabel, NSView()], spacing: 8)
 
         let content = CarrachoBackgroundView()
-        content.fillColor = CarrachoTheme.card
+        content.fillColor = CarrachoTheme.conferenceTranscriptBackground
         let stack = verticalStack([
             scopeRow, divider1, filterRow, tableHost,
             detailsStack, cleanupDivider, cleanupRow, footer,

@@ -19,6 +19,12 @@ enum CarrachoTheme {
             : NSColor(calibratedRed: 0.405, green: 0.337, blue: 0.865, alpha: 1)
     }
 
+    static func selectionSoftColor(for appearance: NSAppearance) -> NSColor {
+        isDark(appearance)
+            ? NSColor(calibratedRed: 0.190, green: 0.170, blue: 0.285, alpha: 1)
+            : NSColor(calibratedRed: 0.932, green: 0.920, blue: 0.990, alpha: 1)
+    }
+
     private static func adaptive(_ name: String,
                                  light: @escaping () -> NSColor,
                                  dark: @escaping () -> NSColor) -> NSColor {
@@ -37,6 +43,16 @@ enum CarrachoTheme {
         adaptive("sidebarSecondary",
                  light: { NSColor(calibratedRed: 0.875, green: 0.868, blue: 0.955, alpha: 1) },
                  dark: { NSColor(calibratedRed: 0.145, green: 0.140, blue: 0.205, alpha: 1) })
+    }
+
+    /// Outer left/right columns. Dark mode matches the supplied #212936 swatch exactly.
+    static var sideColumnBackground: NSColor {
+        adaptive("sideColumnBackground",
+                 light: { NSColor(calibratedRed: 0.922, green: 0.920, blue: 0.975, alpha: 1) },
+                 dark: { NSColor(calibratedRed: 28.0 / 255.0,
+                                 green: 33.0 / 255.0,
+                                 blue: 48.0 / 255.0,
+                                 alpha: 1) })
     }
 
     static var selection: NSColor {
@@ -80,6 +96,20 @@ enum CarrachoTheme {
     static var success: NSColor { NSColor.systemGreen }
     static var warning: NSColor { NSColor.systemOrange }
     static var tableBackground: NSColor { card }
+
+    /// Dedicated conference transcript canvas. The dark variant intentionally carries a subtle
+    /// blue cast, closer to the classic/community chat aesthetic than the neutral application card.
+    static var conferenceTranscriptBackground: NSColor {
+        adaptive("conferenceTranscriptBackground",
+                 light: { NSColor(calibratedRed: 0.965, green: 0.972, blue: 0.985, alpha: 1) },
+                 dark: { NSColor(calibratedRed: 0.052, green: 0.073, blue: 0.110, alpha: 1) })
+    }
+
+    static var conferenceTranscriptAlternateBackground: NSColor {
+        adaptive("conferenceTranscriptAlternateBackground",
+                 light: { NSColor(calibratedRed: 0.942, green: 0.955, blue: 0.980, alpha: 1) },
+                 dark: { NSColor(calibratedRed: 0.064, green: 0.086, blue: 0.126, alpha: 1) })
+    }
 
     static var stripedRowBackground: NSColor {
         adaptive("stripedRowBackground",
@@ -172,11 +202,13 @@ enum CarrachoTheme {
         button.alignment = .left
         button.imagePosition = .imageLeading
         button.font = NSFont.systemFont(ofSize: 13, weight: selected ? .semibold : .medium)
-        button.contentTintColor = selected ? .white : .labelColor
+        // Match the selected bookmark rows: a quiet full-row selection rather than the
+        // bright rounded accent pill previously used by workspace navigation.
+        button.contentTintColor = .labelColor
         button.wantsLayer = true
-        button.layer?.cornerRadius = 7
+        button.layer?.cornerRadius = 0
         button.layer?.backgroundColor = selected
-            ? selectionColor(for: button.effectiveAppearance).cgColor
+            ? selectionSoftColor(for: button.effectiveAppearance).cgColor
             : NSColor.clear.cgColor
     }
 }
@@ -200,6 +232,8 @@ final class CarrachoUserTableRowView: NSTableRowView {
 final class CarrachoStripedTableRowView: NSTableRowView {
     var alternate = false { didSet { needsDisplay = true } }
     var rowTintColor: NSColor? { didSet { needsDisplay = true } }
+    var baseBackgroundColor: NSColor? { didSet { needsDisplay = true } }
+    var alternateBackgroundColor: NSColor? { didSet { needsDisplay = true } }
 
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
@@ -207,7 +241,12 @@ final class CarrachoStripedTableRowView: NSTableRowView {
     }
 
     override func drawBackground(in dirtyRect: NSRect) {
-        let base = alternate ? CarrachoTheme.stripedRowAlternateBackground : CarrachoTheme.stripedRowBackground
+        let base: NSColor
+        if alternate {
+            base = alternateBackgroundColor ?? CarrachoTheme.stripedRowAlternateBackground
+        } else {
+            base = baseBackgroundColor ?? CarrachoTheme.stripedRowBackground
+        }
         base.setFill()
         dirtyRect.intersection(bounds).fill()
         if let rowTintColor {
