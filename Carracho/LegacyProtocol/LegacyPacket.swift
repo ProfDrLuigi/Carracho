@@ -109,6 +109,9 @@ struct LegacyPacket: Equatable {
 }
 
 enum LegacyCommand {
+    /// Classic Client 1.0b10r4 periodically sends command -1 with an otherwise empty
+    /// packet from TClientThread::DoIdle. It is a transport keepalive/no-op, not user activity.
+    static let idleKeepAlive: UInt32 = 0xffffffff
     static let error: UInt32 = 0x00000000
     static let challenge: UInt32 = 0x00000001
     static let login: UInt32 = 0x00000002

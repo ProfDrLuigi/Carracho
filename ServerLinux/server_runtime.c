@@ -45,6 +45,9 @@
 #include <time.h>
 #include <unistd.h>
 
+/* Classic Client 1.0b10r4 emits command -1 from TClientThread::DoIdle as an
+ * empty keepalive/no-op. It must not wake a sleeping user or produce a reply. */
+#define CMD_IDLE_KEEPALIVE 0xffffffffu
 #define CMD_ERROR 0x00000000u
 #define SETTING_SEARCH_INDEX_EXCLUSIONS 0xf0000003u
 #define SETTING_ACCOUNT_GROUPS 0xf0000004u
@@ -3909,7 +3912,9 @@ static void record_request_event(cr_session*s,const cr_packet*p){
     if(cat)event_msg(s,cat,action,detail);
 }
 
-static int handle_authenticated(cr_session*s,const cr_packet*p){record_request_event(s,p);switch(p->command){
+static int handle_authenticated(cr_session*s,const cr_packet*p){
+if(p->command==CMD_IDLE_KEEPALIVE&&p->transaction_id==0&&p->reserved==0&&p->field_count==0)return 0;
+record_request_event(s,p);switch(p->command){
 case CMD_SERVER_INFO:return handle_server_info(s,p);case CMD_DIRECTORY:return handle_directory(s,p);
 case CMD_DISCONNECT_USER:return handle_disconnect_user(s,p,0);case CMD_BAN_USER:return handle_disconnect_user(s,p,1);
 case CMD_PRIVATE_MESSAGE:return handle_private_message(s,p);case CMD_OFFLINE_MESSAGE_SEND:return handle_offline_message_send(s,p);case CMD_OFFLINE_MESSAGE_FETCH:return handle_offline_message_fetch(s,p);case CMD_OFFLINE_MESSAGE_ACK:return handle_offline_message_ack(s,p);case CMD_OFFLINE_MESSAGE_RECIPIENTS:return handle_offline_message_recipients(s,p);case CMD_OFFLINE_MESSAGE_PREFERENCE:return handle_offline_message_preference(s,p);case CMD_EXTENDED_OWN_USER_INFO:return handle_extended_own_user_info(s,p);

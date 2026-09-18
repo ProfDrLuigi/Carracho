@@ -832,6 +832,13 @@ final class LegacyServerRuntime {
     }
 
     fileprivate func handleAuthenticated(_ packet: LegacyPacket, from session: LegacyServerSession) throws {
+        // Classic Client 1.0b10r4 emits exactly this empty command from TClientThread::DoIdle.
+        // Treat only the historical shape as a no-op so malformed 0xffffffff packets remain visible.
+        if packet.command == LegacyCommand.idleKeepAlive,
+           packet.transactionID == 0, packet.reserved == 0, packet.fields.isEmpty {
+            return
+        }
+
         noteUserActivity(command: packet.command, session: session)
         recordUserRequestEvent(packet, session: session)
         switch packet.command {
