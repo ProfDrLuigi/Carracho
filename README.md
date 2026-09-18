@@ -22,7 +22,7 @@ See [Security and modern encryption](#security-and-modern-encryption) below for 
 
 The new client is designed around one main window with a persistent sidebar. Servers, trackers and workspaces stay visible while the active content changes, so the application behaves more like a modern communication client than a collection of separate utility windows.
 
-<img width="2032" height="1281" alt="image" src="https://github.com/user-attachments/assets/36b29257-1127-490c-bcbd-300a0712a7f3" />
+<img width="2032" height="1281" alt="image" src="https://github.com/user-attachments/assets/1e3d2341-d638-48ac-b913-2e05d1698cf8" />
 
 ### Server bookmarks and connections
 
@@ -42,7 +42,7 @@ The client supports:
 
 On a fresh installation a ready-to-use bookmark for `carracho.istation.pw` is created with the `anonymous` account and no password. It is only a first-run default: deleting it does not make it come back later.
 
-<img width="473" height="542" alt="image" src="https://github.com/user-attachments/assets/8efddfa3-e641-49a8-a5dd-0ae056204882" />
+<img width="473" height="542" alt="image" src="https://github.com/user-attachments/assets/af177fb6-a6c3-442f-8fcc-989339e69766" />
 
 ### Overview
 
@@ -65,7 +65,7 @@ Depending on the connected server and account permissions, the client can:
 
 Features that require a modern server are hidden when the connected server does not advertise the corresponding capability.
 
-<img width="2032" height="1281" alt="image" src="https://github.com/user-attachments/assets/69fcab1d-80b3-4102-8ddd-c03a5a6031c3" />
+<img width="2032" height="1281" alt="image" src="https://github.com/user-attachments/assets/b2fe30a2-ed90-4196-96d8-865fba9ab7dd" />
 
 ### Files
 
@@ -87,7 +87,7 @@ The server keeps incomplete uploads separate from published files. A staged uplo
 
 Modern and Classic clients can also be given **separate file roots** when desired. The normal `filesRoot` is the published file tree used by modern Carracho sessions. An optional `legacyFilesRoot` can point Classic/Legacy clients at a completely different directory tree on the same server. If `legacyFilesRoot` is left empty, Classic clients simply use the normal `filesRoot` as well. This makes it possible to keep one shared file area for everybody or deliberately separate the modern and historical client environments without running two servers.
 
-<img width="2032" height="1281" alt="image" src="https://github.com/user-attachments/assets/888af7ba-5a01-47ee-90eb-ad379179681d" />
+<img width="2032" height="1281" alt="image" src="https://github.com/user-attachments/assets/d739dc00-0d82-4484-b45c-aa0e9c160861" />
 
 ### Transfer Monitor
 
@@ -125,7 +125,7 @@ It supports:
 
 A separate **Classic News** view keeps the traditional flat-news stream available where it is needed, while threaded News is the primary interface in the new client.
 
-<img width="2032" height="1281" alt="image" src="https://github.com/user-attachments/assets/79616c4a-1171-4b2e-8659-eface0796d18" />
+<img width="2032" height="1281" alt="image" src="https://github.com/user-attachments/assets/8d22338e-01d3-4641-935e-a3cd708e6381" />
 
 ### Message Center
 
@@ -143,7 +143,7 @@ The client keeps conversations locally so they remain useful after switching wor
 
 Offline messages on the modern server are stored in SQLite with authenticated encryption and are removed from the server after successful delivery/acknowledgement.
 
-<img width="2032" height="1281" alt="image" src="https://github.com/user-attachments/assets/86df8cf4-a1d0-4343-8676-690d591c90fa" />
+<img width="2032" height="1281" alt="image" src="https://github.com/user-attachments/assets/4cd4c78e-08d5-46e7-aa8d-bf5fcaecba78" />
 
 ### Users and presence
 
@@ -167,7 +167,7 @@ Tracker bookmarks can be added, edited and removed independently from server boo
 
 A fresh client starts with `carracho.istation.pw` as its initial tracker. As with the default server bookmark, this is only created once and can be removed permanently.
 
-<img width="1636" height="980" alt="image" src="https://github.com/user-attachments/assets/40e29560-b909-4336-8b48-2b944d4bdd54" />
+<img width="1636" height="980" alt="image" src="https://github.com/user-attachments/assets/33c42b60-9306-4258-ac8d-d5ae97373dc1" />
 
 ### Administration
 
@@ -188,7 +188,7 @@ The current administration workspaces include:
 
 The permission model also includes new account-level rights such as **Post News**, allowing modern server features to be controlled independently and extended over time.
 
-<img width="1636" height="980" alt="image" src="https://github.com/user-attachments/assets/cfa13d7b-afac-4bbc-b87a-d27c9a8e7922" />
+<img width="1636" height="980" alt="image" src="https://github.com/user-attachments/assets/4df5ed2f-72f2-41ca-91ab-c70f3a2b1ff3" />
 
 ### Server Bot
 
@@ -202,6 +202,8 @@ The Bot administration page provides:
 - persistent command/response rules, each with its own enable/disable switch;
 - RSS/Atom feed management with per-feed target room, polling interval, summary length and image setting;
 - a feed test action that publishes the fetched article into **Public** using the same rendering path as a normal RSS post.
+
+<img width="1961" height="1378" alt="image" src="https://github.com/user-attachments/assets/946d4e62-f032-45df-84e3-c9a0a8e85a84" />
 
 #### Bot commands
 
@@ -249,8 +251,8 @@ General settings cover the global client identity, avatar, About Me information 
 
 The application also provides system/light/dark appearance choices, English and German localization, and Sparkle-based update support.
 
-<img width="758" height="760" alt="image" src="https://github.com/user-attachments/assets/020fc2e6-61d4-477c-83ee-9454da5660e1" />
-<img width="776" height="765" alt="image" src="https://github.com/user-attachments/assets/f21fad1a-d3c8-49c9-86ce-50fbf3fef120" />
+<img width="758" height="760" alt="image" src="https://github.com/user-attachments/assets/2edbb6ee-d60a-4870-9c9e-548c44ba99ed" />
+<img width="776" height="765" alt="image" src="https://github.com/user-attachments/assets/7db9d6f1-fb7d-435d-ba51-1a8cecb1eada" />
 
 ## Security and modern encryption
 
