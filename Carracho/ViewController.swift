@@ -6497,36 +6497,53 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
                 session.members[userID] = mode
                 session.state.members = session.members.map { LegacyChannelMember(userID: $0.key, mode: $0.value) }
                 joinedChannels[channelID] = session
-                if activeChannel?.channelID == channelID { channelMembers = session.members }
+                let isActive = activeChannel?.channelID == channelID
+                if isActive {
+                    activeChannel = session.state
+                    channelMembers = session.members
+                }
                 let name = liveUsers[userID].map { Self.macRomanString($0.nickname) } ?? L("Unknown User")
                 appendChannelSystem(LF("%@ joined the room.", name), channelID: channelID)
                 syncChannelMemberCount(channelID)
+                if isActive {
+                    // appendChannelSystem deliberately skips table reloads for transcript-only
+                    // updates. Membership changes are not transcript-only: refresh the participant
+                    // table and its role/action state immediately.
+                    reloadChannelView()
+                }
             }
         case let .channelUserLeft(channelID, userID):
             if var session = joinedChannels[channelID],
                session.members.removeValue(forKey: userID) != nil {
                 session.state.members = session.members.map { LegacyChannelMember(userID: $0.key, mode: $0.value) }
                 joinedChannels[channelID] = session
-                if activeChannel?.channelID == channelID {
+                let isActive = activeChannel?.channelID == channelID
+                if isActive {
                     activeChannel = session.state
                     channelMembers = session.members
                 }
                 let name = liveUsers[userID].map { Self.macRomanString($0.nickname) } ?? L("Unknown User")
                 appendChannelSystem(LF("%@ left the room.", name), channelID: channelID)
                 syncChannelMemberCount(channelID)
+                if isActive { reloadChannelView() }
             }
         case let .channelUserMode(channelID, userID, mode):
             if var session = joinedChannels[channelID] {
                 session.members[userID] = mode
                 session.state.members = session.members.map { LegacyChannelMember(userID: $0.key, mode: $0.value) }
                 joinedChannels[channelID] = session
-                if activeChannel?.channelID == channelID { channelMembers = session.members }
+                let isActive = activeChannel?.channelID == channelID
+                if isActive {
+                    activeChannel = session.state
+                    channelMembers = session.members
+                }
                 let name = liveUsers[userID].map { Self.macRomanString($0.nickname) } ?? L("Unknown User")
                 let role: String
                 if mode & Self.channelOperatorMode != 0 { role = L("Operator") }
                 else if mode & Self.channelSpeechMode != 0 { role = L("Speaker") }
                 else { role = L("Member") }
                 appendChannelSystem(LF("%@ is now %@.", name, role), channelID: channelID)
+                if isActive { reloadChannelView() }
             }
         case let .channelInvitation(invitation):
             let inviter = liveUsers[invitation.inviterUserID].map { Self.macRomanString($0.nickname) }

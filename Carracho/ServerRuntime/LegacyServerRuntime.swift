@@ -1,5 +1,8 @@
 import Foundation
 import Dispatch
+#if canImport(AppKit)
+import AppKit
+#endif
 #if canImport(Darwin)
 import Darwin
 #elseif canImport(Glibc)
@@ -35,9 +38,55 @@ struct LegacyServerRuntimeStatus: Equatable {
 final class LegacyServerRuntime {
     static let publicChannelID: UInt32 = 1
     static let publicChannelName = Data("Public".utf8)
+    private static let classicAvatarMaximumBytes = 0x27c
+    private static let pngSignature = Data([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
     private static let channelOperatorMode: UInt8 = 0x80
     private static let channelSpeechMode: UInt8 = 0x40
     private static let channelPermanentFlag: UInt16 = 0x8000
+
+    private static func classicAvatarPNG(from source: Data) -> Data {
+        guard !source.isEmpty,
+              source.count >= pngSignature.count,
+              source.prefix(pngSignature.count) == pngSignature else { return Data() }
+#if canImport(AppKit)
+        guard let image = NSImage(data: source) else { return Data() }
+        if source.count <= classicAvatarMaximumBytes,
+           let rep = NSBitmapImageRep(data: source),
+           rep.pixelsWide <= 16, rep.pixelsHigh <= 16 {
+            return source
+        }
+        for side in [16, 14, 12, 10, 8] {
+            guard let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil,
+                                                pixelsWide: side,
+                                                pixelsHigh: side,
+                                                bitsPerSample: 8,
+                                                samplesPerPixel: 4,
+                                                hasAlpha: true,
+                                                isPlanar: false,
+                                                colorSpaceName: .deviceRGB,
+                                                bytesPerRow: side * 4,
+                                                bitsPerPixel: 32) else { continue }
+            NSGraphicsContext.saveGraphicsState()
+            if let context = NSGraphicsContext(bitmapImageRep: bitmap) {
+                NSGraphicsContext.current = context
+                NSColor.clear.setFill()
+                NSRect(x: 0, y: 0, width: side, height: side).fill()
+                image.draw(in: NSRect(x: 0, y: 0, width: side, height: side),
+                           from: .zero,
+                           operation: .copy,
+                           fraction: 1,
+                           respectFlipped: true,
+                           hints: [.interpolation: NSImageInterpolation.high])
+            }
+            NSGraphicsContext.restoreGraphicsState()
+            if let png = bitmap.representation(using: .png, properties: [:]),
+               png.count <= classicAvatarMaximumBytes {
+                return png
+            }
+        }
+#endif
+        return Data()
+    }
     private static let channelPreservedFlag1: UInt16 = 0x4000
     private static let channelRestrictedChatFlag: UInt16 = 0x1000
     private static let channelRestrictedTopicFlag: UInt16 = 0x0800
@@ -623,24 +672,38 @@ final class LegacyServerRuntime {
 
     fileprivate func notifyUserArrived(_ session: LegacyServerSession, to recipients: [LegacyServerSession]) {
         guard let entry = session.userListEntry else { return }
-        var fields = [
+
+        // Classic accepts the historical optional PNG avatar, but its live-update path caps
+        // that field at 0x27c bytes. Feed it a tiny thumbnail instead of a modern 128x128 PNG.
+        var classicFields = [
             LegacyTLV(type: 1, value: LegacyWire.uint32BE(entry.userID)),
             LegacyTLV(type: 2, value: entry.nickname),
             LegacyTLV(type: 3, value: LegacyWire.uint16BE(entry.flags)),
         ]
-        if !entry.picture.isEmpty { fields.append(LegacyTLV(type: LegacyUserInfoField.picture, value: entry.picture)) }
-        fields.append(LegacyTLV(type: LegacyUserInfoField.statusMessage, value: session.statusMessage))
-        if let account = session.account, let color = backend.snapshot().accountColorRGB(for: account) {
-            fields.append(LegacyTLV(type: LegacyUserInfoField.groupColorRGB, value: LegacyWire.uint32BE(color)))
+        let classicPicture = Self.classicAvatarPNG(from: entry.picture)
+        if !classicPicture.isEmpty {
+            classicFields.append(LegacyTLV(type: LegacyUserInfoField.picture, value: classicPicture))
         }
+        var modernFields = [
+            LegacyTLV(type: 1, value: LegacyWire.uint32BE(entry.userID)),
+            LegacyTLV(type: 2, value: entry.nickname),
+            LegacyTLV(type: 3, value: LegacyWire.uint16BE(entry.flags)),
+        ]
+        if !entry.picture.isEmpty {
+            modernFields.append(LegacyTLV(type: LegacyUserInfoField.picture, value: entry.picture))
+        }
+        modernFields.append(LegacyTLV(type: LegacyUserInfoField.statusMessage, value: session.statusMessage))
+        if let account = session.account, let color = backend.snapshot().accountColorRGB(for: account) {
+            modernFields.append(LegacyTLV(type: LegacyUserInfoField.groupColorRGB,
+                                          value: LegacyWire.uint32BE(color)))
+        }
+        modernFields.append(LegacyTLV(type: LegacyUserInfoField.legacyTransport,
+                                      value: Data([session.isLegacyTransport ? 1 : 0])))
+
         for recipient in recipients {
-            var recipientFields = fields
-            if !recipient.isLegacyTransport {
-                recipientFields.append(LegacyTLV(type: LegacyUserInfoField.legacyTransport,
-                                                 value: Data([session.isLegacyTransport ? 1 : 0])))
-            }
-            let packet = LegacyPacket(command: LegacyCommand.userArrived, transactionID: 0, fields: recipientFields)
-            try? recipient.sendAuthenticated(packet)
+            let fields = recipient.isLegacyTransport ? classicFields : modernFields
+            try? recipient.sendAuthenticated(LegacyPacket(command: LegacyCommand.userArrived,
+                                                           transactionID: 0, fields: fields))
         }
     }
 
@@ -672,10 +735,9 @@ final class LegacyServerRuntime {
         stateLock.unlock()
 
         if let userID = removedUserID {
-            // Classic Carracho keeps conference rows tied to the global user object. If command
-            // 0x08 removes that user first, a later 0x88 can no longer resolve/remove the member
-            // and leaves a ghost in the conference user list. Mirror the classic server ordering:
-            // emit every channel leave while the user identity is still known, then disconnect.
+            // Classic keeps conference rows tied to the global user object. Emit 0x88 while that
+            // identity still exists in the peer's user list, then follow with global 0x08.
+            // This is the ordering used by Server 1.0b13 and prevents ghost conference members.
             for (channelID, channelRecipients) in channelLeaves {
                 let left = LegacyPacket(command: LegacyCommand.channelUserLeft, transactionID: 0, fields: [
                     LegacyTLV(type: LegacyChannelField.channelID, value: LegacyWire.uint32BE(channelID)),
@@ -715,6 +777,14 @@ final class LegacyServerRuntime {
             // modern login as individual user-update events so the packed user list can never be
             // blown past 65535 bytes by one or more 128×128 PNGs.
             for index in loginUsers.indices { loginUsers[index].picture = Data() }
+        } else {
+            // Classic builds 8-bit 16x16 CIcons while constructing the initial user list. Large
+            // modern 128x128 PNGs can render as palette garbage on the first connection, even
+            // though the same image works after reconnect. Keep the initial snapshot in the
+            // small PNG range used by the original client.
+            for index in loginUsers.indices {
+                loginUsers[index].picture = Self.classicAvatarPNG(from: loginUsers[index].picture)
+            }
         }
         var encodedUsers = try LegacyPackedRecords.encodeUserList(loginUsers)
         if encodedUsers.count > Int(UInt16.max) {
@@ -1011,7 +1081,7 @@ final class LegacyServerRuntime {
             if session.sleeping {
                 session.sleeping = false
                 userID = candidateID
-                recipients = Array(authenticatedByUserID.values)
+                recipients = authenticatedByUserID.values.filter { !$0.isLegacyTransport }
             }
         }
         stateLock.unlock()
@@ -1437,17 +1507,29 @@ final class LegacyServerRuntime {
             if let updated { session.account = updated }
             let recipients = Array(authenticatedByUserID.values)
             stateLock.unlock()
-            var eventFields = [
+            var classicFields = [
+                LegacyTLV(type: 1, value: LegacyWire.uint32BE(userID)),
+                LegacyTLV(type: 2, value: nickname),
+            ]
+            if pictureField != nil {
+                classicFields.append(LegacyTLV(type: LegacyUserInfoField.picture,
+                                               value: Self.classicAvatarPNG(from: picture)))
+            }
+            var modernFields = [
                 LegacyTLV(type: 1, value: LegacyWire.uint32BE(userID)),
                 LegacyTLV(type: 2, value: nickname),
                 LegacyTLV(type: LegacyUserInfoField.picture, value: picture),
                 LegacyTLV(type: LegacyUserInfoField.statusMessage, value: statusMessage),
             ]
             if let current = session.account, let color = backend.snapshot().accountColorRGB(for: current) {
-                eventFields.append(LegacyTLV(type: LegacyUserInfoField.groupColorRGB, value: LegacyWire.uint32BE(color)))
+                modernFields.append(LegacyTLV(type: LegacyUserInfoField.groupColorRGB,
+                                              value: LegacyWire.uint32BE(color)))
             }
-            let event = LegacyPacket(command: LegacyCommand.userUpdate, transactionID: 0, fields: eventFields)
-            recipients.forEach { try? $0.sendAuthenticated(event) }
+            for recipient in recipients {
+                let fields = recipient.isLegacyTransport ? classicFields : modernFields
+                try? recipient.sendAuthenticated(LegacyPacket(command: LegacyCommand.userUpdate,
+                                                               transactionID: 0, fields: fields))
+            }
             if pictureField != nil { onStateChanged?() }
             try sendTaskCompleteIfRequested(packet, to: session)
         } catch {
@@ -1470,7 +1552,7 @@ final class LegacyServerRuntime {
             stateLock.lock()
             session.touchActivity()
             session.sleeping = state == LegacyPresenceState.sleeping
-            let recipients = Array(authenticatedByUserID.values)
+            let recipients = authenticatedByUserID.values.filter { !$0.isLegacyTransport }
             stateLock.unlock()
             let event = LegacyPacket(command: LegacyCommand.userPresenceState, transactionID: 0, fields: [
                 LegacyTLV(type: LegacyPresenceStateField.userID, value: LegacyWire.uint32BE(userID)),
@@ -2107,17 +2189,26 @@ final class LegacyServerRuntime {
         stateLock.unlock()
         for source in sessions {
             guard let userID = source.userID, let account = source.account else { continue }
-            var fields = [
+
+            // Classic 1.0b13 understands the server-side User Update itself, but not the
+            // modern status/color/permission extension fields. Keep its async update in the
+            // historical two-field form; otherwise an account edit can make the old client
+            // abort its control connection.
+            let classicFields = [
                 LegacyTLV(type: 1, value: LegacyWire.uint32BE(userID)),
                 LegacyTLV(type: 2, value: source.nickname),
+            ]
+            var modernFields = classicFields + [
                 LegacyTLV(type: LegacyUserInfoField.picture, value: source.picture),
                 LegacyTLV(type: LegacyUserInfoField.statusMessage, value: source.statusMessage),
             ]
             if let color = snapshot.accountColorRGB(for: account) {
-                fields.append(LegacyTLV(type: LegacyUserInfoField.groupColorRGB, value: LegacyWire.uint32BE(color)))
+                modernFields.append(LegacyTLV(type: LegacyUserInfoField.groupColorRGB,
+                                              value: LegacyWire.uint32BE(color)))
             }
+
             for recipient in sessions {
-                var recipientFields = fields
+                var recipientFields = recipient.isLegacyTransport ? classicFields : modernFields
                 if recipient === source, !recipient.isLegacyTransport {
                     recipientFields.append(LegacyTLV(type: LegacyUserInfoField.permissionWords,
                                                      value: account.permissionBytes(includeCarrachoExtensions: true)))
@@ -2490,8 +2581,11 @@ final class LegacyServerRuntime {
         return authenticatedByUserID.values.filter { $0.account?.permissions.contains(permission) == true }
     }
 
-    private func broadcastAdministrative(_ packet: LegacyPacket, permission: ServerPermission) {
-        administrativeRecipients(permission: permission).forEach { try? $0.sendAuthenticated(packet) }
+    private func broadcastAdministrative(_ packet: LegacyPacket, permission: ServerPermission,
+                                         modernOnly: Bool = false) {
+        administrativeRecipients(permission: permission)
+            .filter { !modernOnly || !$0.isLegacyTransport }
+            .forEach { try? $0.sendAuthenticated(packet) }
     }
 
     private func handleAccountList(packet: LegacyPacket, session: LegacyServerSession) throws {
@@ -2648,7 +2742,7 @@ final class LegacyServerRuntime {
                 LegacyTLV(type: 3, value: oldLoginData),
                 LegacyTLV(type: 1, value: try saved.legacyCompactSummary().encoded()),
             ])
-            broadcastAdministrative(event, permission: .manageAccounts)
+            broadcastAdministrative(event, permission: .manageAccounts, modernOnly: true)
             onStateChanged?()
             log("Account \(action == 0 ? "created" : "modified"): \(saved.login)")
         } catch {
@@ -2699,7 +2793,7 @@ final class LegacyServerRuntime {
                 LegacyTLV(type: 0x11, value: Data([2])),
                 LegacyTLV(type: 3, value: loginData),
             ])
-            broadcastAdministrative(event, permission: .manageAccounts)
+            broadcastAdministrative(event, permission: .manageAccounts, modernOnly: true)
             onStateChanged?()
             log("Account deleted: \(account.login)")
         } catch {
@@ -3447,13 +3541,15 @@ final class LegacyServerRuntime {
                 LegacyTLV(type: LegacyChannelField.members, value: LegacyPackedRecords.encodeChannelMembers(members)),
                 LegacyTLV(type: LegacyChannelField.settings, value: LegacyWire.uint16BE(channel.flags)),
             ])
-            try session.sendAuthenticated(reply)
             let joined = LegacyPacket(command: LegacyCommand.channelUserJoined, transactionID: 0, fields: [
                 LegacyTLV(type: LegacyChannelField.channelID, value: LegacyWire.uint32BE(id)),
                 LegacyTLV(type: LegacyChannelField.userID, value: LegacyWire.uint32BE(userID)),
                 LegacyTLV(type: LegacyChannelField.userMode, value: Data([mode])),
             ])
+            // Server 1.0b13 queues the asynchronous 0x87 for existing members before replying
+            // to the joining user with 0x80. Preserve that ordering for Classic compatibility.
             priorRecipients.forEach { try? $0.sendAuthenticated(joined) }
+            try session.sendAuthenticated(reply)
             if id == Self.publicChannelID { greetNewPublicMemberIfNeeded(session) }
         } catch {
             try session.sendAuthenticated(Self.errorPacket(transactionID: packet.transactionID, code: 200))
@@ -3472,15 +3568,16 @@ final class LegacyServerRuntime {
             channels.removeValue(forKey: id)
         } else { channels[id] = channel }
         stateLock.unlock()
-        try session.sendAuthenticated(LegacyPacket(command: LegacyCommand.channelLeave,
-                                                    transactionID: packet.transactionID, fields: []))
         if wasMember {
             let left = LegacyPacket(command: LegacyCommand.channelUserLeft, transactionID: 0, fields: [
                 LegacyTLV(type: LegacyChannelField.channelID, value: LegacyWire.uint32BE(id)),
                 LegacyTLV(type: LegacyChannelField.userID, value: LegacyWire.uint32BE(userID)),
             ])
+            // Historical ordering: remaining members see 0x88 before the leaver gets 0x81.
             recipients.forEach { try? $0.sendAuthenticated(left) }
         }
+        try session.sendAuthenticated(LegacyPacket(command: LegacyCommand.channelLeave,
+                                                    transactionID: packet.transactionID, fields: []))
     }
 
     private func handleChannelChat(packet: LegacyPacket, session: LegacyServerSession) throws {
@@ -6365,7 +6462,7 @@ extension LegacyServerRuntime {
             guard activeFileTransfersByUser[userID, default: 0] == 0 else { continue }
             if now.timeIntervalSince(session.lastActivityAt) >= automaticSleepAfter {
                 session.sleeping = true
-                sleepers.append((userID, Array(authenticatedByUserID.values)))
+                sleepers.append((userID, authenticatedByUserID.values.filter { !$0.isLegacyTransport }))
             }
         }
         stateLock.unlock()
