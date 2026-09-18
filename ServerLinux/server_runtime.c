@@ -705,7 +705,7 @@ static cr_channel *channel_by_id_locked(cr_server*s,uint32_t id){for(size_t i=0;
 static int channel_member_index(cr_channel*c,uint32_t uid){for(size_t i=0;i<c->member_count;i++)if(c->members[i].user_id==uid)return(int)i;return-1;}
 static cr_channel *allocate_channel_locked(cr_server*s,const uint8_t*name,size_t name_len,const uint8_t*pw,size_t pw_len){for(size_t i=0;i<CR_SERVER_MAX_CHANNELS;i++)if(!s->channels[i].used){cr_channel*c=&s->channels[i];memset(c,0,sizeof(*c));c->used=1;while(!s->next_channel_id||channel_by_id_locked(s,s->next_channel_id))s->next_channel_id++;c->id=s->next_channel_id++;memcpy(c->name,name,name_len);c->name_len=name_len;memcpy(c->password,pw,pw_len);c->password_len=pw_len;return c;}return NULL;}
 
-static int encode_user_list(cr_server*s,cr_session*requester,cr_buffer*out){
+static int encode_user_list(cr_server*s,cr_session*requester,int include_pictures,cr_buffer*out){
     cr_buffer_init(out);
     pthread_mutex_lock(&s->mutex);
     size_t count=0;
@@ -714,7 +714,15 @@ static int encode_user_list(cr_server*s,cr_session*requester,cr_buffer*out){
     for(size_t i=0;i<s->allocated_session_count;i++){
         cr_session*x=s->sessions[i];
         if(!(session_ready_for_async(x)||(x==requester&&x->authenticated&&!x->closed)))continue;
-        if(cr_buffer_append_string16(out,x->nickname,x->nickname_len)||cr_buffer_append_u16(out,x->sleeping?0x0100:0)||cr_buffer_append_u32(out,x->user_id)||cr_buffer_append_u32(out,(uint32_t)x->picture_len)||cr_buffer_append(out,x->picture,x->picture_len)){pthread_mutex_unlock(&s->mutex);return-1;}
+        size_t picture_len=include_pictures?x->picture_len:0;
+        if(picture_len>UINT32_MAX||
+           cr_buffer_append_string16(out,x->nickname,x->nickname_len)||
+           cr_buffer_append_u16(out,x->sleeping?0x0100:0)||
+           cr_buffer_append_u32(out,x->user_id)||
+           cr_buffer_append_u32(out,(uint32_t)picture_len)||
+           cr_buffer_append(out,x->picture,picture_len)){
+            pthread_mutex_unlock(&s->mutex);return-1;
+        }
     }
     pthread_mutex_unlock(&s->mutex);
     return 0;
@@ -755,15 +763,23 @@ static int session_files_root(cr_server*s,cr_session*session,char*out,size_t cap
     char real_base[PATH_MAX];if(!realpath(base,real_base))return-1;
     char candidate[PATH_MAX];if(strlen(base)+1>sizeof(candidate))return-1;strcpy(candidate,base);const char*p=session->files_root_path;
     while(*p){
-        const char*slash=strchr(p,'/');size_t n=slash?(size_t)(slash-p):strlen(p);if(!n||n>252||(n==1&&p[0]=='.')||(n==2&&p[0]=='.'&&p[1]=='.'))return-1;
+        const char*slash=strchr(p,'/');size_t n=slash?(size_t)(slash-p):strlen(p);int final_component=slash==NULL;
+        if(!n||n>252||(n==1&&p[0]=='.')||(n==2&&p[0]=='.'&&p[1]=='.'))return-1;
         char component[253],next[PATH_MAX],resolved[PATH_MAX],parent_resolved[PATH_MAX];memcpy(component,p,n);component[n]=0;if(join_path_component(next,sizeof(next),candidate,component))return-1;
-        struct stat st;if(lstat(next,&st)==0){if(!realpath(next,resolved)||!path_is_within_root(resolved,real_base)||stat(resolved,&st)||!S_ISDIR(st.st_mode))return-1;}
-        else if(errno==ENOENT){if(!realpath(candidate,parent_resolved)||!path_is_within_root(parent_resolved,real_base)||mkdir(next,0755)||!realpath(next,resolved)||!path_is_within_root(resolved,real_base))return-1;}
+        struct stat st;
+        if(lstat(next,&st)==0){
+            if(!realpath(next,resolved)||stat(resolved,&st)||!S_ISDIR(st.st_mode))return-1;
+            /* Only the final configured group root may intentionally resolve outside Files. */
+            if(!final_component&&!path_is_within_root(resolved,real_base))return-1;
+        }
+        else if(errno==ENOENT){
+            if(!realpath(candidate,parent_resolved)||!path_is_within_root(parent_resolved,real_base)||mkdir(next,0755)||!realpath(next,resolved)||!path_is_within_root(resolved,real_base))return-1;
+        }
         else return-1;
         strcpy(candidate,next);if(!slash)break;p=slash+1;
     }
-    if (strlen(candidate) + 1 > cap) return -1;
-    strcpy(out, candidate);
+    if(strlen(candidate)+1>cap)return-1;
+    strcpy(out,candidate);
     return 0;
 }
 static int resolve_legacy_path_ex(cr_server*s,cr_session*session,const uint8_t*path,size_t path_len,char*out,size_t cap,int require_existing){
@@ -774,16 +790,27 @@ static int resolve_legacy_path_ex(cr_server*s,cr_session*session,const uint8_t*p
     char home[PATH_MAX]="";
     if(session->personal!=CR_PERSONAL_NONE){if(join_path_component(home,sizeof(home),s->state.personal_home_root,session->login))return-1;if(mkdir(home,0755)&&errno!=EEXIST)return-1;}
     if(session->personal==CR_PERSONAL_ROOT)root=home;
+    char resolved_scope[PATH_MAX];if(!realpath(root,resolved_scope))return-1;
     if(strlen(root)+1>cap)return-1;
     strcpy(out,root);
     while(pos<path_len){
         size_t start=pos;while(pos<path_len&&path[pos]!=1)pos++;size_t n=pos-start;if(!n||n>255)return-1;
         char component[1024];if(decode_file_component(session,path+start,n,component,sizeof(component)))return-1;
-        if(first&&session->personal==CR_PERSONAL_NESTED&&!strcmp(component,virtual_home)){if(strlen(home)+1>cap)return-1;strcpy(out,home);}
+        if(first&&session->personal==CR_PERSONAL_NESTED&&!strcmp(component,virtual_home)){
+            if(strlen(home)+1>cap||!realpath(home,resolved_scope))return-1;
+            strcpy(out,home);
+        }
         else{size_t have=strlen(out),cn=strlen(component);if(have+1+cn+1>cap)return-1;out[have]='/';memcpy(out+have+1,component,cn+1);}
         int is_last=(pos>=path_len);struct stat st;
-        if(lstat(out,&st)==0){if(S_ISLNK(st.st_mode)){struct stat target;if(stat(out,&target))return-1;}}
-        else if(errno==ENOENT){if(require_existing||!is_last)return-1;}
+        if(lstat(out,&st)==0){
+            char resolved[PATH_MAX];if(!realpath(out,resolved)||!path_is_within_root(resolved,resolved_scope))return-1;
+            if(stat(resolved,&st))return-1;
+        }
+        else if(errno==ENOENT){
+            if(require_existing||!is_last)return-1;
+            char parent[PATH_MAX],parent_resolved[PATH_MAX];snprintf(parent,sizeof(parent),"%s",out);char*slash=strrchr(parent,'/');if(!slash)return-1;if(slash==parent)slash[1]=0;else *slash=0;
+            if(!realpath(parent,parent_resolved)||!path_is_within_root(parent_resolved,resolved_scope))return-1;
+        }
         else return-1;
         first=0;if(pos<path_len)pos++;
     }
@@ -836,7 +863,14 @@ static int encode_directory(cr_server*s,cr_session*session,const uint8_t*legacy,
 }
 
 static int send_login_success(cr_session*s){
-    cr_buffer users;if(encode_user_list(s->server,s,&users))return-1;
+    cr_buffer users;
+    int include_pictures=s->modern_transport?0:1;
+    if(encode_user_list(s->server,s,include_pictures,&users))return-1;
+    if(users.len>UINT16_MAX&&include_pictures){
+        cr_buffer_free(&users);
+        if(encode_user_list(s->server,s,0,&users))return-1;
+    }
+    if(users.len>UINT16_MAX){cr_buffer_free(&users);return-1;}
     cr_buffer legacy_users;cr_buffer_init(&legacy_users);if(s->modern_transport&&encode_legacy_user_ids(s->server,s,&legacy_users)){cr_buffer_free(&users);return-1;}
     uint8_t session_info[12],perms[8],maxtr[2],ver[2],server_name[1024],agreement_text[65535];size_t sn=0,an=0;uint16_t max_transfers=0;int agreement_enabled=0;
     pthread_mutex_lock(&s->server->state.mutex);
@@ -865,6 +899,26 @@ static void append_session_group_color(cr_session*s,cr_tlv_out*fields,size_t*cou
     if(!s->has_group_color)return;
     cr_write_be32(color_bytes,s->group_color_rgb);
     fields[(*count)++]=(cr_tlv_out){USER_FIELD_GROUP_COLOR,color_bytes,4};
+}
+static int send_initial_user_updates(cr_session*recipient){
+    if(!recipient||!recipient->modern_transport)return 0;
+    cr_server*server=recipient->server;int rc=0;
+    pthread_mutex_lock(&server->mutex);
+    for(size_t i=0;i<server->allocated_session_count;i++){
+        cr_session*source=server->sessions[i];
+        if(!session_ready_for_async(source))continue;
+        uint8_t uid[4],color[4];cr_write_be32(uid,source->user_id);
+        cr_tlv_out fields[5];size_t n=0;
+        fields[n++]=(cr_tlv_out){1,uid,4};
+        fields[n++]=(cr_tlv_out){2,source->nickname,(uint16_t)source->nickname_len};
+        if(source->picture_len<=UINT16_MAX)
+            fields[n++]=(cr_tlv_out){0xb4,source->picture,(uint16_t)source->picture_len};
+        fields[n++]=(cr_tlv_out){0xf0000002u,source->status_message,(uint16_t)source->status_message_len};
+        append_session_group_color(source,fields,&n,color);
+        if(session_send(recipient,CMD_USER_UPDATE,0,fields,n)){rc=-1;break;}
+    }
+    pthread_mutex_unlock(&server->mutex);
+    return rc;
 }
 static void broadcast_user_arrived(cr_session*s){uint8_t uid[4],flags[2],color[4];cr_write_be32(uid,s->user_id);cr_write_be16(flags,s->sleeping?0x0100:0);cr_tlv_out f[6];size_t n=0;f[n++]=(cr_tlv_out){1,uid,4};f[n++]=(cr_tlv_out){2,s->nickname,(uint16_t)s->nickname_len};f[n++]=(cr_tlv_out){3,flags,2};if(s->picture_len<=UINT16_MAX&&s->picture_len)f[n++]=(cr_tlv_out){0xb4,s->picture,(uint16_t)s->picture_len};f[n++]=(cr_tlv_out){0xf0000002u,s->status_message,(uint16_t)s->status_message_len};append_session_group_color(s,f,&n,color);pthread_mutex_lock(&s->server->mutex);for(size_t i=0;i<s->server->allocated_session_count;i++){cr_session*x=s->server->sessions[i];if(x&&x!=s&&session_ready_for_async(x)){if(x->modern_transport){uint8_t legacy=(uint8_t)(s->modern_transport?0:1);cr_tlv_out extended[7];memcpy(extended,f,n*sizeof(*f));extended[n]=(cr_tlv_out){USER_FIELD_LEGACY_TRANSPORT,&legacy,1};session_send(x,CMD_USER_ARRIVED,0,extended,n+1);}else session_send(x,CMD_USER_ARRIVED,0,f,n);}}pthread_mutex_unlock(&s->server->mutex);}
 static void session_unregister(cr_session*s){
@@ -3294,6 +3348,7 @@ static void *session_main(void*opaque){
     if(send_login_success(s))goto done;
     if(s->modern_transport){memcpy(s->key,modern_master,sizeof(modern_master));s->key_len=sizeof(modern_master);OPENSSL_cleanse(modern_master,sizeof(modern_master));if(cr_derive_control_keys(s->key,s->key_len,s->modern_salt,1,s->control_send_key,s->control_receive_key))goto done;}
     pthread_mutex_lock(&s->server->mutex);s->announced=1;pthread_mutex_unlock(&s->server->mutex);
+    if(s->modern_transport&&send_initial_user_updates(s))goto done;
     send_offline_message_notice(s);broadcast_user_arrived(s);log_msg("User %u logged in from %s using %s",s->user_id,s->peer_ip,s->modern_transport?"AES-256-GCM":"legacy Blowfish");event_msg(s,"session","login","connected");
     while(!s->server->stop&&!s->closed){cr_buffer_init(&plain);if(recv_authenticated_packet(s,&p,&plain)){cr_buffer_free(&plain);break;}if(command_is_user_activity(p.command))mark_user_active(s);int rc=handle_authenticated(s,&p);cr_buffer_free(&plain);if(rc<0)break;}
 done:session_unregister(s);shutdown(s->fd,SHUT_RDWR);close(s->fd);log_msg("Connection from %s closed",s->peer_ip);pthread_mutex_lock(&s->server->mutex);s->finished=1;pthread_mutex_unlock(&s->server->mutex);return NULL;

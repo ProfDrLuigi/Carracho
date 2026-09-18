@@ -647,7 +647,7 @@ extension ViewController {
         guard let window = view.window, let existing else { return }
         let alert = NSAlert()
         alert.messageText = LF("Edit %@ Defaults", existing.name)
-        alert.informativeText = L("These values are copied when an account is assigned to this group. Existing account overrides stay untouched.")
+        alert.informativeText = L("Accounts that still use these group defaults follow future group changes. Individual account overrides stay untouched.")
         alert.addButton(withTitle: L("Save"))
         alert.addButton(withTitle: L("Cancel"))
 
@@ -657,16 +657,13 @@ extension ViewController {
         let filesRootMode = NSPopUpButton(frame: .zero, pullsDown: false)
         filesRootMode.addItems(withTitles: [L("General — Server Files Root"), L("Dedicated Folder")])
         filesRootMode.selectItem(at: existing.filesRootPath.isEmpty ? 0 : 1)
-        let filesRootName = NSTextField(string: existing.filesRootPath.isEmpty ? "" : existing.effectiveFilesRootName)
-        filesRootName.placeholderString = L("e.g. Guest Files")
         let filesRootPath = NSTextField(string: existing.filesRootPath)
         filesRootPath.placeholderString = L("e.g. Groups/Guests")
-        filesRootPath.toolTip = L("Relative folder inside General. Absolute paths and .. are not allowed.")
+        filesRootPath.toolTip = L("Relative folder inside General. Absolute paths and .. are not allowed. The last folder name is used as the visible root name.")
         let headerGrid = NSGridView(views: [
             [makeLabel(L("Group")), name],
             [makeLabel(L("Default nickname color")), color],
             [makeLabel(L("Files root")), filesRootMode],
-            [makeLabel(L("Root name")), filesRootName],
             [makeLabel(L("Folder in Allgemein")), filesRootPath],
         ])
         headerGrid.rowSpacing = 6
@@ -701,7 +698,7 @@ extension ViewController {
 
         let stack = verticalStack([headerGrid, permissionColumns], spacing: 14)
         stack.translatesAutoresizingMaskIntoConstraints = false
-        let accessory = NSView(frame: NSRect(x: 0, y: 0, width: 720, height: 405))
+        let accessory = NSView(frame: NSRect(x: 0, y: 0, width: 720, height: 370))
         accessory.addSubview(stack)
         NSLayoutConstraint.activate([
             stack.leadingAnchor.constraint(equalTo: accessory.leadingAnchor),
@@ -720,8 +717,10 @@ extension ViewController {
                 group.filesRootPath = ""
                 group.filesRootName = ServerAccountGroup.defaultFilesRootName
             } else {
-                group.filesRootPath = filesRootPath.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-                group.filesRootName = filesRootName.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                let path = filesRootPath.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                group.filesRootPath = path
+                group.filesRootName = path.split(separator: "/").last.map(String.init)
+                    ?? ServerAccountGroup.defaultFilesRootName
             }
             do { try ServerStateValidator.validate(accountGroup: group) }
             catch { self.showAdminError(error); return }

@@ -4063,7 +4063,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
             if autoReconnectWorkItem != nil { cancelAutoReconnect() }
             switch client.state {
             case .connecting, .handshaking, .authenticating:
-                showBookmarkError(LegacyControlClientError.invalidInput("Wait for the current connection attempt to finish before switching bookmarks."))
+                showBookmarkError(LegacyControlClientError.invalidInput(L("Wait for the current connection attempt to finish before switching bookmarks.")))
                 return
             default:
                 break
@@ -4275,7 +4275,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
     @objc func exportBookmarksPressed(_ sender: Any?) {
         guard let window = view.window else { return }
         guard serverBookmarks.contains(where: { !temporaryServerBookmarkIDs.contains($0.id) }) else {
-            showBookmarkError(ServerBookmarkStoreError.invalidBookmark("there are no saved bookmarks to export"))
+            showBookmarkError(ServerBookmarkStoreError.invalidBookmark(L("there are no saved bookmarks to export")))
             return
         }
 
@@ -4556,7 +4556,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
                   let index = self.serverBookmarks.firstIndex(where: { $0.id == bookmark.id }) else { return }
             let value = name.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !value.isEmpty else {
-                self.showBookmarkError(ServerBookmarkStoreError.invalidBookmark("name must not be empty"))
+                self.showBookmarkError(ServerBookmarkStoreError.invalidBookmark(L("name must not be empty")))
                 return
             }
             self.serverBookmarks[index].name = value
@@ -4689,11 +4689,11 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
             guard response == .alertFirstButtonReturn, let self else { return }
             let value = newPassword.stringValue
             guard value == confirmation.stringValue else {
-                self.presentBookmarkPasswordError("The two new passwords do not match.", bookmark: bookmark)
+                self.presentBookmarkPasswordError(L("The two new passwords do not match."), bookmark: bookmark)
                 return
             }
             guard let encoded = value.data(using: .macOSRoman), encoded.count <= 64 else {
-                self.presentBookmarkPasswordError("The password must be representable in MacRoman and no longer than 64 bytes.", bookmark: bookmark)
+                self.presentBookmarkPasswordError(L("The password must be representable in MacRoman and no longer than 64 bytes."), bookmark: bookmark)
                 return
             }
             self.performBookmarkPasswordChange(bookmark: bookmark, newPassword: value)
@@ -4749,7 +4749,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         }
 
         guard bookmarkPasswordChangeClient == nil else {
-            showBookmarkError(LegacyControlClientError.invalidInput("A bookmark password change is already in progress."))
+            showBookmarkError(LegacyControlClientError.invalidInput(L("A bookmark password change is already in progress.")))
             return
         }
         let oldPassword: String
@@ -4863,34 +4863,34 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         let trimmedName = current.name.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedHost = current.host.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedName.isEmpty else {
-            presentBookmarkValidationError("Bookmark name must not be empty.", bookmark: bookmark, draft: current)
+            presentBookmarkValidationError(L("Bookmark name must not be empty."), bookmark: bookmark, draft: current)
             return
         }
         guard !trimmedHost.isEmpty else {
-            presentBookmarkValidationError("Server address must not be empty.", bookmark: bookmark, draft: current)
+            presentBookmarkValidationError(L("Server address must not be empty."), bookmark: bookmark, draft: current)
             return
         }
         guard let parsedPort = UInt16(current.port), parsedPort > 0, parsedPort < UInt16.max else {
-            presentBookmarkValidationError("Port must be between 1 and 65534.", bookmark: bookmark, draft: current)
+            presentBookmarkValidationError(L("Port must be between 1 and 65534."), bookmark: bookmark, draft: current)
             return
         }
         guard current.password.utf8.count <= 4096 else {
-            presentBookmarkValidationError("Password must not exceed 4096 UTF-8 bytes.", bookmark: bookmark, draft: current)
+            presentBookmarkValidationError(L("Password must not exceed 4096 UTF-8 bytes."), bookmark: bookmark, draft: current)
             return
         }
         guard let statusData = current.statusMessage.data(using: .macOSRoman), statusData.count <= 255 else {
-            presentBookmarkValidationError("Status must be MacRoman-compatible and at most 255 bytes.", bookmark: bookmark, draft: current)
+            presentBookmarkValidationError(L("Status must be MacRoman-compatible and at most 255 bytes."), bookmark: bookmark, draft: current)
             return
         }
         let trimmedLogin = current.login.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedNickname = current.nickname.trimmingCharacters(in: .whitespacesAndNewlines)
         if Self.isReservedAnonymousNickname(trimmedNickname) {
-            presentBookmarkValidationError("‘anonymous’ is reserved for the guest login and cannot be used as a nickname.", bookmark: bookmark, draft: current)
+            presentBookmarkValidationError(L("‘anonymous’ is reserved for the guest login and cannot be used as a nickname."), bookmark: bookmark, draft: current)
             return
         }
         if !trimmedNickname.isEmpty {
             guard let nicknameData = trimmedNickname.data(using: .macOSRoman), nicknameData.count <= 64 else {
-                presentBookmarkValidationError("Nickname override must be MacRoman-compatible and at most 64 bytes.", bookmark: bookmark, draft: current)
+                presentBookmarkValidationError(L("Nickname override must be MacRoman-compatible and at most 64 bytes."), bookmark: bookmark, draft: current)
                 return
             }
         }
@@ -5466,8 +5466,8 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
             item.resumable = true
             item.resumeOnStart = true
             item.rateBytesPerSecond = nil
-            item.errorMessage = "The connection ended before this transfer completed."
-            item.state = "Interrupted · reconnect to resume"
+            item.errorMessage = L("The connection ended before this transfer completed.")
+            item.state = L("Interrupted · reconnect to resume")
             transferMonitorItems[id] = item
             clientTransferTasks.removeValue(forKey: id)?.cancel()
         }
@@ -5567,10 +5567,10 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
             remoteTrackerSettingsLoading = false
             trackerSaveInProgress = false
             if trackerHasUnsavedChanges {
-                trackerStatusOverride = "Connection lost. Unsaved Tracker changes were kept and can be retried after reconnecting."
+                trackerStatusOverride = L("Connection lost. Unsaved Tracker changes were kept and can be retried after reconnecting.")
                 trackerStatusColor = CarrachoTheme.warning
             } else if trackerLoadedSnapshot != nil {
-                trackerStatusOverride = "Connection lost · showing the last loaded Tracker configuration."
+                trackerStatusOverride = L("Connection lost · showing the last loaded Tracker configuration.")
                 trackerStatusColor = CarrachoTheme.warning
             }
             updateTrackerEditorState()
@@ -5623,7 +5623,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
                 if self.currentWorkspace == .files { self.alignInitialFilesWorkspaceToTopIfNeeded() }
             case let .failure(error):
                 self.fileNeedsInitialWorkspaceTopAlignment = false
-                self.fileDirectoryError = "Could not load the file root: \(Self.displayMessage(for: error))"
+                self.fileDirectoryError = LF("Could not load the file root: %@", Self.displayMessage(for: error))
                 self.fileTransferLabel.stringValue = self.fileDirectoryError ?? L("File root load failed")
                 self.fileTransferLabel.toolTip = self.fileTransferLabel.stringValue
                 self.reloadCatalogViews()
@@ -6428,7 +6428,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
             emitClientEvent(.message,
                             notificationTitle: LF("New message from %@", sender),
                             notificationBody: clientNotificationSnippet(privateText, fallback: L("New private message")))
-            appendLine("\n[Private] <\(sender)> \(privateText)")
+            appendLine("\n[" + L("Private") + "] <\(sender)> \(privateText)")
             appendPrivateMessage(userID: message.senderUserID, message: message.message, outgoing: false)
         case let .userUpdated(userID, nickname, picture, statusMessage):
             if var user = liveUsers[userID] {
@@ -6473,7 +6473,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
                 joinedChannels[channelID] = session
                 if activeChannel?.channelID == channelID { channelMembers = session.members }
                 let name = liveUsers[userID].map { Self.macRomanString($0.nickname) } ?? L("Unknown User")
-                appendChannelSystem("\(name) joined the room.", channelID: channelID)
+                appendChannelSystem(LF("%@ joined the room.", name), channelID: channelID)
                 syncChannelMemberCount(channelID)
             }
         case let .channelUserLeft(channelID, userID):
@@ -6486,7 +6486,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
                     channelMembers = session.members
                 }
                 let name = liveUsers[userID].map { Self.macRomanString($0.nickname) } ?? L("Unknown User")
-                appendChannelSystem("\(name) left the room.", channelID: channelID)
+                appendChannelSystem(LF("%@ left the room.", name), channelID: channelID)
                 syncChannelMemberCount(channelID)
             }
         case let .channelUserMode(channelID, userID, mode):
@@ -6497,10 +6497,10 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
                 if activeChannel?.channelID == channelID { channelMembers = session.members }
                 let name = liveUsers[userID].map { Self.macRomanString($0.nickname) } ?? L("Unknown User")
                 let role: String
-                if mode & Self.channelOperatorMode != 0 { role = "operator" }
-                else if mode & Self.channelSpeechMode != 0 { role = "speaker" }
-                else { role = "member" }
-                appendChannelSystem("\(name) is now \(role).", channelID: channelID)
+                if mode & Self.channelOperatorMode != 0 { role = L("Operator") }
+                else if mode & Self.channelSpeechMode != 0 { role = L("Speaker") }
+                else { role = L("Member") }
+                appendChannelSystem(LF("%@ is now %@.", name, role), channelID: channelID)
             }
         case let .channelInvitation(invitation):
             let inviter = liveUsers[invitation.inviterUserID].map { Self.macRomanString($0.nickname) }
@@ -6519,9 +6519,9 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
             let canAccept = alreadyJoined || (canJoinChatRooms && joinedChannels.count < Self.maximumJoinedChannels)
             alert.buttons.first?.isEnabled = canAccept
             if !canAccept {
-                alert.informativeText += canJoinChatRooms
-                    ? " You are already in the maximum number of rooms."
-                    : " This account is not allowed to join chat rooms."
+                alert.informativeText += " " + (canJoinChatRooms
+                    ? L("You are already in the maximum number of rooms.")
+                    : L("This account is not allowed to join chat rooms."))
             }
             alert.beginSheetModal(for: window) { [weak self] response in
                 guard let self else { return }
@@ -6556,7 +6556,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
             }
         case let .channelInvitationDeclined(channelID, userID):
             let name = liveUsers[userID].map { Self.macRomanString($0.nickname) } ?? L("Unknown User")
-            appendChannelSystem("\(name) declined the invitation.", channelID: channelID)
+            appendChannelSystem(LF("%@ declined the invitation.", name), channelID: channelID)
         case let .channelMessage(message):
             if message.senderUserID != lastLoginResult?.session.userID {
                 let sender = liveUsers[message.senderUserID].map { Self.macRomanString($0.nickname) } ?? L("Unknown User")
@@ -6725,7 +6725,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
                     if fileSearchResults != nil {
                         value = "—"
                     } else {
-                        value = entry.size == 1 ? "1 item" : "\(entry.size) items"
+                        value = entry.size == 1 ? L("1 item") : LF("%@ items", String(entry.size))
                     }
                 } else {
                     value = ByteCountFormatter.string(fromByteCount: Int64(entry.size), countStyle: .file)
@@ -6760,7 +6760,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
                 case "progress": value = transferProgressText(completed: item.bytesTransferred, total: item.totalBytes)
                 case "status": value = item.isAborting ? L("Aborting") : (item.isPaused ? L("Paused") : L("Transferring"))
                 case "server": value = transferRowServerName(transferRow)
-                case "started": value = "Task #\(item.transferID)"
+                case "started": value = LF("Task #%@", String(item.transferID))
                 default: value = ""
                 }
             case let .legacyServer(item):
@@ -6771,9 +6771,9 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
                 case "direction": value = item.kind == LegacyTransferKind.download ? L("Download") : L("Upload")
                 case "name": value = LegacyPath.displayName(item.path)
                 case "progress": value = transferProgressText(completed: item.bytesTransferred, total: item.totalBytes)
-                case "status": value = "Transferring"
+                case "status": value = L("Transferring")
                 case "server": value = transferRowServerName(transferRow)
-                case "started": value = "Server"
+                case "started": value = L("Server")
                 default: value = ""
                 }
             }
@@ -6784,7 +6784,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
             case "users": value = String(entry.users)
             case "address": value = Self.trackerServerEndpoint(entry)
             case "description": value = Self.macRomanString(entry.description)
-            case "bandwidth": value = LegacyTrackerProtocol.bandwidthTitle(for: entry.bandwidthCode) ?? (entry.bandwidthCode == 0 ? "—" : "Code \(entry.bandwidthCode)")
+            case "bandwidth": value = LegacyTrackerProtocol.bandwidthTitle(for: entry.bandwidthCode) ?? (entry.bandwidthCode == 0 ? "—" : LF("Code %@", String(entry.bandwidthCode)))
             case "visibility": value = entry.isPrivate ? L("Private") : L("Public")
             default: value = ""
             }
@@ -7208,13 +7208,18 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
     var sortedUsers: [LegacyUserListEntry] {
         let users = Array(liveUsers.values)
         return sortedForTable(users, table: userTable, defaultCompare: { lhs, rhs in
-            let comparison = Self.compareText(Self.macRomanString(lhs.nickname), Self.macRomanString(rhs.nickname))
-            return comparison == .orderedSame ? Self.compareNumber(lhs.userID, rhs.userID) : comparison
+            // User IDs are allocated monotonically when a session logs in. Sorting ascending
+            // therefore keeps the longest-connected users at the top of the default user list.
+            let comparison = Self.compareNumber(lhs.userID, rhs.userID)
+            return comparison == .orderedSame
+                ? Self.compareText(Self.macRomanString(lhs.nickname), Self.macRomanString(rhs.nickname))
+                : comparison
         }) { lhs, rhs, key in
             switch key {
             case "nickname":
                 let comparison = Self.compareText(Self.macRomanString(lhs.nickname), Self.macRomanString(rhs.nickname))
                 return comparison == .orderedSame ? Self.compareNumber(lhs.userID, rhs.userID) : comparison
+            case "id": return Self.compareNumber(lhs.userID, rhs.userID)
             default: return .orderedSame
             }
         }

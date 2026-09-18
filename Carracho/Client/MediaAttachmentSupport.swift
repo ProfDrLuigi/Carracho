@@ -471,6 +471,33 @@ final class CarrachoMediaComposerTextView: NSTextView {
         if handleMediaPasteboard(sender.draggingPasteboard) { return true }
         return super.performDragOperation(sender)
     }
+
+    /// Plain NSTextViews normally disable Paste when the clipboard contains only an image.
+    /// Advertise the image types we consume ourselves so AppKit does not reject ⌘V before
+    /// `paste(_:)` can route the payload into the media attachment handler.
+    override var readablePasteboardTypes: [NSPasteboard.PasteboardType] {
+        var types = super.readablePasteboardTypes
+        for type in [NSPasteboard.PasteboardType.fileURL, .png, .tiff, .pdf,
+                     NSPasteboard.PasteboardType("public.jpeg"),
+                     NSPasteboard.PasteboardType("public.heic")] where !types.contains(type) {
+            types.append(type)
+        }
+        return types
+    }
+
+    /// Do not rely solely on the Edit > Paste menu item's validation. For a plain-text
+    /// NSTextView AppKit can decide an image-only clipboard is not pasteable and emit the
+    /// system beep without ever invoking `paste(_:)`.
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        if modifiers == .command,
+           event.charactersIgnoringModifiers?.lowercased() == "v",
+           handleMediaPasteboard(.general) {
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
+    }
+
     override func paste(_ sender: Any?) {
         if handleMediaPasteboard(.general) { return }
         super.paste(sender)

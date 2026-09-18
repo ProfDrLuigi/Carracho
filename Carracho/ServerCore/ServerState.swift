@@ -182,10 +182,14 @@ struct ServerAccount: Codable, Equatable, Identifiable {
     /// One of the three fixed legacy-compatible account classes.
     var groupID: UUID?
     var personalDirectory: ServerPersonalDirectoryMode
-    /// Effective account permissions. These start from the selected class defaults but may be customized.
+    /// Effective account permissions. Group changes follow members that still match the prior defaults; explicit per-account overrides are preserved.
     var permissions: Set<ServerPermission>
     /// Optional per-account nickname color override. Persisted modern accounts are normalized to a value.
     var colorRGB: UInt32?
+    /// Explicit inheritance markers. Missing values are treated as inherited for pre-1.0.2 states,
+    /// allowing a later group edit to repair accounts that were stranded on stale copied defaults.
+    var permissionsOverrideGroupDefaults: Bool?
+    var colorOverridesGroupDefault: Bool?
     var createdAt: Date
     var modifiedAt: Date
     var lastLoginAt: Date?
@@ -207,6 +211,7 @@ struct ServerAccount: Codable, Equatable, Identifiable {
          groupID: UUID? = nil,
          personalDirectory: ServerPersonalDirectoryMode = .none,
          permissions: Set<ServerPermission> = [], colorRGB: UInt32? = nil,
+         permissionsOverrideGroupDefaults: Bool? = nil, colorOverridesGroupDefault: Bool? = nil,
          createdAt: Date = Date(), modifiedAt: Date = Date(), lastLoginAt: Date? = nil,
          email: String? = nil, aboutMe: String? = nil, picture: Data? = nil,
          localLoginOnly: Bool? = nil, acceptsOfflineMessages: Bool? = true, lastNickname: String? = nil) {
@@ -220,6 +225,8 @@ struct ServerAccount: Codable, Equatable, Identifiable {
         self.personalDirectory = personalDirectory
         self.permissions = permissions
         self.colorRGB = colorRGB.map { $0 & 0x00ff_ffff }
+        self.permissionsOverrideGroupDefaults = permissionsOverrideGroupDefaults
+        self.colorOverridesGroupDefault = colorOverridesGroupDefault
         self.createdAt = createdAt
         self.modifiedAt = modifiedAt
         self.lastLoginAt = lastLoginAt

@@ -954,7 +954,6 @@
 "Room topic changed to: %@" = "Room topic changed to: %@";
 "Room topic was cleared." = "Room topic was cleared.";
 "Root file list could not be loaded: %@" = "Root file list could not be loaded: %@";
-"Root name" = "Root name";
 "Running as system service" = "Running as system service";
 "Running as system service · TCP %@" = "Running as system service · TCP %@";
 "Running in this app" = "Running in this app";
@@ -1370,7 +1369,6 @@
 "days" = "days";
 "description must not exceed 16384 UTF-8 bytes." = "description must not exceed 16384 UTF-8 bytes.";
 "e.g. Groups/Guests" = "e.g. Groups/Guests";
-"e.g. Guest Files" = "e.g. Guest Files";
 "eMail" = "eMail";
 "filesRoot must not be empty." = "filesRoot must not be empty.";
 "hours" = "hours";
@@ -1515,7 +1513,7 @@
 "Account Groups" = "Account Groups";
 "Edit the default permissions, nickname color and Files root for Administrator, Account Holder or Guest. Existing per-account overrides are not changed." = "Edit the default permissions, nickname color and Files root for Administrator, Account Holder or Guest. Existing per-account overrides are not changed.";
 "Edit %@ Defaults" = "Edit %@ Defaults";
-"These values are copied when an account is assigned to this group. Existing account overrides stay untouched." = "These values are copied when an account is assigned to this group. Existing account overrides stay untouched.";
+"Accounts that still use these group defaults follow future group changes. Individual account overrides stay untouched." = "Accounts that still use these group defaults follow future group changes. Individual account overrides stay untouched.";
 "Default nickname color" = "Default nickname color";
 "Account group defaults updated." = "Account group defaults updated.";
 "Classic Carracho Server uses Tracker port %@ only. Use a Tracker listening on that port." = "Classic Carracho Server uses Tracker port %@ only. Use a Tracker listening on that port.";
@@ -2012,3 +2010,32 @@
 "Download data" = "Download data";
 "Uploads" = "Uploads";
 "Upload data" = "Upload data";
+
+// ViewController channel/UI localization
+"%@ joined the room." = "%@ joined the room.";
+"%@ left the room." = "%@ left the room.";
+"%@ is now %@." = "%@ is now %@.";
+"%@ declined the invitation." = "%@ declined the invitation.";
+"You are already in the maximum number of rooms." = "You are already in the maximum number of rooms.";
+
+// ViewController remaining UI localization
+"Wait for the current connection attempt to finish before switching bookmarks." = "Wait for the current connection attempt to finish before switching bookmarks.";
+"there are no saved bookmarks to export" = "there are no saved bookmarks to export";
+"The two new passwords do not match." = "The two new passwords do not match.";
+"The password must be representable in MacRoman and no longer than 64 bytes." = "The password must be representable in MacRoman and no longer than 64 bytes.";
+"A bookmark password change is already in progress." = "A bookmark password change is already in progress.";
+"Bookmark name must not be empty." = "Bookmark name must not be empty.";
+"Server address must not be empty." = "Server address must not be empty.";
+"Port must be between 1 and 65534." = "Port must be between 1 and 65534.";
+"Password must not exceed 4096 UTF-8 bytes." = "Password must not exceed 4096 UTF-8 bytes.";
+"‘anonymous’ is reserved for the guest login and cannot be used as a nickname." = "‘anonymous’ is reserved for the guest login and cannot be used as a nickname.";
+"Nickname override must be MacRoman-compatible and at most 64 bytes." = "Nickname override must be MacRoman-compatible and at most 64 bytes.";
+"The connection ended before this transfer completed." = "The connection ended before this transfer completed.";
+"Connection lost. Unsaved Tracker changes were kept and can be retried after reconnecting." = "Connection lost. Unsaved Tracker changes were kept and can be retried after reconnecting.";
+"Connection lost · showing the last loaded Tracker configuration." = "Connection lost · showing the last loaded Tracker configuration.";
+"Could not load the file root: %@" = "Could not load the file root: %@";
+"1 item" = "1 item";
+"%@ items" = "%@ items";
+"Task #%@" = "Task #%@";
+"Code %@" = "Code %@";
+"Relative folder inside General. Absolute paths and .. are not allowed. The last folder name is used as the visible root name." = "Relative folder inside General. Absolute paths and .. are not allowed. The last folder name is used as the visible root name.";

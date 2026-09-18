@@ -598,6 +598,28 @@ final class LegacyServerRuntime {
         return LegacyLoginRegistration(userID: userID, users: users, legacyUserIDs: legacyUserIDs, existingSessions: others)
     }
 
+    fileprivate func notifyInitialUserSnapshots(_ recipient: LegacyServerSession,
+                                               sessions: [LegacyServerSession]) {
+        guard !recipient.isLegacyTransport else { return }
+        let state = backend.snapshot()
+        for source in sessions.sorted(by: { ($0.userID ?? 0) < ($1.userID ?? 0) }) {
+            guard let snapshot = source.userUpdateSnapshot else { continue }
+            var fields = [
+                LegacyTLV(type: 1, value: LegacyWire.uint32BE(snapshot.userID)),
+                LegacyTLV(type: 2, value: snapshot.nickname),
+                LegacyTLV(type: LegacyUserInfoField.picture, value: snapshot.picture),
+                LegacyTLV(type: LegacyUserInfoField.statusMessage, value: snapshot.statusMessage),
+            ]
+            if let color = state.accountColorRGB(for: snapshot.account) {
+                fields.append(LegacyTLV(type: LegacyUserInfoField.groupColorRGB,
+                                        value: LegacyWire.uint32BE(color)))
+            }
+            try? recipient.sendAuthenticated(LegacyPacket(command: LegacyCommand.userUpdate,
+                                                          transactionID: 0,
+                                                          fields: fields))
+        }
+    }
+
     fileprivate func notifyUserArrived(_ session: LegacyServerSession, to recipients: [LegacyServerSession]) {
         guard let entry = session.userListEntry else { return }
         var fields = [
@@ -686,10 +708,26 @@ final class LegacyServerRuntime {
                                              permissionWord1: word1)
         let filesRootName = snapshot.accountGroup(for: account)?.effectiveFilesRootName
             ?? LegacyFilesRootCapability.defaultDisplayName
+        var loginUsers = registration.users
+        if modernSalt != nil {
+            // A login TLV has a 16-bit payload length. Avatars are delivered immediately after
+            // modern login as individual user-update events so the packed user list can never be
+            // blown past 65535 bytes by one or more 128×128 PNGs.
+            for index in loginUsers.indices { loginUsers[index].picture = Data() }
+        }
+        var encodedUsers = try LegacyPackedRecords.encodeUserList(loginUsers)
+        if encodedUsers.count > Int(UInt16.max) {
+            for index in loginUsers.indices { loginUsers[index].picture = Data() }
+            encodedUsers = try LegacyPackedRecords.encodeUserList(loginUsers)
+        }
+        guard encodedUsers.count <= Int(UInt16.max) else {
+            throw LegacyProtocolError.invalidLength("login user list exceeds TLV limit")
+        }
+
         var fields = [
             LegacyTLV(type: 1, value: session.encoded()),
             LegacyTLV(type: 2, value: Self.macRoman(snapshot.identity.name)),
-            LegacyTLV(type: 3, value: try LegacyPackedRecords.encodeUserList(registration.users)),
+            LegacyTLV(type: 3, value: encodedUsers),
             LegacyTLV(type: 0x21, value: LegacyWire.uint16BE(snapshot.advanced.maxFileTransfersPerUser)),
             LegacyTLV(type: 5, value: LegacyWire.uint16BE(modernSalt == nil ? 2 : CarrachoModernCrypto.transferProtocolVersion)),
             LegacyTLV(type: LegacyMediaCapability.loginFieldType,
@@ -3038,6 +3076,8 @@ final class LegacyServerRuntime {
                             groups.append(group)
                         }
                         state.accountGroups = groups
+                        ModernServerBackend.propagateAccountGroupDefaults(to: groups,
+                                                                         accounts: &state.accounts)
                         accountGroupsChanged = true
                     case LegacyServerSettingField.trackerList:
                         let trackers = try LegacyServerSettingField.decodeTrackerSettings(field.value)
@@ -3904,6 +3944,12 @@ private final class LegacyServerSession {
         return LegacyUserListEntry(nickname: nickname, flags: flags, userID: userID, picture: picture)
     }
 
+    fileprivate var userUpdateSnapshot: (userID: UInt32, nickname: Data, picture: Data,
+                                         statusMessage: Data, account: ServerAccount)? {
+        guard let userID, let account else { return nil }
+        return (userID, nickname, picture, statusMessage, account)
+    }
+
     func touchActivity() { lastActivityAt = Date() }
     var supportsTaggedUTF8FileNames: Bool { modernTransport }
     var isLegacyTransport: Bool { !modernTransport }
@@ -3994,6 +4040,7 @@ private final class LegacyServerSession {
             if let negotiatedSalt {
                 let keys = try CarrachoModernCrypto.controlKeys(sessionKey: transportKey, salt: negotiatedSalt, role: .server)
                 modernControlChannel = try CarrachoAEADChannel(keys: keys, domain: "carracho/control/v1")
+                runtime.notifyInitialUserSnapshots(self, sessions: registration.existingSessions + [self])
             }
             runtime.notifyOfflineMessagesIfNeeded(self)
             runtime.notifyUserArrived(self, to: registration.existingSessions)
@@ -5009,7 +5056,8 @@ extension LegacyServerRuntime {
         }
 
         var candidate = base
-        for component in group.filesRootPath.split(separator: "/", omittingEmptySubsequences: false) {
+        let components = group.filesRootPath.split(separator: "/", omittingEmptySubsequences: false)
+        for (index, component) in components.enumerated() {
             let value = String(component)
             guard !value.isEmpty, value != ".", value != "..", !value.contains("\0") else {
                 throw LegacyServerRuntimeError.protocolFailure("invalid account-group Files root")
@@ -5020,15 +5068,19 @@ extension LegacyServerRuntime {
                 throw LegacyServerRuntimeError.protocolFailure("account-group Files root escaped server storage")
             }
 
+            let isFinalComponent = index == components.count - 1
             if manager.fileExists(atPath: candidate.path) {
-                let resolved = try requireInsideStorage(candidate)
+                let resolved = candidate.resolvingSymlinksInPath().standardizedFileURL
+                // Only the configured group's final root may intentionally be a server-side
+                // share that resolves outside Files. Parents must remain anchored in Files.
+                if !isFinalComponent { _ = try requireInsideStorage(candidate) }
                 let values = try resolved.resourceValues(forKeys: [.isDirectoryKey])
                 guard values.isDirectory == true else {
                     throw LegacyServerRuntimeError.protocolFailure("account-group Files root is not a directory")
                 }
             } else if createIfNeeded {
-                // Validate the existing parent before mkdir. Otherwise a configured parent symlink
-                // could make directory creation escape the published Files root before we reject it.
+                // Missing components are always created inside Files. External roots are therefore
+                // possible only through an explicitly provisioned final symlink.
                 _ = try requireInsideStorage(candidate.deletingLastPathComponent())
                 try manager.createDirectory(at: candidate, withIntermediateDirectories: false)
                 _ = try requireInsideStorage(candidate)
@@ -5258,25 +5310,45 @@ extension LegacyServerRuntime {
                 }
             }
         }
-        var current = root
+        let logicalRoot = root.standardizedFileURL
+        let resolvedRoot = logicalRoot.resolvingSymlinksInPath().standardizedFileURL
+        let rootValues = try resolvedRoot.resourceValues(forKeys: [.isDirectoryKey])
+        guard rootValues.isDirectory == true else {
+            throw LegacyServerRuntimeError.protocolFailure("server storage root is not a directory")
+        }
+
+        func isInsideResolvedRoot(_ url: URL) -> Bool {
+            let path = url.standardizedFileURL.path
+            let rootPath = resolvedRoot.path
+            return rootPath == "/" ? path.hasPrefix("/") : (path == rootPath || path.hasPrefix(rootPath + "/"))
+        }
+
+        var current = logicalRoot
         for (index, data) in components.enumerated() {
             guard let component = CarrachoTextWire.validatedString(from: data) else {
                 throw LegacyServerRuntimeError.protocolFailure("invalid storage path encoding")
             }
             current.appendPathComponent(component)
+            current = current.standardizedFileURL
             let isLast = index == components.count - 1
+
             if FileManager.default.fileExists(atPath: current.path) {
-                // Existing symlinks are intentional server-side shares. Keep the logical
-                // path rooted here while allowing the filesystem to follow their target,
-                // including targets on another volume or outside the Files directory.
-                _ = current.resolvingSymlinksInPath()
+                let resolved = current.resolvingSymlinksInPath().standardizedFileURL
+                guard isInsideResolvedRoot(resolved) else {
+                    throw LegacyServerRuntimeError.protocolFailure("server storage symlink escaped account root")
+                }
             } else if requireExisting || !isLast {
                 throw LegacyServerRuntimeError.protocolFailure("server storage path does not exist")
+            } else {
+                let resolvedParent = current.deletingLastPathComponent().resolvingSymlinksInPath().standardizedFileURL
+                guard isInsideResolvedRoot(resolvedParent) else {
+                    throw LegacyServerRuntimeError.protocolFailure("server storage path escaped account root")
+                }
             }
         }
-        let rootPath = root.standardizedFileURL.path
-        let finalPath = current.standardizedFileURL.path
-        guard finalPath == rootPath || finalPath.hasPrefix(rootPath + "/") else {
+
+        let finalPath = current.path
+        guard finalPath == logicalRoot.path || finalPath.hasPrefix(logicalRoot.path + "/") else {
             throw LegacyServerRuntimeError.protocolFailure("server storage path escaped root")
         }
         return current

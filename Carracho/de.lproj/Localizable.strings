@@ -954,7 +954,6 @@
 "Room topic changed to: %@" = "Raumthema geändert zu: %@";
 "Room topic was cleared." = "Das Raumthema wurde geklärt.";
 "Root file list could not be loaded: %@" = "Root-Dateiliste konnte nicht geladen werden: %@";
-"Root name" = "Wurzelname";
 "Running as system service" = "Läuft als Systemdienst";
 "Running as system service · TCP %@" = "Läuft als Systemdienst · TCP %@";
 "Running in this app" = "Läuft in dieser App";
@@ -1370,7 +1369,6 @@
 "days" = "Tage";
 "description must not exceed 16384 UTF-8 bytes." = "description darf 16384 UTF-8-Bytes nicht überschreiten.";
 "e.g. Groups/Guests" = "z. B. Gruppen/Gäste";
-"e.g. Guest Files" = "z. B. Guest Files";
 "eMail" = "E-Mail";
 "filesRoot must not be empty." = "filesRoot darf nicht leer sein.";
 "hours" = "Stunden";
@@ -1515,7 +1513,7 @@
 "Account Groups" = "Accountgruppen";
 "Edit the default permissions, nickname color and Files root for Administrator, Account Holder or Guest. Existing per-account overrides are not changed." = "Bearbeite Standardberechtigungen, Nickname-Farbe und Datei-Wurzel für Administrator, Account-Inhaber oder Gast. Bestehende individuelle Accountwerte werden nicht verändert.";
 "Edit %@ Defaults" = "Standards für %@ bearbeiten";
-"These values are copied when an account is assigned to this group. Existing account overrides stay untouched." = "Diese Werte werden beim Zuordnen eines Accounts zu dieser Gruppe übernommen. Bestehende individuelle Accountwerte bleiben unverändert.";
+"Accounts that still use these group defaults follow future group changes. Individual account overrides stay untouched." = "Accounts, die noch diese Gruppenstandards verwenden, übernehmen künftige Gruppenänderungen. Individuelle Accountwerte bleiben unverändert.";
 "Default nickname color" = "Standard-Nickname-Farbe";
 "Account group defaults updated." = "Standards der Accountgruppe wurden aktualisiert.";
 "Classic Carracho Server uses Tracker port %@ only. Use a Tracker listening on that port." = "Der klassische Carracho Server verwendet ausschließlich Tracker-Port %@. Verwende einen Tracker, der auf diesem Port lauscht.";
@@ -2012,3 +2010,32 @@
 "Download data" = "Download-Daten";
 "Uploads" = "Uploads";
 "Upload data" = "Upload-Daten";
+
+// ViewController channel/UI localization
+"%@ joined the room." = "%@ ist dem Raum beigetreten.";
+"%@ left the room." = "%@ hat den Raum verlassen.";
+"%@ is now %@." = "%@ ist jetzt %@.";
+"%@ declined the invitation." = "%@ hat die Einladung abgelehnt.";
+"You are already in the maximum number of rooms." = "Sie sind bereits in der maximalen Anzahl von Chat-Räumen.";
+
+// ViewController remaining UI localization
+"Wait for the current connection attempt to finish before switching bookmarks." = "Warten Sie, bis der aktuelle Verbindungsversuch abgeschlossen ist, bevor Sie das Lesezeichen wechseln.";
+"there are no saved bookmarks to export" = "es gibt keine gespeicherten Lesezeichen zum Exportieren";
+"The two new passwords do not match." = "Die beiden neuen Passwörter stimmen nicht überein.";
+"The password must be representable in MacRoman and no longer than 64 bytes." = "Das Passwort muss in MacRoman darstellbar und darf höchstens 64 Byte lang sein.";
+"A bookmark password change is already in progress." = "Eine Passwortänderung für ein Lesezeichen läuft bereits.";
+"Bookmark name must not be empty." = "Der Name des Lesezeichens darf nicht leer sein.";
+"Server address must not be empty." = "Die Serveradresse darf nicht leer sein.";
+"Port must be between 1 and 65534." = "Der Port muss zwischen 1 und 65534 liegen.";
+"Password must not exceed 4096 UTF-8 bytes." = "Das Passwort darf 4096 UTF-8-Byte nicht überschreiten.";
+"‘anonymous’ is reserved for the guest login and cannot be used as a nickname." = "„anonymous“ ist für die Gastanmeldung reserviert und kann nicht als Nickname verwendet werden.";
+"Nickname override must be MacRoman-compatible and at most 64 bytes." = "Der abweichende Nickname muss MacRoman-kompatibel und höchstens 64 Byte lang sein.";
+"The connection ended before this transfer completed." = "Die Verbindung wurde beendet, bevor dieser Transfer abgeschlossen war.";
+"Connection lost. Unsaved Tracker changes were kept and can be retried after reconnecting." = "Verbindung verloren. Nicht gespeicherte Tracker-Änderungen wurden beibehalten und können nach dem erneuten Verbinden erneut gespeichert werden.";
+"Connection lost · showing the last loaded Tracker configuration." = "Verbindung verloren · die zuletzt geladene Tracker-Konfiguration wird angezeigt.";
+"Could not load the file root: %@" = "Das Datei-Stammverzeichnis konnte nicht geladen werden: %@";
+"1 item" = "1 Objekt";
+"%@ items" = "%@ Objekte";
+"Task #%@" = "Aufgabe Nr. %@";
+"Code %@" = "Code %@";
+"Relative folder inside General. Absolute paths and .. are not allowed. The last folder name is used as the visible root name." = "Relativer Ordner innerhalb von Allgemein. Absolute Pfade und .. sind nicht erlaubt. Der letzte Ordnername wird als sichtbarer Wurzelname verwendet.";

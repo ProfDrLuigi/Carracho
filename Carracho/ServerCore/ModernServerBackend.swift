@@ -57,6 +57,7 @@ final class ModernServerBackend {
                     password: UUID().uuidString + UUID().uuidString, iterations: store.passwordIterations),
                 mode: .accountHolder, groupID: ServerState.builtInMemberGroupID, personalDirectory: .none,
                 permissions: [.joinChatRooms], colorRGB: group?.colorRGB ?? 0x0A84FF,
+                permissionsOverrideGroupDefaults: true, colorOverridesGroupDefault: true,
                 localLoginOnly: true, acceptsOfflineMessages: false, lastNickname: "Bot")
             try ServerStateValidator.validate(account: account)
             state.accounts.append(account)
@@ -238,6 +239,42 @@ final class ModernServerBackend {
         throw ServerStateError.invalidValue("Custom account groups are no longer supported. Edit Administrator, Account Holder or Guest instead.")
     }
 
+    static func propagateAccountGroupDefaults(to updatedGroups: [ServerAccountGroup],
+                                              accounts: inout [ServerAccount]) {
+        let updatedByID = Dictionary(uniqueKeysWithValues: updatedGroups.map { ($0.id, $0) })
+        let now = Date()
+
+        for index in accounts.indices {
+            guard let groupID = accounts[index].groupID,
+                  let updated = updatedByID[groupID] else { continue }
+
+            var changed = false
+
+            // Missing override markers are intentionally treated as inherited. Older servers
+            // copied group defaults into each account without remembering whether they were
+            // inherited, which is exactly how members could become stranded on stale values.
+            if !accounts[index].isLocalLoginOnly,
+               accounts[index].permissionsOverrideGroupDefaults != true {
+                if accounts[index].permissions != updated.permissions {
+                    accounts[index].permissions = updated.permissions
+                    changed = true
+                }
+                accounts[index].permissionsOverrideGroupDefaults = false
+            }
+
+            if !accounts[index].isLocalLoginOnly,
+               accounts[index].colorOverridesGroupDefault != true {
+                if accounts[index].colorRGB != updated.colorRGB {
+                    accounts[index].colorRGB = updated.colorRGB
+                    changed = true
+                }
+                accounts[index].colorOverridesGroupDefault = false
+            }
+
+            if changed { accounts[index].modifiedAt = now }
+        }
+    }
+
     @discardableResult
     func updateAccountGroup(id: UUID, with replacement: ServerAccountGroup) throws -> ServerAccountGroup {
         try transaction { state in
@@ -253,9 +290,10 @@ final class ModernServerBackend {
             value.legacyMode = existing.legacyMode
             value.name = ServerState.builtInAccountGroupName(for: existing.legacyMode)
             try ServerStateValidator.validate(accountGroup: value)
+
             state.accountGroups[index] = value
-            // Existing accounts keep their copied permissions and nickname color. Changing a
-            // class only changes the defaults applied to subsequent assignments.
+            Self.propagateAccountGroupDefaults(to: state.accountGroups,
+                                               accounts: &state.accounts)
             return value
         }
     }
@@ -433,15 +471,21 @@ final class ModernServerBackend {
         }
         account.groupID = group.id
         account.mode = group.legacyMode
-        if account.colorRGB == nil {
-            // Keeping an account in the same class preserves an individual color override.
-            // Moving it to another class is an assignment and therefore starts with that
-            // class's default color, exactly like selecting another group in the admin UI.
-            if let existing, existing.groupID == group.id {
-                account.colorRGB = existing.colorRGB ?? group.colorRGB
-            } else {
-                account.colorRGB = group.colorRGB
-            }
+
+        let requestedPermissions = account.permissions
+        account.permissionsOverrideGroupDefaults = requestedPermissions != group.permissions
+
+        if let requestedColor = account.colorRGB {
+            account.colorRGB = requestedColor
+            account.colorOverridesGroupDefault = requestedColor != group.colorRGB
+        } else if let existing, existing.groupID == group.id,
+                  existing.colorOverridesGroupDefault == true,
+                  let existingColor = existing.colorRGB {
+            account.colorRGB = existingColor
+            account.colorOverridesGroupDefault = true
+        } else {
+            account.colorRGB = group.colorRGB
+            account.colorOverridesGroupDefault = false
         }
     }
 

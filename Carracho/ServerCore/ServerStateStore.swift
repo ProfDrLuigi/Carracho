@@ -542,8 +542,9 @@ enum ServerStateMigrator {
         }
 
         // Collapse every historical/custom group layout onto the three Classic account classes.
-        // Existing effective permissions are deliberately kept on each account: group values are
-        // assignment defaults now, not a live inheritance chain.
+        // Existing effective permissions are deliberately kept during migration. Later group edits
+        // propagate only to accounts that still match the previous group defaults, preserving real
+        // per-account overrides.
         state.accountGroups = initial.map { fallback in
             guard let old = sourceGroup(for: fallback.legacyMode) else { return fallback }
             return ServerAccountGroup(

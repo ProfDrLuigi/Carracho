@@ -713,6 +713,17 @@ static json_object *permissions_json_from_bits(uint64_t bits) {
     return array;
 }
 
+static uint64_t supported_permission_bits(uint64_t bits) {
+    static const unsigned supported[] = {
+        0x0a,0x0b,0x0c,0x0d,0x0e,0x0f,0x10,0x11,0x12,0x13,0x14,0x15,0x16,0x17,
+        0x18,0x19,0x1c,0x21,0x22,0x23,0x24,0x25,0x26,0x27,0x28,0x2a,0x2c,0x2d,0x2e,0x2f,0x30,0x31
+    };
+    uint64_t result=0;
+    for(size_t i=0;i<sizeof(supported)/sizeof(supported[0]);i++)
+        if((bits>>supported[i])&1ULL)result|=1ULL<<supported[i];
+    return result;
+}
+
 
 static const char *personal_string_from_bits(uint64_t bits) {
     if (bits & (1ULL << 4)) return "rootDirectory";
@@ -799,6 +810,7 @@ int cr_state_ensure_local_bot_account(cr_server_state *s){
     json_object_object_add(record,"id",json_object_new_string(CR_LOCAL_BOT_ACCOUNT_ID));json_object_object_add(record,"login",json_object_new_string(login));json_object_object_add(record,"name",json_object_new_string("Bot"));
     json_object_object_add(record,"passwordVerifier",verifier);json_object_object_add(record,"mode",json_object_new_string("accountHolder"));json_object_object_add(record,"groupID",json_object_new_string(group->id));
     json_object_object_add(record,"colorRGB",json_object_new_int64(group->color_rgb));json_object_object_add(record,"personalDirectory",json_object_new_string("none"));json_object_object_add(record,"permissions",perms);
+    json_object_object_add(record,"permissionsOverrideGroupDefaults",json_object_new_boolean(1));json_object_object_add(record,"colorOverridesGroupDefault",json_object_new_boolean(1));
     json_object_object_add(record,"localLoginOnly",json_object_new_boolean(1));json_object_object_add(record,"acceptsOfflineMessages",json_object_new_boolean(0));json_object_object_add(record,"lastNickname",json_object_new_string("Bot"));
     json_object_object_add(record,"createdAt",json_object_new_string(now));json_object_object_add(record,"modifiedAt",json_object_new_string(now));json_object_array_add(arr,record);json_object_array_sort(arr,account_json_compare);
     int rc=cr_state_save_locked(s);if(rc==0)rc=cr_state_refresh_parsed_locked(s);pthread_mutex_unlock(&s->mutex);return rc;
@@ -855,6 +867,10 @@ int cr_state_account_upsert(cr_server_state *s, const char *old_login, const cha
     json_object_object_add(record,"colorRGB",json_object_new_int64(effective_color));
     json_object_object_add(record,"personalDirectory",json_object_new_string(personal_string_from_bits(permission_bits)));
     json_object_object_add(record,"permissions",perms);
+    json_object_object_add(record,"permissionsOverrideGroupDefaults",
+                           json_object_new_boolean(supported_permission_bits(permission_bits)!=group->permission_bits));
+    json_object_object_add(record,"colorOverridesGroupDefault",
+                           json_object_new_boolean(effective_color!=group->color_rgb));
     json_object_object_add(record,"modifiedAt",json_object_new_string(now));
     if(!modifying)json_object_array_add(arr,record);
     json_object_array_sort(arr,account_json_compare);
@@ -907,6 +923,56 @@ int cr_state_set_account_groups(cr_server_state *s,const cr_account_group *group
         json_object*g=json_object_new_object(),*perms=permissions_json_from_bits(src->permission_bits);if(!g||!perms){if(g)json_object_put(g);if(perms)json_object_put(perms);json_object_put(array);pthread_mutex_unlock(&s->mutex);return-1;}
         json_object_object_add(g,"id",json_object_new_string(fixed_group_id(mode)));json_object_object_add(g,"name",json_object_new_string(default_group_name(mode)));json_object_object_add(g,"colorRGB",json_object_new_int64(src->color_rgb));json_object_object_add(g,"legacyMode",json_object_new_string(mode_json_name(mode)));json_object_object_add(g,"permissions",perms);json_object_object_add(g,"filesRootPath",json_object_new_string(src->files_root_path));json_object_object_add(g,"filesRootName",json_object_new_string(src->files_root_path[0]?src->files_root_name:"Allgemein"));json_object_array_add(array,g);
     }
+
+    /*
+     * Existing accounts store effective permissions/color so they can have individual overrides.
+     * If an account still exactly matches its group's previous defaults, it is an inherited value:
+     * advance it to the new defaults. Values that differ are explicit per-account overrides and
+     * remain untouched. This makes group edits apply to normal members without requiring account
+     * deletion/recreation.
+     */
+    json_object*accounts=NULL;
+    if(json_object_object_get_ex(s->root,"accounts",&accounts)&&json_object_is_type(accounts,json_type_array)){
+        char now[64];cr_now_iso8601(now);
+        for(size_t ai=0;ai<json_object_array_length(accounts);ai++){
+            json_object*a=json_object_array_get_idx(accounts,ai),*gidv=NULL;
+            if(!json_object_object_get_ex(a,"groupID",&gidv)||!json_object_is_type(gidv,json_type_string))continue;
+            const char*gid=json_object_get_string(gidv);if(!gid||!*gid)continue;
+
+            const cr_account_group*previous=NULL,*updated=NULL;
+            for(size_t gi=0;gi<s->account_group_count;gi++)
+                if(!strcasecmp(s->account_groups[gi].id,gid)){previous=&s->account_groups[gi];break;}
+            for(size_t slot=0;slot<3;slot++)
+                if(!strcasecmp(ordered[slot]->id,gid)){updated=ordered[slot];break;}
+            if(!previous||!updated)continue;
+
+            if(json_bool_default(a,"localLoginOnly",0))continue;
+            int changed=0;
+
+            if(!json_bool_default(a,"permissionsOverrideGroupDefaults",0)){
+                uint64_t account_bits=json_permission_bits(a);
+                if(account_bits!=updated->permission_bits){
+                    json_object*perms=permissions_json_from_bits(updated->permission_bits);
+                    if(!perms){json_object_put(array);pthread_mutex_unlock(&s->mutex);return-1;}
+                    json_object_object_add(a,"permissions",perms);changed=1;
+                }
+                json_object_object_add(a,"permissionsOverrideGroupDefaults",json_object_new_boolean(0));
+            }
+
+            if(!json_bool_default(a,"colorOverridesGroupDefault",0)){
+                json_object*colorv=NULL;uint32_t color=previous->color_rgb;
+                if(json_object_object_get_ex(a,"colorRGB",&colorv)&&json_object_is_type(colorv,json_type_int)){
+                    int64_t raw=json_object_get_int64(colorv);if(raw>=0&&raw<=0x00ffffff)color=(uint32_t)raw;
+                }
+                if(color!=updated->color_rgb){
+                    json_object_object_add(a,"colorRGB",json_object_new_int64(updated->color_rgb));changed=1;
+                }
+                json_object_object_add(a,"colorOverridesGroupDefault",json_object_new_boolean(0));
+            }
+            if(changed)json_object_object_add(a,"modifiedAt",json_object_new_string(now));
+        }
+    }
+
     json_object_object_add(s->root,"accountGroups",array);
     int rc=cr_state_save_locked(s);if(rc==0)rc=cr_state_refresh_parsed_locked(s);pthread_mutex_unlock(&s->mutex);return rc;
 }
