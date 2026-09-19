@@ -24,6 +24,21 @@
 </head>
     <body>
         
+        <p><span class="header" lang="en">New in 1.0.4</span></p>
+        <ul>
+            <span class="newstext">
+                <li>Added a bundled Web Administration interface for Carracho Server on macOS and native Linux, providing browser-based status, user, account, Conference, settings, search-index, broadcast, activity, and transfer administration.</li>
+                <li>Added an authenticated HTTP Administration API with Bearer-token protection. The API includes server status, users, accounts, Conferences, settings, broadcasts, search-index control, active transfers, and transfer cancellation.</li>
+                <li>Added live transfer monitoring to the administration API and WebAdmin, including direction, user, file path, progress, transfer rate, ETA, state, and remote cancellation.</li>
+                <li>The Linux WebAdmin is bundled as a self-contained helper and is started and stopped by the normal carracho-server process, so only one carracho.service is required.</li>
+                <li>Fixed a Classic download protocol mismatch that could crash the original client. Legacy downloads now consume both data-fork and resource-fork resume offsets and return both fork lengths before sending file data.</li>
+                <li>Added full historical Classic user-icon handling. Native 636-byte Classic icons are accepted during login and user updates, persisted with the account, and forwarded unchanged to compatible Classic clients.</li>
+                <li>Improved modern/Classic avatar interoperability so modern servers preserve real Classic icons instead of discarding them as invalid PNG data.</li>
+                <li>Expanded Conference administration with Operator Mode and Speak Permission updates, modern room deletion, and reliable deletion notifications while preserving the ordering expected by Classic clients.</li>
+                <li>Improved the persistent file-search index with a new schema and more reliable incremental upsert, subtree deletion, trigram maintenance, and duplicate/path handling on both macOS and Linux servers.</li>
+                <li>Updated the macOS and native Linux server implementations in parallel for the new HTTP administration, transfer API, Conference controls, Classic download fix, avatar compatibility, and search-index behavior.</li>
+        </ul></span>
+
         <p><span class="header" lang="en">New in 1.0.3</span></p>
         <ul>
             <span class="newstext">

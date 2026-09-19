@@ -275,15 +275,14 @@ extension ViewController {
             avatar.image = AvatarArtwork.defaultImage()
             avatar.contentTintColor = nil
         }
-        avatar.imageScaling = .scaleProportionallyDown
+        avatar.imageScaling = .scaleProportionallyUpOrDown
         avatar.translatesAutoresizingMaskIntoConstraints = false
-        // Do not crop arbitrary user artwork into a circle. Classic avatars often use the full
-        // square canvas (stars and other irregular shapes in particular), so a circular mask can
-        // shave off corners even though the image itself is valid. Proportional-down scaling keeps
-        // the complete avatar inside the 88 pt frame.
+        // Keep the complete artwork visible inside the 88 pt frame. Classic avatars are native
+        // 16x16 images, so they must be allowed to scale up here just like they do in the user list.
+        // Modern artwork still scales down proportionally when necessary.
         NSLayoutConstraint.activate([
-            avatar.widthAnchor.constraint(equalToConstant: 88),
-            avatar.heightAnchor.constraint(equalToConstant: 88),
+            avatar.widthAnchor.constraint(equalToConstant: 44),
+            avatar.heightAnchor.constraint(equalToConstant: 44),
         ])
 
         let heroName = NSTextField(labelWithString: nicknameText.isEmpty ? L("User") : nicknameText)
