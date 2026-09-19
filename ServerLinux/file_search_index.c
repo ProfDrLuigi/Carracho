@@ -12,7 +12,7 @@
 #include <sys/stat.h>
 #include <time.h>
 
-#define CR_FILE_INDEX_SCHEMA 1
+#define CR_FILE_INDEX_SCHEMA 2
 #define CR_FILE_INDEX_MAX_RESULTS 100000u
 #define CR_MAC_EPOCH_OFFSET 2082844800ULL
 
@@ -42,10 +42,6 @@ static int exclusion_matches_legacy_path(const cr_search_index_exclusions *exclu
     return 0;
 }
 
-static char *path_key(const uint8_t *path,size_t n){
-    static const char hex[]="0123456789ABCDEF";char *out=malloc(n*2+1);if(!out)return NULL;
-    for(size_t i=0;i<n;i++){out[i*2]=hex[path[i]>>4];out[i*2+1]=hex[path[i]&15];}out[n*2]='\0';return out;
-}
 static char *ascii_fold(const char *s){size_t n=strlen(s);char *out=malloc(n+1);if(!out)return NULL;for(size_t i=0;i<n;i++){unsigned char c=(unsigned char)s[i];out[i]=(char)(c<128?tolower(c):c);}out[n]='\0';return out;}
 static int append_child(const uint8_t *parent,size_t pl,const uint8_t *name,size_t nl,uint8_t *out,size_t *ol){
     size_t need=pl+(pl?1:0)+nl;if(!nl||need>4096)return-1;if(pl)memcpy(out,parent,pl);size_t p=pl;if(pl)out[p++]=1;memcpy(out+p,name,nl);*ol=need;return 0;
@@ -62,9 +58,29 @@ static int is_inside_dropbox(cr_file_metadata_store *m,const uint8_t *path,size_
 
 static int create_schema(sqlite3 *db){
     if(exec_sql(db,"PRAGMA foreign_keys=ON")||exec_sql(db,"PRAGMA journal_mode=WAL")||exec_sql(db,"PRAGMA synchronous=NORMAL"))return-1;
-    if(exec_sql(db,"CREATE TABLE IF NOT EXISTS entries(path_key TEXT PRIMARY KEY,path BLOB NOT NULL,name BLOB NOT NULL,name_search TEXT NOT NULL,comment_search TEXT NOT NULL DEFAULT '',is_folder INTEGER NOT NULL CHECK(is_folder IN (0,1)),size INTEGER NOT NULL,timestamp INTEGER NOT NULL)"))return-1;
-    if(exec_sql(db,"CREATE TABLE IF NOT EXISTS trigrams(term TEXT NOT NULL,path_key TEXT NOT NULL REFERENCES entries(path_key) ON DELETE CASCADE,PRIMARY KEY(term,path_key)) WITHOUT ROWID"))return-1;
-    if(exec_sql(db,"CREATE INDEX IF NOT EXISTS trigrams_term_idx ON trigrams(term,path_key)"))return-1;
+    sqlite3_int64 version=pragma_int64(db,"PRAGMA user_version");
+    if(version!=CR_FILE_INDEX_SCHEMA){
+        /*
+         * v1 stored the full hex-encoded path in every trigram row and then
+         * duplicated the same (term,path_key) B-tree in a second index. This
+         * cache is disposable, so rebuilding the schema is both safer and far
+         * smaller than migrating multi-gigabyte v1 files in place.
+         */
+        (void)sqlite3_wal_checkpoint_v2(db,NULL,SQLITE_CHECKPOINT_TRUNCATE,NULL,NULL);
+        if(exec_sql(db,"BEGIN IMMEDIATE"))return-1;
+        if(exec_sql(db,"DROP TABLE IF EXISTS trigrams")||
+           exec_sql(db,"DROP TABLE IF EXISTS entries")||
+           exec_sql(db,"DROP TABLE IF EXISTS index_meta")||
+           exec_sql(db,"COMMIT")){
+            (void)exec_sql(db,"ROLLBACK");
+            return-1;
+        }
+        sqlite3_int64 pages=pragma_int64(db,"PRAGMA page_count");
+        sqlite3_int64 free_pages=pragma_int64(db,"PRAGMA freelist_count");
+        if(pages>32&&free_pages*2>=pages&&(exec_sql(db,"VACUUM")))return-1;
+    }
+    if(exec_sql(db,"CREATE TABLE IF NOT EXISTS entries(id INTEGER PRIMARY KEY,path BLOB NOT NULL UNIQUE,name BLOB NOT NULL,name_search TEXT NOT NULL,comment_search TEXT NOT NULL DEFAULT '',is_folder INTEGER NOT NULL CHECK(is_folder IN (0,1)),size INTEGER NOT NULL,timestamp INTEGER NOT NULL)"))return-1;
+    if(exec_sql(db,"CREATE TABLE IF NOT EXISTS trigrams(term TEXT NOT NULL,entry_id INTEGER NOT NULL REFERENCES entries(id) ON DELETE CASCADE,PRIMARY KEY(term,entry_id)) WITHOUT ROWID"))return-1;
     if(exec_sql(db,"CREATE TABLE IF NOT EXISTS index_meta(key TEXT PRIMARY KEY,value INTEGER NOT NULL) WITHOUT ROWID"))return-1;
     char pragma[64];snprintf(pragma,sizeof(pragma),"PRAGMA user_version=%d",CR_FILE_INDEX_SCHEMA);return exec_sql(db,pragma);
 }
@@ -99,10 +115,18 @@ int cr_file_search_index_init(cr_file_search_index *idx, const char *path) {
 void cr_file_search_index_destroy(cr_file_search_index *idx){if(!idx||!idx->ready)return;pthread_mutex_lock(&idx->mutex);if(idx->db)sqlite3_close(idx->db);idx->db=NULL;idx->ready=0;pthread_mutex_unlock(&idx->mutex);pthread_mutex_destroy(&idx->mutex);}
 
 static int delete_subtree_locked(cr_file_search_index *idx,const uint8_t *path,size_t n){
-    char *key=path_key(path,n);if(!key)return-1;size_t pn=strlen(key)+4;char *prefix=malloc(pn);if(!prefix){free(key);return-1;}snprintf(prefix,pn,"%s01%%",key);
-    sqlite3_stmt *st=NULL;int rc=-1;if(sqlite3_prepare_v2(idx->db,"DELETE FROM entries WHERE path_key=? OR path_key LIKE ?",-1,&st,NULL)!=SQLITE_OK)goto done;
-    sqlite3_bind_text(st,1,key,-1,SQLITE_TRANSIENT);sqlite3_bind_text(st,2,prefix,-1,SQLITE_TRANSIENT);if(sqlite3_step(st)==SQLITE_DONE)rc=0;
-done:sqlite3_finalize(st);free(prefix);free(key);return rc;
+    if(!n)return exec_sql(idx->db,"DELETE FROM entries");
+    uint8_t *lower=malloc(n+1),*upper=malloc(n+1);
+    if(!lower||!upper){free(lower);free(upper);return-1;}
+    memcpy(lower,path,n);memcpy(upper,path,n);lower[n]=1;upper[n]=2;
+    sqlite3_stmt *st=NULL;int rc=-1;
+    if(sqlite3_prepare_v2(idx->db,"DELETE FROM entries WHERE path=? OR (path>=? AND path<?)",-1,&st,NULL)!=SQLITE_OK)goto done;
+    sqlite3_bind_blob(st,1,path,(int)n,SQLITE_TRANSIENT);
+    sqlite3_bind_blob(st,2,lower,(int)n+1,SQLITE_TRANSIENT);
+    sqlite3_bind_blob(st,3,upper,(int)n+1,SQLITE_TRANSIENT);
+    if(sqlite3_step(st)==SQLITE_DONE)rc=0;
+done:
+    sqlite3_finalize(st);free(lower);free(upper);return rc;
 }
 
 static int insert_entry_locked(cr_file_search_index *idx, const uint8_t *path,
@@ -110,13 +134,10 @@ static int insert_entry_locked(cr_file_search_index *idx, const uint8_t *path,
                                const char *name_utf8, int folder, uint32_t size,
                                uint32_t timestamp,
                                cr_file_metadata_store *metadata) {
-  char *key = path_key(path, pl), *fold = ascii_fold(name_utf8),
-       comment_utf8[2048] = "", *comment_fold = NULL;
-  if (!key || !fold) {
-    free(key);
-    free(fold);
+  char *fold = ascii_fold(name_utf8), comment_utf8[2048] = "",
+       *comment_fold = NULL;
+  if (!fold)
     return -1;
-  }
   if (metadata) {
     cr_file_metadata m;
     int found = 0;
@@ -125,50 +146,65 @@ static int insert_entry_locked(cr_file_search_index *idx, const uint8_t *path,
         m.comment_len) {
       if (cr_macroman_to_utf8(m.comment, m.comment_len, comment_utf8,
                               sizeof(comment_utf8)))
-        comment_utf8[0] = '\0';
+        comment_utf8[0] = 0;
     }
     cr_file_metadata_free(&m);
   }
   comment_fold = ascii_fold(comment_utf8);
   if (!comment_fold) {
-    free(key);
     free(fold);
     return -1;
   }
+
   sqlite3_stmt *st = NULL;
+  sqlite3_int64 entry_id = 0;
   int rc = -1;
   if (sqlite3_prepare_v2(
           idx->db,
-          "INSERT OR REPLACE INTO "
-          "entries(path_key,path,name,name_search,comment_search,is_folder,"
-          "size,timestamp) VALUES(?,?,?,?,?,?,?,?)",
+          "INSERT INTO entries(path,name,name_search,comment_search,is_folder,size,timestamp) "
+          "VALUES(?,?,?,?,?,?,?) "
+          "ON CONFLICT(path) DO UPDATE SET "
+          "name=excluded.name,name_search=excluded.name_search,"
+          "comment_search=excluded.comment_search,is_folder=excluded.is_folder,"
+          "size=excluded.size,timestamp=excluded.timestamp",
           -1, &st, NULL) != SQLITE_OK)
     goto done;
-  sqlite3_bind_text(st, 1, key, -1, SQLITE_TRANSIENT);
-  sqlite3_bind_blob(st, 2, path, (int)pl, SQLITE_TRANSIENT);
-  sqlite3_bind_blob(st, 3, name, (int)nl, SQLITE_TRANSIENT);
-  sqlite3_bind_text(st, 4, fold, -1, SQLITE_TRANSIENT);
-  sqlite3_bind_text(st, 5, comment_fold, -1, SQLITE_TRANSIENT);
-  sqlite3_bind_int(st, 6, folder);
-  sqlite3_bind_int64(st, 7, (sqlite3_int64)size);
-  sqlite3_bind_int64(st, 8, (sqlite3_int64)timestamp);
+  sqlite3_bind_blob(st, 1, path, (int)pl, SQLITE_TRANSIENT);
+  sqlite3_bind_blob(st, 2, name, (int)nl, SQLITE_TRANSIENT);
+  sqlite3_bind_text(st, 3, fold, -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(st, 4, comment_fold, -1, SQLITE_TRANSIENT);
+  sqlite3_bind_int(st, 5, folder);
+  sqlite3_bind_int64(st, 6, (sqlite3_int64)size);
+  sqlite3_bind_int64(st, 7, (sqlite3_int64)timestamp);
   if (sqlite3_step(st) != SQLITE_DONE)
     goto done;
   sqlite3_finalize(st);
   st = NULL;
-  if (sqlite3_prepare_v2(idx->db, "DELETE FROM trigrams WHERE path_key=?", -1,
+
+  if (sqlite3_prepare_v2(idx->db, "SELECT id FROM entries WHERE path=?", -1,
                          &st, NULL) != SQLITE_OK)
     goto done;
-  sqlite3_bind_text(st, 1, key, -1, SQLITE_TRANSIENT);
+  sqlite3_bind_blob(st, 1, path, (int)pl, SQLITE_TRANSIENT);
+  if (sqlite3_step(st) != SQLITE_ROW)
+    goto done;
+  entry_id = sqlite3_column_int64(st, 0);
+  sqlite3_finalize(st);
+  st = NULL;
+
+  if (sqlite3_prepare_v2(idx->db, "DELETE FROM trigrams WHERE entry_id=?", -1,
+                         &st, NULL) != SQLITE_OK)
+    goto done;
+  sqlite3_bind_int64(st, 1, entry_id);
   if (sqlite3_step(st) != SQLITE_DONE)
     goto done;
   sqlite3_finalize(st);
   st = NULL;
+
   size_t fn = strlen(fold);
   if (fn >= 3) {
     if (sqlite3_prepare_v2(
             idx->db,
-            "INSERT OR IGNORE INTO trigrams(term,path_key) VALUES(?,?)", -1,
+            "INSERT OR IGNORE INTO trigrams(term,entry_id) VALUES(?,?)", -1,
             &st, NULL) != SQLITE_OK)
       goto done;
     for (size_t i = 0; i + 2 < fn; i++) {
@@ -176,7 +212,7 @@ static int insert_entry_locked(cr_file_search_index *idx, const uint8_t *path,
       sqlite3_reset(st);
       sqlite3_clear_bindings(st);
       sqlite3_bind_text(st, 1, gram, 3, SQLITE_TRANSIENT);
-      sqlite3_bind_text(st, 2, key, -1, SQLITE_TRANSIENT);
+      sqlite3_bind_int64(st, 2, entry_id);
       if (sqlite3_step(st) != SQLITE_DONE)
         goto done;
     }
@@ -186,7 +222,6 @@ done:
   sqlite3_finalize(st);
   free(comment_fold);
   free(fold);
-  free(key);
   return rc;
 }
 
@@ -528,9 +563,9 @@ int cr_file_search_index_search(cr_file_search_index *idx, const char *query,
   if (grams) {
     for (size_t i = 0; i < grams; i++)
       strcat(sql, " AND EXISTS(SELECT 1 FROM trigrams t WHERE "
-                  "t.path_key=e.path_key AND t.term=?)");
+                  "t.entry_id=e.id AND t.term=?)");
   }
-  strcat(sql, " ORDER BY e.path_key LIMIT ?");
+  strcat(sql, " ORDER BY e.path LIMIT ?");
   pthread_mutex_lock(&idx->mutex);
   sqlite3_stmt *st = NULL;
   int rc = -1;

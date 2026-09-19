@@ -27,7 +27,7 @@ struct ServerFileSearchIndexEntry: Equatable {
 /// plus ServerFileMetadataStore; this database may be deleted at any time and is
 /// rebuilt on the next server start.
 final class ServerFileSearchIndex {
-    static let schemaVersion = 1
+    static let schemaVersion = 2
     static let maximumResults = 100_000
     private static let sqliteTransient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
     private static let macEpochOffset: TimeInterval = 2_082_844_800
@@ -201,7 +201,7 @@ final class ServerFileSearchIndex {
                 SELECT path,name,is_folder,size,timestamp
                 FROM entries
                 WHERE instr(name_search, ?) > 0
-                ORDER BY path_key
+                ORDER BY path
                 LIMIT ?
                 """
             } else {
@@ -210,14 +210,14 @@ final class ServerFileSearchIndex {
                 SELECT e.path,e.name,e.is_folder,e.size,e.timestamp
                 FROM entries e
                 JOIN (
-                    SELECT path_key
+                    SELECT entry_id
                     FROM trigrams
                     WHERE term IN (\(placeholders))
-                    GROUP BY path_key
+                    GROUP BY entry_id
                     HAVING COUNT(DISTINCT term) = ?
-                ) candidates ON candidates.path_key = e.path_key
+                ) candidates ON candidates.entry_id = e.id
                 WHERE instr(e.name_search, ?) > 0
-                ORDER BY e.path_key
+                ORDER BY e.path
                 LIMIT ?
                 """
             }
@@ -359,50 +359,77 @@ final class ServerFileSearchIndex {
 
     private func insert(path: Data, name: Data, nameSearch: String, commentSearch: String,
                         isFolder: Bool, size: UInt32, timestamp: UInt32, db: OpaquePointer?) throws {
-        let key = Self.pathKey(path)
         var statement: OpaquePointer?
         try prepare(db, """
-            INSERT OR REPLACE INTO entries(path_key,path,name,name_search,comment_search,is_folder,size,timestamp)
-            VALUES(?,?,?,?,?,?,?,?)
+            INSERT INTO entries(path,name,name_search,comment_search,is_folder,size,timestamp)
+            VALUES(?,?,?,?,?,?,?)
+            ON CONFLICT(path) DO UPDATE SET
+                name=excluded.name,
+                name_search=excluded.name_search,
+                comment_search=excluded.comment_search,
+                is_folder=excluded.is_folder,
+                size=excluded.size,
+                timestamp=excluded.timestamp
             """, &statement)
         defer { sqlite3_finalize(statement) }
-        try bindText(statement, 1, key)
-        try bindBlob(statement, 2, path)
-        try bindBlob(statement, 3, name)
-        try bindText(statement, 4, nameSearch)
-        try bindText(statement, 5, commentSearch)
-        try bindInt64(statement, 6, isFolder ? 1 : 0)
-        try bindInt64(statement, 7, Int64(size))
-        try bindInt64(statement, 8, Int64(timestamp))
+        try bindBlob(statement, 1, path)
+        try bindBlob(statement, 2, name)
+        try bindText(statement, 3, nameSearch)
+        try bindText(statement, 4, commentSearch)
+        try bindInt64(statement, 5, isFolder ? 1 : 0)
+        try bindInt64(statement, 6, Int64(size))
+        try bindInt64(statement, 7, Int64(timestamp))
         guard sqlite3_step(statement) == SQLITE_DONE else { throw sqliteError(db) }
 
+        var lookup: OpaquePointer?
+        try prepare(db, "SELECT id FROM entries WHERE path=?", &lookup)
+        try bindBlob(lookup, 1, path)
+        guard sqlite3_step(lookup) == SQLITE_ROW else {
+            sqlite3_finalize(lookup)
+            throw sqliteError(db)
+        }
+        let entryID = sqlite3_column_int64(lookup, 0)
+        sqlite3_finalize(lookup)
+
         var delete: OpaquePointer?
-        try prepare(db, "DELETE FROM trigrams WHERE path_key=?", &delete)
-        try bindText(delete, 1, key)
-        guard sqlite3_step(delete) == SQLITE_DONE else { sqlite3_finalize(delete); throw sqliteError(db) }
+        try prepare(db, "DELETE FROM trigrams WHERE entry_id=?", &delete)
+        try bindInt64(delete, 1, entryID)
+        guard sqlite3_step(delete) == SQLITE_DONE else {
+            sqlite3_finalize(delete)
+            throw sqliteError(db)
+        }
         sqlite3_finalize(delete)
 
         let grams = Self.trigrams(nameSearch)
         if !grams.isEmpty {
             var gramStatement: OpaquePointer?
-            try prepare(db, "INSERT OR IGNORE INTO trigrams(term,path_key) VALUES(?,?)", &gramStatement)
+            try prepare(db, "INSERT OR IGNORE INTO trigrams(term,entry_id) VALUES(?,?)", &gramStatement)
             defer { sqlite3_finalize(gramStatement) }
             for gram in grams {
                 sqlite3_reset(gramStatement); sqlite3_clear_bindings(gramStatement)
                 try bindText(gramStatement, 1, gram)
-                try bindText(gramStatement, 2, key)
+                try bindInt64(gramStatement, 2, entryID)
                 guard sqlite3_step(gramStatement) == SQLITE_DONE else { throw sqliteError(db) }
             }
         }
     }
 
     private func deleteSubtree(path: Data, db: OpaquePointer?) throws {
-        let key = Self.pathKey(path)
+        if path.isEmpty {
+            try execute(db, "DELETE FROM entries")
+            return
+        }
+        var descendantLower = path
+        descendantLower.append(LegacyPath.separator)
+        var descendantUpper = path
+        descendantUpper.append(LegacyPath.separator &+ 1)
+
         var statement: OpaquePointer?
-        try prepare(db, "DELETE FROM entries WHERE path_key=? OR path_key LIKE ?", &statement)
+        try prepare(db, "DELETE FROM entries WHERE path=? OR (path>=? AND path<?)", &statement)
         defer { sqlite3_finalize(statement) }
-        try bindText(statement, 1, key)
-        try bindText(statement, 2, key + "01%")
+        try bindBlob(statement, 1, path)
+        try bindBlob(statement, 2, descendantLower)
+        try bindBlob(statement, 3, descendantUpper)
         guard sqlite3_step(statement) == SQLITE_DONE else { throw sqliteError(db) }
     }
 
@@ -423,10 +450,35 @@ final class ServerFileSearchIndex {
         try execute(db, "PRAGMA foreign_keys=ON")
         try execute(db, "PRAGMA journal_mode=WAL")
         try execute(db, "PRAGMA synchronous=NORMAL")
+
+        let existingVersion = try pragmaInteger(db, "user_version")
+        if existingVersion != Self.schemaVersion {
+            // The search database is a disposable cache. Schema v1 repeated a hex-encoded
+            // full path in every trigram row and also maintained a redundant identical index,
+            // which could inflate large trees into multi-gigabyte databases. Recreate instead
+            // of carrying that storage layout forward.
+            try execute(db, "PRAGMA wal_checkpoint(TRUNCATE)")
+            try execute(db, "BEGIN IMMEDIATE")
+            do {
+                try execute(db, "DROP TABLE IF EXISTS trigrams")
+                try execute(db, "DROP TABLE IF EXISTS entries")
+                try execute(db, "DROP TABLE IF EXISTS index_meta")
+                try execute(db, "COMMIT")
+            } catch {
+                try? execute(db, "ROLLBACK")
+                throw error
+            }
+            let pageCount = try pragmaInteger(db, "page_count")
+            let freePages = try pragmaInteger(db, "freelist_count")
+            if pageCount > 32, freePages * 2 >= pageCount {
+                try execute(db, "VACUUM")
+            }
+        }
+
         try execute(db, """
             CREATE TABLE IF NOT EXISTS entries(
-                path_key TEXT PRIMARY KEY,
-                path BLOB NOT NULL,
+                id INTEGER PRIMARY KEY,
+                path BLOB NOT NULL UNIQUE,
                 name BLOB NOT NULL,
                 name_search TEXT NOT NULL,
                 comment_search TEXT NOT NULL DEFAULT '',
@@ -438,11 +490,10 @@ final class ServerFileSearchIndex {
         try execute(db, """
             CREATE TABLE IF NOT EXISTS trigrams(
                 term TEXT NOT NULL,
-                path_key TEXT NOT NULL REFERENCES entries(path_key) ON DELETE CASCADE,
-                PRIMARY KEY(term,path_key)
+                entry_id INTEGER NOT NULL REFERENCES entries(id) ON DELETE CASCADE,
+                PRIMARY KEY(term,entry_id)
             ) WITHOUT ROWID
             """)
-        try execute(db, "CREATE INDEX IF NOT EXISTS trigrams_term_idx ON trigrams(term,path_key)")
         try execute(db, """
             CREATE TABLE IF NOT EXISTS index_meta(
                 key TEXT PRIMARY KEY,
@@ -547,7 +598,4 @@ final class ServerFileSearchIndex {
         return unique.sorted()
     }
 
-    private static func pathKey(_ path: Data) -> String {
-        path.map { String(format: "%02X", $0) }.joined()
-    }
 }

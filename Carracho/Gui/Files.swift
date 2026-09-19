@@ -1584,7 +1584,7 @@ extension ViewController {
         if item.depth > 0 {
             let indentation = NSView()
             indentation.translatesAutoresizingMaskIntoConstraints = false
-            indentation.widthAnchor.constraint(equalToConstant: CGFloat(item.depth) * 18).isActive = true
+            indentation.widthAnchor.constraint(equalToConstant: CGFloat(item.depth) * 16).isActive = true
             views.append(indentation)
         }
 
@@ -1594,8 +1594,8 @@ extension ViewController {
             disclosure.imagePosition = .imageOnly
             disclosure.focusRingType = .none
             disclosure.translatesAutoresizingMaskIntoConstraints = false
-            disclosure.widthAnchor.constraint(equalToConstant: 14).isActive = true
-            disclosure.heightAnchor.constraint(equalToConstant: 16).isActive = true
+            disclosure.widthAnchor.constraint(equalToConstant: 12).isActive = true
+            disclosure.heightAnchor.constraint(equalToConstant: 14).isActive = true
             let expanded = expandedFilePaths.contains(item.path)
             let fallback = expanded ? NSImage.touchBarGoDownTemplateName : NSImage.rightFacingTriangleTemplateName
             disclosure.image = symbolImage(expanded ? "chevron.down" : "chevron.right", fallback: fallback)
@@ -1608,9 +1608,9 @@ extension ViewController {
             views.append(disclosure)
         }
 
-        // Keep file/folder artwork visually proportional to the configurable Files font size.
-        // 13 pt is the default text size and historically used a 16 pt icon.
-        let iconSize = 16 * (filesFontSize / 13)
+        // Keep file/folder artwork proportional to the configurable Files font size while
+        // leaving a little less vertical air in the compact browser rows.
+        let iconSize = 15 * (filesFontSize / 13)
         if item.entry.isDropBox {
             views.append(nativeMacOSFolderIconView(
                 size: iconSize, badgeSymbol: "tray.and.arrow.down.fill",
@@ -1655,7 +1655,7 @@ extension ViewController {
         let stack = NSStackView(views: views)
         stack.orientation = .horizontal
         stack.alignment = .centerY
-        stack.spacing = 6
+        stack.spacing = 4
         return verticallyCenteredTableContent(stack, leadingInset: filesListLeadingInset)
     }
 
@@ -3021,7 +3021,8 @@ extension ViewController {
         }
     }
     func applyFilesFontSize() {
-        fileTable.rowHeight = max(30, filesFontSize + 17)
+        // Keep rows comfortably clickable but denser than the previous 30+ pt treatment.
+        fileTable.rowHeight = max(27, filesFontSize + 14)
         fileTable.reloadData()
     }
 
