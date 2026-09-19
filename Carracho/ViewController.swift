@@ -1790,7 +1790,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
 
         channelDiscoverButton.target = self
         channelDiscoverButton.action = #selector(showChannelDiscovery(_:))
-        channelDiscoverButton.image = symbolImage("magnifyingglass", fallback: NSImage.revealFreestandingTemplateName)
+        channelDiscoverButton.image = NSImage(named: NSImage.Name("Discover Rooms"))
         channelDiscoverButton.imagePosition = .imageLeading
         channelDiscoverButton.imageHugsTitle = true
         channelDiscoverButton.toolTip = L("Browse rooms available on this server")
@@ -1851,17 +1851,17 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         channelToggleOperatorButton.target = self
         channelToggleOperatorButton.action = #selector(toggleSelectedChannelMemberOperatorMode(_:))
         channelToggleOperatorButton.setButtonType(.toggle)
-        styleIconButton(channelToggleOperatorButton,
-                        symbol: "person.crop.circle.badge.checkmark",
-                        help: L("Toggle Operator Mode"))
+        styleAssetIconButton(channelToggleOperatorButton,
+                             asset: "Toggle Operator Mode Off",
+                             help: L("Toggle Operator Mode"))
         channelToggleOperatorButton.isHidden = true
 
         channelToggleSpeakButton.target = self
         channelToggleSpeakButton.action = #selector(toggleSelectedChannelMemberSpeakPermission(_:))
         channelToggleSpeakButton.setButtonType(.toggle)
-        styleIconButton(channelToggleSpeakButton,
-                        symbol: "speaker.wave.2.fill",
-                        help: L("Toggle Speak Permission"))
+        styleAssetIconButton(channelToggleSpeakButton,
+                             asset: "Toggle Speak Permission Off",
+                             help: L("Toggle Speak Permission"))
         channelToggleSpeakButton.isHidden = true
 
         channelMemberActionsButton.target = self
@@ -2418,8 +2418,8 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         let conferenceNavigation = verticalStack([conferencesHeader, conferencesContent], spacing: 2)
         conferenceNavigation.widthAnchor.constraint(greaterThanOrEqualToConstant: 180).isActive = true
         userOfflineMessageButton.title = L("Send Offline Messages")
-        userOfflineMessageButton.image = symbolImage("envelope", fallback: NSImage.shareTemplateName)
-        userOfflineMessageButton.showsOfflineSlash = true
+        userOfflineMessageButton.image = NSImage(named: NSImage.Name("Send Offline Messages"))
+        userOfflineMessageButton.showsOfflineSlash = false
         userOfflineMessageButton.imagePosition = .imageLeading
         userOfflineMessageButton.imageHugsTitle = true
         userOfflineMessageButton.heightAnchor.constraint(equalToConstant: 28).isActive = true
@@ -2429,7 +2429,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         broadcastButton.target = self
         broadcastButton.action = #selector(broadcastPressed(_:))
         broadcastButton.title = L("Broadcast")
-        broadcastButton.image = symbolImage("megaphone", fallback: NSImage.shareTemplateName)
+        broadcastButton.image = NSImage(named: NSImage.Name("Broadcast"))
         broadcastButton.imagePosition = .imageLeading
         broadcastButton.imageHugsTitle = true
         broadcastButton.heightAnchor.constraint(equalToConstant: 28).isActive = true
@@ -3107,6 +3107,37 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         ])
     }
 
+    func sizedAssetImage(named name: String, size: CGFloat = 16) -> NSImage? {
+        guard let source = NSImage(named: NSImage.Name(name)) else { return nil }
+
+        let targetSize = NSSize(width: size, height: size)
+        let image = NSImage(size: targetSize)
+        image.lockFocus()
+        source.draw(in: NSRect(origin: .zero, size: targetSize),
+                    from: NSRect(origin: .zero, size: source.size),
+                    operation: .sourceOver,
+                    fraction: 1)
+        image.unlockFocus()
+        image.isTemplate = false
+        return image
+    }
+
+    func styleAssetIconButton(_ button: NSButton, asset: String, help: String) {
+        button.title = ""
+        button.image = sizedAssetImage(named: asset, size: 16)
+        button.imagePosition = .imageOnly
+        button.imageScaling = .scaleNone
+        button.isBordered = false
+        button.contentTintColor = nil
+        button.toolTip = L(help)
+        button.setAccessibilityLabel(L(help))
+        button.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            button.widthAnchor.constraint(equalToConstant: 28),
+            button.heightAnchor.constraint(equalToConstant: 28),
+        ])
+    }
+
     func styleToolbarButton(_ button: NSButton, symbol: String?) {
         button.isBordered = false
         button.imagePosition = .imageAbove
@@ -3213,11 +3244,27 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         button.font = NSFont.systemFont(ofSize: 10, weight: .bold)
         button.contentTintColor = CarrachoTheme.secondaryText
         button.imagePosition = .imageLeading
-        button.image = symbolImage(collapsed ? "chevron.right" : "chevron.down",
-                                   fallback: NSImage.rightFacingTriangleTemplateName)
+        button.image = sidebarSectionHeaderImage(title: title, collapsed: collapsed)
         button.toolTip = collapsed ? LF("Expand %@", L(title).capitalized) : LF("Collapse %@", L(title).capitalized)
         button.heightAnchor.constraint(equalToConstant: 22).isActive = true
         return button
+    }
+
+    func sidebarSectionHeaderImage(title: String, collapsed: Bool) -> NSImage? {
+        let disclosure = symbolImage(collapsed ? "chevron.right" : "chevron.down",
+                                     fallback: NSImage.rightFacingTriangleTemplateName)
+        guard title == "TRACKERS",
+              let disclosure,
+              let trackers = NSImage(named: NSImage.Name("Trackers")) else {
+            return disclosure
+        }
+
+        let canvas = NSImage(size: NSSize(width: 30, height: 18))
+        canvas.lockFocus()
+        disclosure.draw(in: NSRect(x: 0, y: 4, width: 10, height: 10))
+        trackers.draw(in: NSRect(x: 14, y: 1, width: 16, height: 16))
+        canvas.unlockFocus()
+        return canvas
     }
 
     func collapsibleSidebarNavigationButton(title: String, collapsed: Bool, action: Selector) -> NSButton {
@@ -3225,7 +3272,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         button.heightAnchor.constraint(equalToConstant: 28).isActive = true
         button.disclosureImage = symbolImage(collapsed ? "chevron.right" : "chevron.down",
                                              fallback: NSImage.rightFacingTriangleTemplateName)
-        button.image = symbolImage("bubble.left.and.bubble.right", fallback: NSImage.userGroupName)
+        button.image = NSImage(named: NSImage.Name("Conferences"))
         button.imagePosition = .imageLeading
         button.imageHugsTitle = true
         CarrachoTheme.applySidebarButtonStyle(button, selected: false)
@@ -3243,8 +3290,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
 
     func updateSidebarSectionButton(_ button: NSButton?, title: String, collapsed: Bool) {
         guard let button else { return }
-        button.image = symbolImage(collapsed ? "chevron.right" : "chevron.down",
-                                   fallback: NSImage.rightFacingTriangleTemplateName)
+        button.image = sidebarSectionHeaderImage(title: title, collapsed: collapsed)
         button.toolTip = collapsed ? LF("Expand %@", L(title).capitalized) : LF("Collapse %@", L(title).capitalized)
     }
 
@@ -3296,28 +3342,27 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
     }
 
     func sidebarSymbol(for workspace: Workspace) -> NSImage? {
-        guard #available(macOS 11.0, *) else { return nil }
-        let name: String
+        let assetName: String
         switch workspace {
-        case .overview: name = "house"
-        case .conferences: name = "bubble.left.and.bubble.right"
-        case .files: name = "folder"
-        case .transfers: name = "arrow.up.arrow.down.circle"
-        case .news: name = "newspaper"
-        case .messageCenter: name = "envelope"
-        case .accounts: name = "person.2.fill"
-        case .bot: name = "cpu"
-        case .newsgroups: name = "cube"
-        case .serverInfo: name = "info.circle"
-        case .trackers: name = "point.3.connected.trianglepath.dotted"
-        case .serverLog: name = "doc.text"
-        case .events: name = "list.bullet.rectangle.portrait"
-        case .advanced: name = "gearshape"
-        case .agreement: name = "person.text.rectangle"
-        case .statistics: name = "chart.xyaxis.line"
-        case .trackerBrowser: name = "point.3.connected.trianglepath.dotted"
+        case .overview: assetName = "Overview"
+        case .conferences: assetName = "Conferences"
+        case .files: assetName = "Files"
+        case .transfers: assetName = "Transfers"
+        case .news: assetName = "News"
+        case .messageCenter: assetName = "Message Center"
+        case .accounts: assetName = "Accounts"
+        case .bot: assetName = "Bot"
+        case .newsgroups: assetName = "News Categories"
+        case .serverInfo: assetName = "Server Info"
+        case .trackers: assetName = "Trackers"
+        case .serverLog: assetName = "Server Log"
+        case .events: assetName = "Events"
+        case .advanced: assetName = "Advanced"
+        case .agreement: assetName = "Agreement"
+        case .statistics: assetName = "Statistics"
+        case .trackerBrowser: assetName = "Tracker"
         }
-        return NSImage(systemSymbolName: name, accessibilityDescription: workspace.title)
+        return NSImage(named: NSImage.Name(assetName))
     }
 
     func toolbarButton(_ title: String, _ action: Selector) -> NSButton {

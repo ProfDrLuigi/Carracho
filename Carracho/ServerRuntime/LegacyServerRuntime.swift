@@ -2086,6 +2086,15 @@ final class LegacyServerRuntime {
             guard let target = authenticatedSession(userID: userID) else {
                 throw LegacyServerRuntimeError.protocolFailure("disconnect target is not connected")
             }
+            if target.isLocalOnly {
+                // The built-in Bot has no TCP connection to kick. Persistently disable it first,
+                // otherwise the Bot controller would recreate the synthetic session immediately.
+                try setLocalBotDesiredEnabled(false)
+                disconnectLocalBot()
+                try sendTaskCompleteIfRequested(packet, to: session)
+                log("Local Bot disabled through user disconnect by user \(session.userID.map(String.init) ?? "?")")
+                return
+            }
             try sendTaskCompleteIfRequested(packet, to: session)
             try? target.sendAuthenticated(LegacyPacket(command: LegacyCommand.forceDisconnect, transactionID: 0, fields: []))
             target.close()
@@ -2106,6 +2115,9 @@ final class LegacyServerRuntime {
             }
             guard let target = authenticatedSession(userID: userID) else {
                 throw LegacyServerRuntimeError.protocolFailure("ban target is not connected")
+            }
+            guard !target.isLocalOnly else {
+                throw LegacyServerRuntimeError.protocolFailure("the local Bot cannot be IP-banned")
             }
             guard let address = ipv4Data(target.peerIP) else {
                 throw LegacyServerRuntimeError.protocolFailure("Classic persistent bans require an IPv4 address")

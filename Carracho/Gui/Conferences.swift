@@ -415,7 +415,9 @@ extension ViewController {
             let button = CarrachoSidebarButton(title: "# \(name)\(suffix)", target: self,
                                                action: #selector(sidebarJoinedChannelPressed(_:)))
             button.tag = Int(session.state.channelID)
-            button.image = symbolImage(active ? "bubble.left.fill" : "bubble.left", fallback: NSImage.infoName)
+            // Joined rooms use the singular Conference asset. Do not use the
+            // Conferences asset here; that belongs to the expandable category row.
+            button.image = NSImage(named: NSImage.Name("Conference"))
             button.imagePosition = .imageLeading
             button.imageHugsTitle = true
             button.font = .systemFont(ofSize: 11.5, weight: active ? .semibold : .regular)
@@ -725,8 +727,10 @@ extension ViewController {
         guard let member else {
             channelToggleOperatorButton.state = .off
             channelToggleSpeakButton.state = .off
-            channelToggleOperatorButton.contentTintColor = CarrachoTheme.secondaryText
-            channelToggleSpeakButton.contentTintColor = CarrachoTheme.secondaryText
+            channelToggleOperatorButton.image = sizedAssetImage(named: "Toggle Operator Mode Off", size: 16)
+            channelToggleSpeakButton.image = sizedAssetImage(named: "Toggle Speak Permission Off", size: 16)
+            channelToggleOperatorButton.contentTintColor = nil
+            channelToggleSpeakButton.contentTintColor = nil
             channelToggleOperatorButton.toolTip = L("Toggle Operator Mode")
             channelToggleSpeakButton.toolTip = L("Toggle Speak Permission")
             channelToggleOperatorButton.setAccessibilityLabel(L("Toggle Operator Mode"))
@@ -739,18 +743,22 @@ extension ViewController {
         let speakEnabled = member.mode & Self.channelSpeechMode != 0
 
         channelToggleOperatorButton.state = operatorEnabled ? .on : .off
-        channelToggleOperatorButton.contentTintColor = operatorEnabled ? CarrachoTheme.accent : CarrachoTheme.secondaryText
+        channelToggleOperatorButton.image = sizedAssetImage(
+            named: operatorEnabled ? "Toggle Operator Mode" : "Toggle Operator Mode Off",
+            size: 16
+        )
+        channelToggleOperatorButton.contentTintColor = nil
         channelToggleOperatorButton.toolTip = operatorEnabled
             ? LF("Remove Operator Mode from %@", memberName)
             : LF("Grant Operator Mode to %@", memberName)
         channelToggleOperatorButton.setAccessibilityLabel(channelToggleOperatorButton.toolTip ?? L("Toggle Operator Mode"))
 
         channelToggleSpeakButton.state = speakEnabled ? .on : .off
-        channelToggleSpeakButton.contentTintColor = speakEnabled ? CarrachoTheme.accent : CarrachoTheme.secondaryText
-        channelToggleSpeakButton.image = symbolImage(
-            speakEnabled ? "speaker.wave.2.fill" : "speaker.slash.fill",
-            fallback: NSImage.actionTemplateName
+        channelToggleSpeakButton.image = sizedAssetImage(
+            named: speakEnabled ? "Toggle Speak Permission" : "Toggle Speak Permission Off",
+            size: 16
         )
+        channelToggleSpeakButton.contentTintColor = nil
         channelToggleSpeakButton.toolTip = speakEnabled
             ? LF("Remove Speak Permission from %@", memberName)
             : LF("Grant Speak Permission to %@", memberName)

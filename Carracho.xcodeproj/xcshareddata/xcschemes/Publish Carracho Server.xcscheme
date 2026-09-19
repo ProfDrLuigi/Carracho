@@ -16,8 +16,8 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "2A80A9C4305D5EF400ECFBC3"
-               BuildableName = "Publish CarrachoServer"
-               BlueprintName = "Publish CarrachoServer"
+               BuildableName = "Publish Carracho Server"
+               BlueprintName = "Publish Carracho Server"
                ReferencedContainer = "container:Carracho.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
@@ -52,8 +52,8 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "2A80A9C4305D5EF400ECFBC3"
-            BuildableName = "Publish CarrachoServer"
-            BlueprintName = "Publish CarrachoServer"
+            BuildableName = "Publish Carracho Server"
+            BlueprintName = "Publish Carracho Server"
             ReferencedContainer = "container:Carracho.xcodeproj">
          </BuildableReference>
       </MacroExpansion>

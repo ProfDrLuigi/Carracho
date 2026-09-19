@@ -2896,6 +2896,20 @@ static int handle_transfer_info(cr_session*s,const cr_packet*p){
 static int handle_disconnect_user(cr_session *s, const cr_packet *p, int ban) {
     unsigned permission=ban?PERM_BAN_USERS:PERM_DISCONNECT_USERS;if(!account_perm(s,permission))return send_error(s,p->transaction_id,1);uint32_t uid;if(packet_target_user(p,&uid)||uid==s->user_id)return send_error(s,p->transaction_id,1);
     pthread_mutex_lock(&s->server->mutex);cr_session*t=find_session_locked(s->server,uid);if(!t){pthread_mutex_unlock(&s->server->mutex);return send_error(s,p->transaction_id,1);}
+    int target_is_local_bot=t==s->server->bot_session&&t->local_only;
+    if(target_is_local_bot){
+        pthread_mutex_unlock(&s->server->mutex);
+        /* The built-in Bot has no TCP socket to kick. Treat Disconnect as the Bot's
+           persistent off switch so it does not reconnect on the controller's next poll.
+           Never allow Ban here: its synthetic peer is 127.0.0.1 and must not become an
+           IP restriction. */
+        if(ban||bot_store_enabled(s->server,0))
+            return send_error(s,p->transaction_id,1);
+        disconnect_local_bot(s->server);
+        int rc=send_task_complete(s,p->transaction_id);
+        log_msg("Local Bot disabled through user disconnect by user %u",s->user_id);
+        return rc;
+    }
     if(ban){struct in_addr addr;if(inet_pton(AF_INET,t->peer_ip,&addr)!=1||cr_state_prepend_ipv4_ban(&s->server->state,(const uint8_t*)&addr)){pthread_mutex_unlock(&s->server->mutex);return send_error(s,p->transaction_id,1);}}
     session_send(t,CMD_FORCE_DISCONNECT,0,NULL,0);shutdown(t->fd,SHUT_RDWR);pthread_mutex_unlock(&s->server->mutex);
     int rc=send_task_complete(s,p->transaction_id);log_msg("User %u %s by user %u",uid,ban?"banned":"disconnected",s->user_id);return rc;
