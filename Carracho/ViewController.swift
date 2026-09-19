@@ -1613,6 +1613,9 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         transferSearchField.action = #selector(transferSearchChanged(_:))
         transferSearchField.sendsSearchStringImmediately = true
         transferSearchField.setAccessibilityLabel(L("Filter transfers"))
+        if let searchCell = transferSearchField.cell as? NSSearchFieldCell {
+            searchCell.searchButtonCell?.image = sizedAssetImage(named: "Filter", size: 14)
+        }
 
         transferRefreshButton.target = self
         transferRefreshButton.action = #selector(refreshTransferMonitorPressed(_:))
@@ -1638,14 +1641,16 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
             button.setContentHuggingPriority(.required, for: .horizontal)
             button.setContentCompressionResistancePriority(.required, for: .horizontal)
         }
-        transferPauseButton.image = symbolImage("pause.fill", fallback: NSImage.touchBarPauseTemplateName)
-        transferResumeButton.image = symbolImage("play.fill", fallback: NSImage.touchBarPlayTemplateName)
-        transferAbortButton.image = symbolImage("xmark.circle", fallback: NSImage.stopProgressTemplateName)
-        transferRemoveButton.image = symbolImage("minus.circle", fallback: NSImage.removeTemplateName)
-        transferDeletePartialButton.image = symbolImage("trash", fallback: NSImage.trashEmptyName)
+        transferPauseButton.image = sizedAssetImage(named: "Pause", size: 16)
+        transferResumeButton.image = sizedAssetImage(named: "Resume", size: 16)
+        transferAbortButton.image = sizedAssetImage(named: "Abort", size: 16)
+        transferRemoveButton.image = sizedAssetImage(named: "Remove", size: 16)
+        transferDeletePartialButton.image = sizedAssetImage(named: "Delete Partial", size: 16)
         for button in [transferPauseButton, transferResumeButton, transferAbortButton, transferRemoveButton, transferDeletePartialButton] {
             button.imagePosition = .imageLeading
+            button.imageScaling = .scaleNone
             button.imageHugsTitle = true
+            button.contentTintColor = nil
         }
         transferRemoveButton.toolTip = L("Remove the selected transfer from the monitor list")
         transferDeletePartialButton.toolTip = L("Delete incomplete local/server staging data for the selected transfer")
