@@ -729,18 +729,27 @@ static cr_channel *channel_by_id_locked(cr_server*s,uint32_t id){for(size_t i=0;
 static int channel_member_index(cr_channel*c,uint32_t uid){for(size_t i=0;i<c->member_count;i++)if(c->members[i].user_id==uid)return(int)i;return-1;}
 static cr_channel *allocate_channel_locked(cr_server*s,const uint8_t*name,size_t name_len,const uint8_t*pw,size_t pw_len){for(size_t i=0;i<CR_SERVER_MAX_CHANNELS;i++)if(!s->channels[i].used){cr_channel*c=&s->channels[i];memset(c,0,sizeof(*c));c->used=1;while(!s->next_channel_id||channel_by_id_locked(s,s->next_channel_id))s->next_channel_id++;c->id=s->next_channel_id++;memcpy(c->name,name,name_len);c->name_len=name_len;memcpy(c->password,pw,pw_len);c->password_len=pw_len;return c;}return NULL;}
 
-static int classic_avatar_png(const uint8_t*source,size_t source_len,uint8_t**out,size_t*out_len){
-    static const uint8_t sig[8]={0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a};
+static int classic_avatar_payload(const uint8_t*source,size_t source_len,uint8_t**out,size_t*out_len){
+    static const uint8_t png_sig[8]={0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a};
     *out=NULL;*out_len=0;
+    if(!source||!source_len)return 0;
+
     /*
-     * Classic 1.0b10r4 builds 16x16 CIcons directly from the packed user-list PNG.
-     * Its live picture path also rejects payloads above 0x27c bytes. Without pulling
-     * an image library into the native server, preserve already-Classic-sized PNGs
-     * and suppress modern 128x128 avatars. Classic then uses its normal fallback
-     * icon instead of interpreting a large PNG as palette garbage.
+     * Carracho 1.0b10r4 sends its native user icon as an exact 0x27c-byte
+     * payload in login/update field 5. Preserve that wire object byte-for-byte.
      */
-    if(!source||source_len<24||source_len>CLASSIC_AVATAR_MAX_BYTES||
-       memcmp(source,sig,sizeof(sig))||memcmp(source+12,"IHDR",4))return 0;
+    if(source_len==CLASSIC_AVATAR_MAX_BYTES){
+        uint8_t*copy=malloc(source_len);if(!copy)return-1;
+        memcpy(copy,source,source_len);*out=copy;*out_len=source_len;return 0;
+    }
+
+    /*
+     * Modern accounts can store PNG avatars. Classic can also consume a very
+     * small 16x16 PNG, but larger modern avatars must be omitted rather than
+     * handed to the old picture decoder as arbitrary data.
+     */
+    if(source_len<24||source_len>CLASSIC_AVATAR_MAX_BYTES||
+       memcmp(source,png_sig,sizeof(png_sig))||memcmp(source+12,"IHDR",4))return 0;
     uint32_t width=cr_read_be32(source+16),height=cr_read_be32(source+20);
     if(!width||!height||width>16||height>16)return 0;
     uint8_t*copy=malloc(source_len);if(!copy)return-1;
@@ -757,7 +766,7 @@ static int encode_user_list(cr_server*s,cr_session*requester,int include_picture
         cr_session*x=s->sessions[i];
         if(!(session_ready_for_async(x)||(x==requester&&x->authenticated&&!x->closed)))continue;
         uint8_t*classic_picture=NULL;size_t picture_len=0;
-        if(include_pictures&&classic_avatar_png(x->picture,x->picture_len,&classic_picture,&picture_len)){
+        if(include_pictures&&classic_avatar_payload(x->picture,x->picture_len,&classic_picture,&picture_len)){
             pthread_mutex_unlock(&s->mutex);return-1;
         }
         if(picture_len>UINT32_MAX||
@@ -1332,7 +1341,7 @@ static int send_initial_user_updates(cr_session*recipient){
 static void broadcast_user_arrived(cr_session*s){
     uint8_t uid[4],flags[2],color[4],legacy=(uint8_t)(s->modern_transport?0:1);
     uint8_t*classic_picture=NULL;size_t classic_picture_len=0;
-    (void)classic_avatar_png(s->picture,s->picture_len,&classic_picture,&classic_picture_len);
+    (void)classic_avatar_payload(s->picture,s->picture_len,&classic_picture,&classic_picture_len);
     cr_write_be32(uid,s->user_id);cr_write_be16(flags,s->sleeping?0x0100:0);
     cr_tlv_out classic_fields[4]={{1,uid,4},{2,s->nickname,(uint16_t)s->nickname_len},{3,flags,2}};
     size_t classic_count=3;
@@ -2782,7 +2791,7 @@ static int handle_user_update(cr_session *s, const cr_packet *p) {
     memcpy(event_nick,s->nickname,s->nickname_len);size_t en=s->nickname_len;size_t ep=s->picture_len;size_t es=s->status_message_len;if(es)memcpy(event_status,s->status_message,es);
     uint8_t uid[4],color[4];cr_write_be32(uid,s->user_id);
     uint8_t*classic_picture=NULL;size_t classic_picture_len=0;
-    if(pic&&picture_len)(void)classic_avatar_png(s->picture,s->picture_len,&classic_picture,&classic_picture_len);
+    if(pic&&picture_len)(void)classic_avatar_payload(s->picture,s->picture_len,&classic_picture,&classic_picture_len);
     cr_tlv_out classic_fields[3]={{1,uid,4},{2,event_nick,(uint16_t)en}};size_t classic_count=2;
     if(pic&&(!picture_len||classic_picture_len))
         classic_fields[classic_count++]=(cr_tlv_out){0xb4,classic_picture,(uint16_t)classic_picture_len};
@@ -4035,6 +4044,7 @@ static int register_authenticated(cr_session *s, const cr_account *a,
 
 static int authenticate(cr_session *s, const cr_packet *p, const uint8_t challenge[12]) {
     const cr_tlv *login=cr_packet_field(p,1), *digest=cr_packet_field(p,2), *nick=cr_packet_field(p,4);
+    const cr_tlv *login_picture=s->modern_transport?NULL:cr_packet_field(p,5);
     if(!login||!digest||!nick||login->length>63||digest->length!=32||nick->length>255)return-1;
     char user[512]; if(cr_macroman_to_utf8(login->value,login->length,user,sizeof(user)))return-1;
     char password[512]; int valid=0;
@@ -4053,6 +4063,16 @@ static int authenticate(cr_session *s, const cr_packet *p, const uint8_t challen
     copy=s->server->state.accounts[idx]; copy.picture=NULL;
     if(s->server->state.accounts[idx].picture_len){copy.picture=malloc(s->server->state.accounts[idx].picture_len);if(!copy.picture){pthread_mutex_unlock(&s->server->state.mutex);return-1;}memcpy(copy.picture,s->server->state.accounts[idx].picture,s->server->state.accounts[idx].picture_len);copy.picture_len=s->server->state.accounts[idx].picture_len;}
     pthread_mutex_unlock(&s->server->state.mutex);
+    if(login_picture&&login_picture->length==CLASSIC_AVATAR_MAX_BYTES){
+        uint8_t*picture=malloc(login_picture->length);
+        if(!picture){free(copy.picture);return-1;}
+        memcpy(picture,login_picture->value,login_picture->length);
+        free(copy.picture);copy.picture=picture;copy.picture_len=login_picture->length;
+        if(cr_state_update_profile(&s->server->state,copy.id,NULL,0,NULL,0,NULL,0,
+                                   login_picture->value,login_picture->length,1)){
+            free(copy.picture);return-1;
+        }
+    }
     int rc=register_authenticated(s,&copy,nick->value,nick->length,key,keylen);free(copy.picture);return rc;
 }
 static int recv_authenticated_packet(cr_session*s,cr_packet*p,cr_buffer*plain){

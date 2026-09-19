@@ -267,9 +267,9 @@ extension ViewController {
         }
 
         let avatar = NSImageView()
-        if let picture = NSImage(data: info.picture), !info.picture.isEmpty {
+        if let picture = AvatarArtwork.decodedImage(from: info.picture) {
             avatar.image = picture
-        } else if let picture = NSImage(data: listEntry.picture), !listEntry.picture.isEmpty {
+        } else if let picture = AvatarArtwork.decodedImage(from: listEntry.picture) {
             avatar.image = picture
         } else {
             avatar.image = AvatarArtwork.defaultImage()
@@ -560,7 +560,8 @@ extension ViewController {
             case .none:
                 avatarData = Data()
             case .unconfigured:
-                if let serverPicture = ownUser?.picture, !serverPicture.isEmpty, let image = NSImage(data: serverPicture) {
+                if let serverPicture = ownUser?.picture,
+                   let image = AvatarArtwork.decodedImage(from: serverPicture) {
                     avatarData = try AvatarImageProcessor.normalizedPNG(from: image)
                     try localAvatarStore.save(avatarData, for: storageIdentity)
                     appendLine("\n" + L("Existing server avatar migrated to local profile storage."))
@@ -632,22 +633,14 @@ extension ViewController {
 
     func userListCell(for user: LegacyUserListEntry) -> NSView {
         let avatar = NSImageView()
-        if user.isLegacyTransport {
-            // Classic sessions always use the dedicated Legacy avatar. Their stored/profile
-            // picture is deliberately ignored so transport origin is immediately visible.
-            avatar.image = NSImage(named: NSImage.Name("LegacyAvatar")) ?? AvatarArtwork.defaultImage()
-            avatar.contentTintColor = nil
-        } else if let picture = NSImage(data: user.picture), !user.picture.isEmpty {
-            avatar.image = picture
-        } else {
-            avatar.image = AvatarArtwork.defaultImage()
-            avatar.contentTintColor = nil
-        }
+        avatar.image = AvatarArtwork.userImage(picture: user.picture,
+                                               isLegacyTransport: user.isLegacyTransport)
+        avatar.contentTintColor = nil
         avatar.imageScaling = .scaleProportionallyUpOrDown
         avatar.translatesAutoresizingMaskIntoConstraints = false
         avatar.wantsLayer = true
-        avatar.layer?.cornerRadius = 15
-        avatar.layer?.masksToBounds = true
+        avatar.layer?.cornerRadius = user.isLegacyTransport ? 0 : 15
+        avatar.layer?.masksToBounds = !user.isLegacyTransport
         NSLayoutConstraint.activate([
             avatar.widthAnchor.constraint(equalToConstant: 30),
             avatar.heightAnchor.constraint(equalToConstant: 30),

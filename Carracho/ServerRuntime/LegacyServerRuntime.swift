@@ -46,9 +46,16 @@ final class LegacyServerRuntime {
     private static let channelSpeechMode: UInt8 = 0x40
     private static let channelPermanentFlag: UInt16 = 0x8000
 
-    private static func classicAvatarPNG(from source: Data) -> Data {
-        guard !source.isEmpty,
-              source.count >= pngSignature.count,
+    private static func classicAvatarPayload(from source: Data) -> Data {
+        guard !source.isEmpty else { return Data() }
+
+        // Carracho 1.0b10r4 sends its native user icon as exactly 0x27c bytes.
+        // This is not PNG data; Classic expects the historical payload unchanged.
+        if source.count == classicAvatarMaximumBytes {
+            return source
+        }
+
+        guard source.count >= pngSignature.count,
               source.prefix(pngSignature.count) == pngSignature else { return Data() }
 #if canImport(AppKit)
         guard let image = NSImage(data: source) else { return Data() }
@@ -1522,6 +1529,7 @@ final class LegacyServerRuntime {
     fileprivate func authenticateLegacy(loginData: Data,
                                         digest: Data,
                                         nickname: Data,
+                                        picture: Data?,
                                         challenge: Data) throws -> LegacyAuthenticatedSession? {
         guard loginData.count <= 63, digest.count == 32, nickname.count <= 255,
               let login = String(data: loginData, encoding: .macOSRoman) else { return nil }
@@ -1532,9 +1540,23 @@ final class LegacyServerRuntime {
         let digestMatches = Self.constantTimeEqual(digest, expectedDigest)
         guard storedLegacyPassword != nil, digestMatches else { return nil }
         let snapshot = backend.snapshot()
-        guard let account = snapshot.accounts.first(where: {
+        guard var account = snapshot.accounts.first(where: {
             $0.login.compare(login, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame
         }) else { return nil }
+
+        if let picture, picture.count == Self.classicAvatarMaximumBytes, account.picture != picture {
+            try backend.updateServerState { state in
+                guard let index = state.accounts.firstIndex(where: { $0.id == account.id }) else {
+                    throw ServerStateError.accountNotFound(account.id)
+                }
+                state.accounts[index].picture = picture
+                state.accounts[index].modifiedAt = Date()
+                try ServerStateValidator.validate(account: state.accounts[index])
+            }
+            account.picture = picture
+            onStateChanged?()
+        }
+
         let sessionKey = try LegacyAuthentication.deriveSessionKey(password: passwordData, challenge: challenge)
         let effectiveNickname = nickname.isEmpty ? loginData : nickname
         return LegacyAuthenticatedSession(account: account, nickname: effectiveNickname, sessionKey: sessionKey)
@@ -1601,7 +1623,7 @@ final class LegacyServerRuntime {
             LegacyTLV(type: 2, value: entry.nickname),
             LegacyTLV(type: 3, value: LegacyWire.uint16BE(entry.flags)),
         ]
-        let classicPicture = Self.classicAvatarPNG(from: entry.picture)
+        let classicPicture = Self.classicAvatarPayload(from: entry.picture)
         if !classicPicture.isEmpty {
             classicFields.append(LegacyTLV(type: LegacyUserInfoField.picture, value: classicPicture))
         }
@@ -1704,7 +1726,7 @@ final class LegacyServerRuntime {
             // though the same image works after reconnect. Keep the initial snapshot in the
             // small PNG range used by the original client.
             for index in loginUsers.indices {
-                loginUsers[index].picture = Self.classicAvatarPNG(from: loginUsers[index].picture)
+                loginUsers[index].picture = Self.classicAvatarPayload(from: loginUsers[index].picture)
             }
         }
         var encodedUsers = try LegacyPackedRecords.encodeUserList(loginUsers)
@@ -2444,7 +2466,7 @@ final class LegacyServerRuntime {
             ]
             if pictureField != nil {
                 classicFields.append(LegacyTLV(type: LegacyUserInfoField.picture,
-                                               value: Self.classicAvatarPNG(from: picture)))
+                                               value: Self.classicAvatarPayload(from: picture)))
             }
             var modernFields = [
                 LegacyTLV(type: 1, value: LegacyWire.uint32BE(userID)),
@@ -5294,6 +5316,7 @@ private final class LegacyServerSession {
                   let authenticated = try runtime.authenticateLegacy(loginData: loginField.value,
                                                                      digest: digestField.value,
                                                                      nickname: nicknameField.value,
+                                                                     picture: modernTransport ? nil : loginPacket.firstField(type: 5)?.value,
                                                                      challenge: challenge) else {
                 runtime?.recordLoginFailure()
                 try send(packet: LegacyServerRuntime.errorPacket(transactionID: loginPacket.transactionID, code: 100),

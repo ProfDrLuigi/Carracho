@@ -1839,10 +1839,10 @@ extension ViewController {
 
     func newsAvatarImage(for sender: Data) -> NSImage? {
         if let user = liveUsers.values.first(where: { $0.nickname == sender }) {
-            if user.isLegacyTransport {
-                return NSImage(named: NSImage.Name("LegacyAvatar")) ?? AvatarArtwork.defaultImage()
+            if let image = AvatarArtwork.userImage(picture: user.picture,
+                                                   isLegacyTransport: user.isLegacyTransport) {
+                return image
             }
-            if !user.picture.isEmpty, let image = NSImage(data: user.picture) { return image }
         }
         return AvatarArtwork.defaultImage()
     }

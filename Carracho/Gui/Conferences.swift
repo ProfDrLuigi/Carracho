@@ -1247,13 +1247,8 @@ extension ViewController {
     func channelAvatarAttachment(userID: UInt32, size: CGFloat = 28) -> NSAttributedString {
         let image: NSImage?
         if let user = liveUsers[userID] {
-            if user.isLegacyTransport {
-                image = NSImage(named: NSImage.Name("LegacyAvatar")) ?? AvatarArtwork.defaultImage()
-            } else if !user.picture.isEmpty, let picture = NSImage(data: user.picture) {
-                image = picture
-            } else {
-                image = AvatarArtwork.defaultImage()
-            }
+            image = AvatarArtwork.userImage(picture: user.picture,
+                                            isLegacyTransport: user.isLegacyTransport)
         } else {
             image = AvatarArtwork.defaultImage()
         }
@@ -2183,21 +2178,16 @@ extension ViewController {
         let user = liveUsers[member.userID]
         let avatar = NSImageView()
         if let user {
-            if user.isLegacyTransport {
-                avatar.image = NSImage(named: NSImage.Name("LegacyAvatar")) ?? AvatarArtwork.defaultImage()
-            } else if !user.picture.isEmpty, let picture = NSImage(data: user.picture) {
-                avatar.image = picture
-            } else {
-                avatar.image = AvatarArtwork.defaultImage()
-            }
+            avatar.image = AvatarArtwork.userImage(picture: user.picture,
+                                                    isLegacyTransport: user.isLegacyTransport)
         } else {
             avatar.image = AvatarArtwork.defaultImage()
         }
         avatar.imageScaling = .scaleProportionallyUpOrDown
         avatar.translatesAutoresizingMaskIntoConstraints = false
         avatar.wantsLayer = true
-        avatar.layer?.cornerRadius = 15
-        avatar.layer?.masksToBounds = true
+        avatar.layer?.cornerRadius = user?.isLegacyTransport == true ? 0 : 15
+        avatar.layer?.masksToBounds = user?.isLegacyTransport != true
         NSLayoutConstraint.activate([
             avatar.widthAnchor.constraint(equalToConstant: 30),
             avatar.heightAnchor.constraint(equalToConstant: 30),

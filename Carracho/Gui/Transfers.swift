@@ -2305,6 +2305,16 @@ extension ViewController {
         return symbolImage("doc.fill", fallback: NSImage.multipleDocumentsName)
     }
 
+    func transferAvatarIsLegacy(_ row: TransferMonitorRow) -> Bool {
+        let userID: UInt32?
+        switch row {
+        case let .local(item): userID = item.userID
+        case let .managed(item): userID = item.userID
+        case let .legacyServer(item): userID = item.userID
+        }
+        return userID.flatMap { liveUsers[$0]?.isLegacyTransport } ?? false
+    }
+
     func transferAvatarImage(for row: TransferMonitorRow) -> NSImage? {
         let userID: UInt32?
         let storedPicture: Data?
@@ -2313,12 +2323,10 @@ extension ViewController {
         case let .managed(item): userID = item.userID; storedPicture = nil
         case let .legacyServer(item): userID = item.userID; storedPicture = nil
         }
-        if let storedPicture, !storedPicture.isEmpty, let image = NSImage(data: storedPicture) { return image }
+        if let storedPicture, let image = AvatarArtwork.decodedImage(from: storedPicture) { return image }
         if let userID, let user = liveUsers[userID] {
-            if user.isLegacyTransport {
-                return NSImage(named: NSImage.Name("LegacyAvatar")) ?? AvatarArtwork.defaultImage()
-            }
-            if !user.picture.isEmpty, let image = NSImage(data: user.picture) { return image }
+            return AvatarArtwork.userImage(picture: user.picture,
+                                           isLegacyTransport: user.isLegacyTransport)
         }
         return AvatarArtwork.defaultImage()
     }
@@ -2384,8 +2392,9 @@ extension ViewController {
             avatar.imageScaling = .scaleProportionallyUpOrDown
             avatar.translatesAutoresizingMaskIntoConstraints = false
             avatar.wantsLayer = true
-            avatar.layer?.cornerRadius = 12
-            avatar.layer?.masksToBounds = true
+            let legacyAvatar = transferAvatarIsLegacy(row)
+            avatar.layer?.cornerRadius = legacyAvatar ? 0 : 12
+            avatar.layer?.masksToBounds = !legacyAvatar
             avatar.toolTip = transferRowUserName(row)
             content.addSubview(avatar)
             NSLayoutConstraint.activate([

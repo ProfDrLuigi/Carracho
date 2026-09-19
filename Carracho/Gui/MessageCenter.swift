@@ -672,16 +672,11 @@ extension ViewController {
 
     func privateMessageAvatarImage(for conversation: PrivateMessageConversation) -> NSImage? {
         if let live = liveUsers[conversation.userID] {
-            if live.isLegacyTransport {
-                return NSImage(named: NSImage.Name("LegacyAvatar")) ?? AvatarArtwork.defaultImage()
-            }
-            if !live.picture.isEmpty, let image = NSImage(data: live.picture) { return image }
+            return AvatarArtwork.userImage(picture: live.picture,
+                                           isLegacyTransport: live.isLegacyTransport)
         }
-        if conversation.isLegacyTransport {
-            return NSImage(named: NSImage.Name("LegacyAvatar")) ?? AvatarArtwork.defaultImage()
-        }
-        if !conversation.picture.isEmpty, let image = NSImage(data: conversation.picture) { return image }
-        return AvatarArtwork.defaultImage()
+        return AvatarArtwork.userImage(picture: conversation.picture,
+                                       isLegacyTransport: conversation.isLegacyTransport)
     }
 
     func updatePrivateConversationMetadata(_ userID: UInt32) {
@@ -775,8 +770,8 @@ extension ViewController {
         avatar.imageScaling = .scaleProportionallyUpOrDown
         avatar.translatesAutoresizingMaskIntoConstraints = false
         avatar.wantsLayer = true
-        avatar.layer?.cornerRadius = 18
-        avatar.layer?.masksToBounds = true
+        avatar.layer?.cornerRadius = conversation.isLegacyTransport ? 0 : 18
+        avatar.layer?.masksToBounds = !conversation.isLegacyTransport
         NSLayoutConstraint.activate([
             avatar.widthAnchor.constraint(equalToConstant: 36),
             avatar.heightAnchor.constraint(equalToConstant: 36),
@@ -993,6 +988,8 @@ extension ViewController {
         privateMessageDeleteChatButton.isHidden = false
         privateMessageDeleteChatButton.isEnabled = true
         privateMessageHeaderAvatar.image = privateMessageAvatarImage(for: conversation)
+        privateMessageHeaderAvatar.layer?.cornerRadius = conversation.isLegacyTransport ? 0 : 18
+        privateMessageHeaderAvatar.layer?.masksToBounds = !conversation.isLegacyTransport
         privateMessageHeaderNameLabel.stringValue = conversation.nickname
         let online = client.isConnected && liveUsers[userID] != nil
         var statusParts = [online ? L("Online") : L("Offline")]

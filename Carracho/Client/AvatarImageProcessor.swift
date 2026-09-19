@@ -22,6 +22,12 @@ enum AvatarImageError: LocalizedError {
 }
 
 enum AvatarArtwork {
+    private static let classicPayloadBytes = 0x27c
+    private static let classicPixelBytes = 0x200
+    private static let classicWidth = 16
+    private static let classicHeight = 16
+    private static let classicRowBytes = 32
+
     static func defaultImage() -> NSImage? {
         if let image = NSImage(named: "CarrachoAvatar") { return image }
         if let image = NSImage(named: NSImage.applicationIconName) { return image }
@@ -29,6 +35,96 @@ enum AvatarArtwork {
             return NSImage(systemSymbolName: "person.crop.square", accessibilityDescription: L("Avatar"))
         }
         return NSImage(named: NSImage.userName)
+    }
+
+    static func decodedImage(from data: Data) -> NSImage? {
+        guard !data.isEmpty else { return nil }
+        if let image = NSImage(data: data) { return image }
+        return classicImage(from: data)
+    }
+
+    static func userImage(picture: Data, isLegacyTransport: Bool) -> NSImage? {
+        if let image = decodedImage(from: picture) { return image }
+        if isLegacyTransport, let image = NSImage(named: NSImage.Name("LegacyAvatar")) {
+            return image
+        }
+        return defaultImage()
+    }
+
+    /// Decodes the native 16 × 16 avatar payload emitted by Carracho 1.0b10r4.
+    ///
+    /// The original client allocates a 512-byte 8-bit PixMap with rowBytes=32,
+    /// reads the first 0x200 bytes of the 0x27c-byte picture field into it and
+    /// displays the first 16 bytes of each row. Pixel value 0 is transparent;
+    /// all other values are indexes into QuickDraw's standard clut #8.
+    private static func classicImage(from data: Data) -> NSImage? {
+        guard data.count == classicPayloadBytes,
+              data.count >= classicPixelBytes,
+              let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil,
+                                            pixelsWide: classicWidth,
+                                            pixelsHigh: classicHeight,
+                                            bitsPerSample: 8,
+                                            samplesPerPixel: 4,
+                                            hasAlpha: true,
+                                            isPlanar: false,
+                                            colorSpaceName: .deviceRGB,
+                                            bitmapFormat: [],
+                                            bytesPerRow: classicWidth * 4,
+                                            bitsPerPixel: 32),
+              let destination = bitmap.bitmapData else {
+            return nil
+        }
+
+        data.withUnsafeBytes { raw in
+            guard let source = raw.bindMemory(to: UInt8.self).baseAddress else { return }
+            for y in 0 ..< classicHeight {
+                for x in 0 ..< classicWidth {
+                    let index = source[y * classicRowBytes + x]
+                    let offset = (y * classicWidth + x) * 4
+                    if index == 0 {
+                        destination[offset] = 0
+                        destination[offset + 1] = 0
+                        destination[offset + 2] = 0
+                        destination[offset + 3] = 0
+                    } else {
+                        let color = classicCLUT8(index)
+                        destination[offset] = color.red
+                        destination[offset + 1] = color.green
+                        destination[offset + 2] = color.blue
+                        destination[offset + 3] = 255
+                    }
+                }
+            }
+        }
+
+        bitmap.size = NSSize(width: classicWidth, height: classicHeight)
+        let image = NSImage(size: bitmap.size)
+        image.addRepresentation(bitmap)
+        return image
+    }
+
+    /// QuickDraw GetCTable(8): 6×6×6 reversed RGB cube, followed by extra
+    /// red/green/blue/gray ramps, with black deliberately placed at index 255.
+    private static func classicCLUT8(_ index: UInt8) -> (red: UInt8, green: UInt8, blue: UInt8) {
+        let value = Int(index)
+        if value < 215 {
+            return (
+                UInt8((5 - value / 36) * 51),
+                UInt8((5 - (value / 6) % 6) * 51),
+                UInt8((5 - value % 6) * 51)
+            )
+        }
+        if value == 255 { return (0, 0, 0) }
+
+        let ramp = [14, 13, 11, 10, 8, 7, 5, 4, 2, 1]
+        let relative = value - 215
+        let component = UInt8(ramp[relative % 10] * 17)
+        switch relative / 10 {
+        case 0: return (component, 0, 0)
+        case 1: return (0, component, 0)
+        case 2: return (0, 0, component)
+        default: return (component, component, component)
+        }
     }
 }
 
