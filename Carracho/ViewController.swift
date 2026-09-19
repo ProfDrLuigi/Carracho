@@ -2702,14 +2702,22 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         let settings = NSButton()
         settings.target = self
         settings.action = #selector(menuSettings(_:))
-        styleIconButton(settings, symbol: "gearshape", help: L("Carracho settings"))
+        styleAssetIconButton(settings,
+                             asset: "Carracho Settings",
+                             help: L("Carracho settings"),
+                             imageSize: 30,
+                             buttonSize: 30)
 
         inspectorToggleButton.target = self
         inspectorToggleButton.action = #selector(toggleWorkspaceInspector(_:))
-        styleIconButton(inspectorToggleButton, symbol: "sidebar.right", help: L("Hide inspector"))
+        styleAssetIconButton(inspectorToggleButton,
+                             asset: "Hide Inspector",
+                             help: L("Hide inspector"),
+                             imageSize: 30,
+                             buttonSize: 30)
 
         let separator = CarrachoBackgroundView()
-        separator.fillColor = CarrachoTheme.hairline.withAlphaComponent(0.7)
+        separator.fillColor = CarrachoTheme.hairline.withAlphaComponent(0.0)
         separator.translatesAutoresizingMaskIntoConstraints = false
         separator.widthAnchor.constraint(equalToConstant: 1).isActive = true
         separator.heightAnchor.constraint(equalToConstant: 22).isActive = true
@@ -2719,7 +2727,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         headerConnectionButton.isBordered = false
         headerConnectionButton.controlSize = .small
         headerConnectionButton.font = .systemFont(ofSize: 12, weight: .medium)
-        headerConnectionButton.image = symbolImage("rectangle.portrait.and.arrow.right", fallback: NSImage.stopProgressTemplateName)
+        headerConnectionButton.image = symbolImage("powerplug.fill", fallback: NSImage.actionTemplateName)
         headerConnectionButton.imagePosition = .imageLeading
         headerConnectionButton.imageHugsTitle = true
         headerConnectionButton.contentTintColor = CarrachoTheme.secondaryText
@@ -2727,11 +2735,11 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         headerConnectionButton.setAccessibilityLabel(L("Connection"))
         headerConnectionButton.setContentHuggingPriority(.required, for: .horizontal)
         headerConnectionButton.setContentCompressionResistancePriority(.required, for: .horizontal)
-        headerConnectionButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 82).isActive = true
-        headerConnectionButton.heightAnchor.constraint(equalToConstant: 28).isActive = true
+        headerConnectionButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 116).isActive = true
+        headerConnectionButton.heightAnchor.constraint(equalToConstant: 40).isActive = true
 
         let actions = horizontalStack([
-            settings, inspectorToggleButton, separator, headerConnectionButton,
+            settings, headerConnectionButton, separator, inspectorToggleButton,
         ], spacing: 8)
         actions.setContentHuggingPriority(.required, for: .horizontal)
         actions.setContentCompressionResistancePriority(.required, for: .horizontal)
@@ -2759,10 +2767,10 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
             labels.trailingAnchor.constraint(equalTo: stack.trailingAnchor),
             actions.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -14),
             settings.leadingAnchor.constraint(equalTo: actions.leadingAnchor),
-            inspectorToggleButton.leadingAnchor.constraint(equalTo: settings.trailingAnchor, constant: 8),
-            separator.leadingAnchor.constraint(equalTo: inspectorToggleButton.trailingAnchor, constant: 8),
-            headerConnectionButton.leadingAnchor.constraint(equalTo: separator.trailingAnchor, constant: 8),
-            headerConnectionButton.trailingAnchor.constraint(equalTo: actions.trailingAnchor),
+            headerConnectionButton.leadingAnchor.constraint(equalTo: settings.trailingAnchor, constant: 8),
+            separator.leadingAnchor.constraint(equalTo: headerConnectionButton.trailingAnchor, constant: 8),
+            inspectorToggleButton.leadingAnchor.constraint(equalTo: separator.trailingAnchor, constant: 8),
+            inspectorToggleButton.trailingAnchor.constraint(equalTo: actions.trailingAnchor),
             actions.centerYAnchor.constraint(equalTo: container.centerYAnchor),
             stack.topAnchor.constraint(equalTo: container.topAnchor, constant: 7),
             stack.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -7),
@@ -2783,11 +2791,10 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
 
     func updateInspectorToggleButton() {
         let collapsed = workspaceColumnSplit?.isEdgeCollapsed ?? false
-        inspectorToggleButton.image = symbolImage(collapsed ? "sidebar.right" : "sidebar.right",
-                                                   fallback: NSImage.listViewTemplateName)
+        inspectorToggleButton.image = sizedAssetImage(named: "Hide Inspector", size: 30)
         inspectorToggleButton.toolTip = collapsed ? L("Show inspector") : L("Hide inspector")
         inspectorToggleButton.setAccessibilityLabel(collapsed ? L("Show inspector") : L("Hide inspector"))
-        inspectorToggleButton.contentTintColor = collapsed ? CarrachoTheme.accent : CarrachoTheme.secondaryText
+        inspectorToggleButton.contentTintColor = nil
     }
 
     @objc func openServerBannerLink(_ sender: Any?) {
@@ -3122,9 +3129,13 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         return image
     }
 
-    func styleAssetIconButton(_ button: NSButton, asset: String, help: String) {
+    func styleAssetIconButton(_ button: NSButton,
+                              asset: String,
+                              help: String,
+                              imageSize: CGFloat = 16,
+                              buttonSize: CGFloat = 28) {
         button.title = ""
-        button.image = sizedAssetImage(named: asset, size: 16)
+        button.image = sizedAssetImage(named: asset, size: imageSize)
         button.imagePosition = .imageOnly
         button.imageScaling = .scaleNone
         button.isBordered = false
@@ -3133,8 +3144,8 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         button.setAccessibilityLabel(L(help))
         button.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
-            button.widthAnchor.constraint(equalToConstant: 28),
-            button.heightAnchor.constraint(equalToConstant: 28),
+            button.widthAnchor.constraint(equalToConstant: buttonSize),
+            button.heightAnchor.constraint(equalToConstant: buttonSize),
         ])
     }
 
@@ -7611,10 +7622,11 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         bottomEncryptionLabel.stringValue = connected ? L("Encrypted") : ""
         bottomEncryptionLabel.textColor = connected ? CarrachoTheme.success : CarrachoTheme.secondaryText
         headerConnectionButton.title = connected ? L("Disconnect") : (autoReconnectWorkItem != nil ? L("Cancel Reconnect") : L("Connect"))
-        headerConnectionButton.image = symbolImage(
-            connected ? "rectangle.portrait.and.arrow.right" : "powerplug.fill",
-            fallback: connected ? NSImage.stopProgressTemplateName : NSImage.actionTemplateName
-        )
+        if connected {
+            headerConnectionButton.image = sizedAssetImage(named: "Disconnect", size: 30)
+        } else {
+            headerConnectionButton.image = symbolImage("powerplug.fill", fallback: NSImage.actionTemplateName)
+        }
         headerConnectionButton.toolTip = connected ? L("Disconnect from the active server") : L("Connect to a server")
         refreshAdministrativeNavigationVisibility()
         updateInspectorToggleButton()
