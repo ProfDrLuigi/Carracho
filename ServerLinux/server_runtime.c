@@ -336,6 +336,10 @@ typedef struct cr_active_transfer {
     int paused;
     int aborting;
     int is_directory;
+    double rate_window_started;
+    double last_progress_at;
+    uint64_t rate_window_bytes;
+    uint64_t speed_bps;
     double next_download_send_at;
     uint64_t download_pacing_generation;
 } cr_active_transfer;
@@ -619,7 +623,7 @@ static cr_active_transfer *active_transfer_by_id_locked(cr_server*s,uint32_t id)
 static uint32_t begin_file_transfer(cr_server*s,const cr_session*session,uint8_t kind,int transfer_fd){
     int allowed=kind==1?account_perm(session,PERM_DOWNLOAD):account_perm(session,PERM_UPLOAD);if(!allowed)return 0;
     uint16_t max_total=0,max_user=0;pthread_mutex_lock(&s->state.mutex);max_total=s->state.advanced.max_simultaneous_file_transfers;max_user=s->state.advanced.max_file_transfers_per_user;pthread_mutex_unlock(&s->state.mutex);
-    pthread_mutex_lock(&s->mutex);size_t user_count=0,slot=CR_SERVER_MAX_ACTIVE_TRANSFERS,download_count=0;for(size_t i=0;i<CR_SERVER_MAX_ACTIVE_TRANSFERS;i++){cr_active_transfer*t=&s->active_transfers[i];if(t->used&&t->user_id==session->user_id)user_count++;if(t->used&&t->kind==1)download_count++;if(!t->used&&slot==CR_SERVER_MAX_ACTIVE_TRANSFERS)slot=i;}if(slot==CR_SERVER_MAX_ACTIVE_TRANSFERS||s->active_file_transfers>=max_total||user_count>=max_user){pthread_mutex_unlock(&s->mutex);return 0;}while(!s->next_transfer_id||active_transfer_by_id_locked(s,s->next_transfer_id))s->next_transfer_id++;uint32_t id=s->next_transfer_id++;if(kind==1&&!download_count){s->download_traffic_window_started=0.0;s->download_traffic_last_activity=0.0;s->download_traffic_window_bytes=0;s->download_traffic_bps=0;}cr_active_transfer*t=&s->active_transfers[slot];memset(t,0,sizeof(*t));t->used=1;t->transfer_id=id;t->kind=kind;t->user_id=session->user_id;snprintf(t->account_id,sizeof(t->account_id),"%s",session->account_id);snprintf(t->login,sizeof(t->login),"%s",session->login);t->nickname_len=session->nickname_len;if(t->nickname_len>sizeof(t->nickname))t->nickname_len=sizeof(t->nickname);if(t->nickname_len)memcpy(t->nickname,session->nickname,t->nickname_len);snprintf(t->peer_ip,sizeof(t->peer_ip),"%s",session->peer_ip);t->transfer_fd=transfer_fd;s->active_file_transfers++;if(kind==1){s->download_bandwidth_generation++;if(!s->download_bandwidth_generation)s->download_bandwidth_generation=1;}pthread_mutex_unlock(&s->mutex);cr_state_stat_add(&s->state,kind==1?"downloadsInProgress":"uploadsInProgress",1);return id;
+    pthread_mutex_lock(&s->mutex);size_t user_count=0,slot=CR_SERVER_MAX_ACTIVE_TRANSFERS,download_count=0;for(size_t i=0;i<CR_SERVER_MAX_ACTIVE_TRANSFERS;i++){cr_active_transfer*t=&s->active_transfers[i];if(t->used&&t->user_id==session->user_id)user_count++;if(t->used&&t->kind==1)download_count++;if(!t->used&&slot==CR_SERVER_MAX_ACTIVE_TRANSFERS)slot=i;}if(slot==CR_SERVER_MAX_ACTIVE_TRANSFERS||s->active_file_transfers>=max_total||user_count>=max_user){pthread_mutex_unlock(&s->mutex);return 0;}while(!s->next_transfer_id||active_transfer_by_id_locked(s,s->next_transfer_id))s->next_transfer_id++;uint32_t id=s->next_transfer_id++;if(kind==1&&!download_count){s->download_traffic_window_started=0.0;s->download_traffic_last_activity=0.0;s->download_traffic_window_bytes=0;s->download_traffic_bps=0;}cr_active_transfer*t=&s->active_transfers[slot];memset(t,0,sizeof(*t));t->used=1;t->transfer_id=id;t->kind=kind;t->user_id=session->user_id;snprintf(t->account_id,sizeof(t->account_id),"%s",session->account_id);snprintf(t->login,sizeof(t->login),"%s",session->login);t->nickname_len=session->nickname_len;if(t->nickname_len>sizeof(t->nickname))t->nickname_len=sizeof(t->nickname);if(t->nickname_len)memcpy(t->nickname,session->nickname,t->nickname_len);snprintf(t->peer_ip,sizeof(t->peer_ip),"%s",session->peer_ip);t->transfer_fd=transfer_fd;t->rate_window_started=monotonic_seconds();s->active_file_transfers++;if(kind==1){s->download_bandwidth_generation++;if(!s->download_bandwidth_generation)s->download_bandwidth_generation=1;}pthread_mutex_unlock(&s->mutex);cr_state_stat_add(&s->state,kind==1?"downloadsInProgress":"uploadsInProgress",1);return id;
 }
 static void configure_transfer(cr_server*s,uint32_t id,const uint8_t*path,size_t path_len,uint64_t total){pthread_mutex_lock(&s->mutex);cr_active_transfer*t=active_transfer_by_id_locked(s,id);if(t){if(path&&path_len<=sizeof(t->path)){memcpy(t->path,path,path_len);t->path_len=path_len;}t->total_bytes=total;}pthread_mutex_unlock(&s->mutex);}
 static void configure_transfer_directory(cr_server*s,uint32_t id,int is_directory){pthread_mutex_lock(&s->mutex);cr_active_transfer*t=active_transfer_by_id_locked(s,id);if(t)t->is_directory=is_directory?1:0;pthread_mutex_unlock(&s->mutex);}
@@ -630,7 +634,9 @@ static uint64_t current_download_traffic_rate_locked(cr_server*s,double now){siz
 static void set_download_bandwidth_limit(cr_server*s,uint64_t value){pthread_mutex_lock(&s->mutex);s->download_bandwidth_limit_bps=value;s->download_bandwidth_generation++;if(!s->download_bandwidth_generation)s->download_bandwidth_generation=1;pthread_mutex_unlock(&s->mutex);}
 static size_t paced_download_chunk_size(cr_server*s,size_t maximum){pthread_mutex_lock(&s->mutex);uint64_t limit=s->download_bandwidth_limit_bps;if(!limit){pthread_mutex_unlock(&s->mutex);return maximum;}size_t count=0;for(size_t i=0;i<CR_SERVER_MAX_ACTIVE_TRANSFERS;i++)if(s->active_transfers[i].used&&s->active_transfers[i].kind==1&&!s->active_transfers[i].paused&&!s->active_transfers[i].aborting)count++;if(!count)count=1;uint64_t per=limit/(uint64_t)count;uint64_t target=per/8;if(target<4096)target=4096;if(target>65536)target=65536;pthread_mutex_unlock(&s->mutex);return target<maximum?(size_t)target:maximum;}
 static void throttle_download(cr_server*s,uint32_t id,size_t bytes){if(!bytes)return;for(;;){double target;uint64_t generation;pthread_mutex_lock(&s->mutex);cr_active_transfer*t=active_transfer_by_id_locked(s,id);if(!t||t->kind!=1||!s->download_bandwidth_limit_bps){pthread_mutex_unlock(&s->mutex);return;}double now=monotonic_seconds();generation=s->download_bandwidth_generation;if(t->download_pacing_generation!=generation){t->download_pacing_generation=generation;t->next_download_send_at=now;}size_t count=0;for(size_t i=0;i<CR_SERVER_MAX_ACTIVE_TRANSFERS;i++)if(s->active_transfers[i].used&&s->active_transfers[i].kind==1&&!s->active_transfers[i].paused&&!s->active_transfers[i].aborting)count++;if(!count)count=1;double per=(double)s->download_bandwidth_limit_bps/(double)count;if(per<1.0)per=1.0;double base=t->next_download_send_at>now?t->next_download_send_at:now;target=base+(double)bytes/per;t->next_download_send_at=target;pthread_mutex_unlock(&s->mutex);for(;;){double remaining=target-monotonic_seconds();if(remaining<=0.0)return;sleep_seconds(remaining>0.1?0.1:remaining);pthread_mutex_lock(&s->mutex);int changed=!s->download_bandwidth_limit_bps||s->download_bandwidth_generation!=generation;pthread_mutex_unlock(&s->mutex);if(changed)break;}}}
-static void add_transfer_progress(cr_server*s,uint32_t id,uint64_t bytes){if(!bytes)return;pthread_mutex_lock(&s->mutex);cr_active_transfer*t=active_transfer_by_id_locked(s,id);if(t){uint64_t next=t->bytes_transferred+bytes;if(next<t->bytes_transferred)next=UINT64_MAX;t->bytes_transferred=next;next=t->wire_bytes_transferred+bytes;if(next<t->wire_bytes_transferred)next=UINT64_MAX;t->wire_bytes_transferred=next;if(t->kind==1)record_download_traffic_locked(s,bytes,monotonic_seconds());}pthread_mutex_unlock(&s->mutex);}
+static void record_transfer_traffic_locked(cr_active_transfer*t,uint64_t bytes,double now){if(!t||!bytes)return;if(t->rate_window_started<=0.0)t->rate_window_started=now;uint64_t next=t->rate_window_bytes+bytes;t->rate_window_bytes=next<t->rate_window_bytes?UINT64_MAX:next;t->last_progress_at=now;double elapsed=now-t->rate_window_started;if(elapsed>=0.5){double rate=(double)t->rate_window_bytes/elapsed;t->speed_bps=rate>=(double)UINT64_MAX?UINT64_MAX:(uint64_t)rate;t->rate_window_bytes=0;t->rate_window_started=now;}}
+static uint64_t current_transfer_rate(const cr_active_transfer*t,double now){if(!t||t->paused||t->aborting||t->last_progress_at<=0.0||now-t->last_progress_at>1.5)return 0;double elapsed=now-t->rate_window_started;if(elapsed>=0.15&&t->rate_window_bytes){double raw=(double)t->rate_window_bytes/elapsed;uint64_t partial=raw>=(double)UINT64_MAX?UINT64_MAX:(uint64_t)raw;if(!t->speed_bps)return partial;return t->speed_bps/2+partial/2;}return t->speed_bps;}
+static void add_transfer_progress(cr_server*s,uint32_t id,uint64_t bytes){if(!bytes)return;pthread_mutex_lock(&s->mutex);cr_active_transfer*t=active_transfer_by_id_locked(s,id);if(t){uint64_t next=t->bytes_transferred+bytes;if(next<t->bytes_transferred)next=UINT64_MAX;t->bytes_transferred=next;next=t->wire_bytes_transferred+bytes;if(next<t->wire_bytes_transferred)next=UINT64_MAX;t->wire_bytes_transferred=next;double now=monotonic_seconds();record_transfer_traffic_locked(t,bytes,now);if(t->kind==1)record_download_traffic_locked(s,bytes,now);}pthread_mutex_unlock(&s->mutex);}
 static void add_transfer_resume_progress(cr_server*s,uint32_t id,uint64_t bytes){if(!bytes)return;pthread_mutex_lock(&s->mutex);cr_active_transfer*t=active_transfer_by_id_locked(s,id);if(t){uint64_t next=t->bytes_transferred+bytes;if(next<t->bytes_transferred)next=UINT64_MAX;t->bytes_transferred=next;}pthread_mutex_unlock(&s->mutex);}
 static void end_file_transfer(cr_server*s,uint32_t id,uint8_t kind,int succeeded){
     char account_id[64]="",login[256]="",peer_ip[INET_ADDRSTRLEN]="";
@@ -4319,7 +4325,7 @@ static int send_transfer_entry_header(cr_transfer_stream*stream,const cr_transfe
     }
     cr_buffer_free(&b);return rc;
 }
-static int serve_download(cr_server*s,cr_transfer_stream*stream,cr_session*session,uint32_t transfer_id){cr_buffer remote;cr_buffer_init(&remote);cr_transfer_entries entries={0};int rc=-1;if(cr_transfer_read_string16(stream,&remote,4096)||!remote.len)goto done;configure_transfer(s,transfer_id,remote.data,remote.len,0);if(!account_perm(session,PERM_VIEW_DROPBOXES)&&path_is_inside_dropbox(s,session,remote.data,remote.len))goto done;char rootfs[PATH_MAX];if(resolve_legacy_path_ex(s,session,remote.data,remote.len,rootfs,sizeof(rootfs),1))goto done;uint64_t total=0;if(collect_download_entries(s,session,remote.data,remote.len,rootfs,&entries,&total)||!entries.count)goto done;configure_transfer(s,transfer_id,remote.data,remote.len,total);configure_transfer_directory(s,transfer_id,entries.items[0].is_folder);uint8_t q[4];cr_write_be32(q,0);if(cr_transfer_send(stream,q,4))goto done;uint8_t env[12];cr_write_be64(env,total);cr_write_be32(env+8,(uint32_t)entries.count);if(cr_transfer_send(stream,env,12))goto done;uint8_t io[256*1024];for(size_t i=0;i<entries.count;i++){cr_transfer_entry*e=&entries.items[i];if(transfer_wait_until_resumed(s,transfer_id))goto done;if(send_transfer_entry_header(stream,e))goto done;if(e->is_folder)continue;uint64_t resume=0;if(transfer_wait_until_resumed(s,transfer_id)||cr_transfer_read_u64(stream,&resume)||resume>e->size)goto done;add_transfer_resume_progress(s,transfer_id,resume);uint64_t remaining=e->size-resume;uint8_t lenbuf[8];cr_write_be64(lenbuf,remaining);if(cr_transfer_send(stream,lenbuf,8))goto done;int f=open(e->fs_path,O_RDONLY);if(f<0)goto done;if(lseek(f,(off_t)resume,SEEK_SET)<0){close(f);goto done;}uint64_t left=remaining;while(left){if(transfer_wait_until_resumed(s,transfer_id)){close(f);goto done;}size_t cap=paced_download_chunk_size(s,sizeof(io));size_t want=left>cap?cap:(size_t)left;ssize_t n=read(f,io,want);if(n<0){if(errno==EINTR)continue;close(f);goto done;}if(n==0){close(f);goto done;}throttle_download(s,transfer_id,(size_t)n);if(cr_transfer_send(stream,io,(size_t)n)){close(f);goto done;}left-=(uint64_t)n;add_transfer_progress(s,transfer_id,(uint64_t)n);}close(f);uint8_t comment[2]={0};if(cr_transfer_send(stream,comment,2))goto done;}log_msg("Download completed for user %u",session->user_id);rc=0;done:transfer_entries_free(&entries);cr_buffer_free(&remote);return rc;}
+static int serve_download(cr_server*s,cr_transfer_stream*stream,cr_session*session,uint32_t transfer_id){cr_buffer remote;cr_buffer_init(&remote);cr_transfer_entries entries={0};int rc=-1;if(cr_transfer_read_string16(stream,&remote,4096)||!remote.len)goto done;configure_transfer(s,transfer_id,remote.data,remote.len,0);if(!account_perm(session,PERM_VIEW_DROPBOXES)&&path_is_inside_dropbox(s,session,remote.data,remote.len))goto done;char rootfs[PATH_MAX];if(resolve_legacy_path_ex(s,session,remote.data,remote.len,rootfs,sizeof(rootfs),1))goto done;uint64_t total=0;if(collect_download_entries(s,session,remote.data,remote.len,rootfs,&entries,&total)||!entries.count)goto done;configure_transfer(s,transfer_id,remote.data,remote.len,total);configure_transfer_directory(s,transfer_id,entries.items[0].is_folder);uint8_t q[4];cr_write_be32(q,0);if(cr_transfer_send(stream,q,4))goto done;uint8_t env[12];cr_write_be64(env,total);cr_write_be32(env+8,(uint32_t)entries.count);if(cr_transfer_send(stream,env,12))goto done;uint8_t io[256*1024];for(size_t i=0;i<entries.count;i++){cr_transfer_entry*e=&entries.items[i];if(transfer_wait_until_resumed(s,transfer_id))goto done;if(send_transfer_entry_header(stream,e))goto done;if(e->is_folder)continue;uint64_t resume=0;if(transfer_wait_until_resumed(s,transfer_id)||cr_transfer_read_u64(stream,&resume)||resume>e->size)goto done;uint64_t resource_resume=0;if(!session->modern_transport&&cr_transfer_read_u64(stream,&resource_resume))goto done;(void)resource_resume;add_transfer_resume_progress(s,transfer_id,resume);uint64_t remaining=e->size-resume;uint8_t lenbuf[16]={0};cr_write_be64(lenbuf,remaining);if(cr_transfer_send(stream,lenbuf,session->modern_transport?8:16))goto done;int f=open(e->fs_path,O_RDONLY);if(f<0)goto done;if(lseek(f,(off_t)resume,SEEK_SET)<0){close(f);goto done;}uint64_t left=remaining;while(left){if(transfer_wait_until_resumed(s,transfer_id)){close(f);goto done;}size_t cap=paced_download_chunk_size(s,sizeof(io));size_t want=left>cap?cap:(size_t)left;ssize_t n=read(f,io,want);if(n<0){if(errno==EINTR)continue;close(f);goto done;}if(n==0){close(f);goto done;}throttle_download(s,transfer_id,(size_t)n);if(cr_transfer_send(stream,io,(size_t)n)){close(f);goto done;}left-=(uint64_t)n;add_transfer_progress(s,transfer_id,(uint64_t)n);}close(f);uint8_t comment[2]={0};if(cr_transfer_send(stream,comment,2))goto done;}log_msg("Download completed for user %u",session->user_id);rc=0;done:transfer_entries_free(&entries);cr_buffer_free(&remote);return rc;}
 static int upload_relative_inside_stage(const char*stage,const uint8_t*relative,size_t len,const char*expected_root,char*out,size_t cap){
     if(!len||len>4096||strlen(stage)+1>cap)return-1;
     strcpy(out,stage);size_t pos=0,component_index=0;
@@ -5197,6 +5203,128 @@ static json_object *http_users_json(cr_server *s) {
     return array;
 }
 
+static int http_transfer_path_utf8(const cr_active_transfer *t, char *out, size_t cap) {
+    if (!t || !out || cap < 2) return -1;
+    if (!t->path_len) {
+        snprintf(out, cap, "/");
+        return 0;
+    }
+
+    size_t used = 0, pos = 0;
+    out[used++] = '/';
+
+    while (pos < t->path_len) {
+        size_t start = pos;
+        while (pos < t->path_len && t->path[pos] != 1) pos++;
+        size_t n = pos - start;
+        if (!n) return -1;
+
+        char component[16385];
+        if (n >= 3 && t->path[start] == 0xef && t->path[start + 1] == 0xbb &&
+            t->path[start + 2] == 0xbf) {
+            size_t utf8_len = n - 3;
+            if (!utf8_len || utf8_len >= sizeof(component) ||
+                !valid_utf8_bytes(t->path + start + 3, utf8_len) ||
+                memchr(t->path + start + 3, 0, utf8_len))
+                return -1;
+            memcpy(component, t->path + start + 3, utf8_len);
+            component[utf8_len] = 0;
+        } else if (cr_macroman_to_utf8(t->path + start, n, component, sizeof(component))) {
+            return -1;
+        }
+
+        size_t component_len = strlen(component);
+        if (used + component_len + 1 > cap) return -1;
+        memcpy(out + used, component, component_len);
+        used += component_len;
+
+        if (pos < t->path_len) {
+            if (used + 2 > cap) return -1;
+            out[used++] = '/';
+            pos++;
+        }
+    }
+
+    out[used] = 0;
+    return 0;
+}
+
+static json_object *http_transfers_json(cr_server *s) {
+    json_object *array = json_object_new_array();
+    if (!array) return NULL;
+
+    size_t count = 0;
+    cr_active_transfer *snapshot = NULL;
+    pthread_mutex_lock(&s->mutex);
+    for (size_t i = 0; i < CR_SERVER_MAX_ACTIVE_TRANSFERS; i++)
+        if (s->active_transfers[i].used) count++;
+
+    if (count) {
+        snapshot = calloc(count, sizeof(*snapshot));
+        if (!snapshot) {
+            pthread_mutex_unlock(&s->mutex);
+            json_object_put(array);
+            return NULL;
+        }
+        size_t used = 0;
+        for (size_t i = 0; i < CR_SERVER_MAX_ACTIVE_TRANSFERS; i++)
+            if (s->active_transfers[i].used) snapshot[used++] = s->active_transfers[i];
+    }
+    pthread_mutex_unlock(&s->mutex);
+
+    double now = monotonic_seconds();
+    for (size_t i = 0; i < count; i++) {
+        const cr_active_transfer *t = &snapshot[i];
+        char nickname[1024] = "";
+        char path[16385] = "/";
+        if (t->nickname_len &&
+            cr_macroman_to_utf8(t->nickname, t->nickname_len, nickname, sizeof(nickname)))
+            snprintf(nickname, sizeof(nickname), "%s", t->login);
+        if (!nickname[0]) snprintf(nickname, sizeof(nickname), "%s", t->login);
+        if (http_transfer_path_utf8(t, path, sizeof(path)))
+            snprintf(path, sizeof(path), "<invalid-path>");
+
+        const char *leaf = strrchr(path, '/');
+        leaf = leaf && leaf[1] ? leaf + 1 : path;
+        uint64_t speed = current_transfer_rate(t, now);
+        uint64_t resumed = t->bytes_transferred >= t->wire_bytes_transferred
+            ? t->bytes_transferred - t->wire_bytes_transferred : 0;
+        double eta = -1.0;
+        if (t->total_bytes && t->bytes_transferred >= t->total_bytes)
+            eta = 0.0;
+        else if (t->total_bytes && speed > 0 && t->bytes_transferred < t->total_bytes)
+            eta = (double)(t->total_bytes - t->bytes_transferred) / (double)speed;
+
+        json_object *o = json_object_new_object();
+        if (!o) continue;
+        json_object_object_add(o, "id", json_object_new_int64(t->transfer_id));
+        json_object_object_add(o, "direction",
+                               json_object_new_string(t->kind == 1 ? "download" : "upload"));
+        json_object_object_add(o, "userID", json_object_new_int64(t->user_id));
+        json_object_object_add(o, "accountID", json_object_new_string(t->account_id));
+        json_object_object_add(o, "login", json_object_new_string(t->login));
+        json_object_object_add(o, "user", json_object_new_string(nickname));
+        json_object_object_add(o, "nickname", json_object_new_string(nickname));
+        json_object_object_add(o, "peerIP", json_object_new_string(t->peer_ip));
+        json_object_object_add(o, "path", json_object_new_string(path));
+        json_object_object_add(o, "fileName", json_object_new_string(leaf));
+        json_object_object_add(o, "sizeBytes", json_object_new_int64((int64_t)t->total_bytes));
+        json_object_object_add(o, "transferredBytes", json_object_new_int64((int64_t)t->bytes_transferred));
+        json_object_object_add(o, "wireBytesTransferred", json_object_new_int64((int64_t)t->wire_bytes_transferred));
+        json_object_object_add(o, "resumedBytes", json_object_new_int64((int64_t)resumed));
+        json_object_object_add(o, "speedBytesPerSecond", json_object_new_int64((int64_t)speed));
+        json_object_object_add(o, "etaSeconds", json_object_new_double(eta));
+        json_object_object_add(o, "isDirectory", json_object_new_boolean(t->is_directory));
+        json_object_object_add(o, "status",
+                               json_object_new_string(t->aborting ? "cancelling" :
+                                                      t->paused ? "paused" : "active"));
+        json_object_array_add(array, o);
+    }
+
+    free(snapshot);
+    return array;
+}
+
 static json_object *http_accounts_json(cr_server *s) {
     json_object *array = json_object_new_array();
     if (!array) return NULL;
@@ -5610,6 +5738,8 @@ static json_object *http_dispatch(cr_server *s, const char *method, const char *
         return http_status_json(s);
     if (!strcmp(method, "GET") && !strcmp(path, "/api/v1/users"))
         return http_users_json(s);
+    if (!strcmp(method, "GET") && !strcmp(path, "/api/v1/transfers"))
+        return http_transfers_json(s);
     if (!strcmp(method, "GET") && !strcmp(path, "/api/v1/accounts"))
         return http_accounts_json(s);
     if (!strcmp(method, "GET") && !strcmp(path, "/api/v1/conferences"))
@@ -5623,6 +5753,37 @@ static json_object *http_dispatch(cr_server *s, const char *method, const char *
             json_object_get(index);
         if (root) json_object_put(root);
         return index ? index : http_error_object("internal_error", "Could not read index status");
+    }
+
+    if (!strncmp(path, "/api/v1/transfers/", 18)) {
+        const char *id_text = path + 18;
+        char *end = NULL;
+        errno = 0;
+        unsigned long raw = strtoul(id_text, &end, 10);
+        if (errno || end == id_text || raw == 0 || raw > UINT32_MAX ||
+            strcmp(end, "/cancel")) {
+            *status = 400;
+            return http_error_object("invalid_transfer_id",
+                                     "Transfer path must be /api/v1/transfers/{id}/cancel");
+        }
+        if (strcmp(method, "POST")) {
+            *status = 405;
+            return http_error_object("method_not_allowed",
+                                     "Only POST is supported for transfer cancellation");
+        }
+        if (control_active_transfer(s, (uint32_t)raw, 3)) {
+            *status = 404;
+            return http_error_object("transfer_not_found", "Active transfer not found");
+        }
+
+        log_msg("Transfer %lu cancellation requested through HTTP administration API", raw);
+        *status = 202;
+        json_object *o = json_object_new_object();
+        if (!o) return http_error_object("internal_error", "Could not create cancellation response");
+        json_object_object_add(o, "accepted", json_object_new_boolean(1));
+        json_object_object_add(o, "id", json_object_new_int64((int64_t)raw));
+        json_object_object_add(o, "status", json_object_new_string("cancelling"));
+        return o;
     }
 
     if (!strcmp(method, "PATCH") && !strcmp(path, "/api/v1/settings")) {

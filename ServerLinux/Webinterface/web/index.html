@@ -682,10 +682,11 @@ async function loadTransfers(manual=false){
     if(manual)toast("Transfers aktualisiert",`${transfersData.length} aktiv`);
   }catch(e){
     const code=e?.data?.error?.code;
+    const message=e?.data?.error?.message||e.message||"HTTP-Fehler";
     document.getElementById("transfer-live").className="live-badge";
     document.getElementById("transfer-live").innerHTML='<span class="pulse"></span>Nicht verfügbar';
-    document.getElementById("transfers-list").innerHTML='<div class="api-note"><strong>Transfer-API noch nicht im Carracho-Server verfügbar.</strong><br>Erwartet werden <span class="mono">GET /api/v1/transfers</span> und <span class="mono">POST /api/v1/transfers/{id}/cancel</span>. Die Web-GUI ist dafür bereits fertig verdrahtet.</div>';
-    if(manual)toast("Transfer-API nicht verfügbar",e?.data?.error?.message||e.message||"HTTP-Fehler","bad");
+    document.getElementById("transfers-list").innerHTML='<div class="api-note"><strong>Transfer-API nicht erreichbar.</strong><br>'+esc(message)+(code?' <span class="mono">('+esc(code)+')</span>':'')+'</div>';
+    if(manual)toast("Transfer-API nicht verfügbar",message,"bad");
   }
 }
 function renderTransfers(){

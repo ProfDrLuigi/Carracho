@@ -42,6 +42,8 @@ The built-in listener is plain HTTP. Keep it on loopback and put a TLS reverse p
 | --- | --- | --- |
 | GET | /api/v1/status | Server, uptime, connection, transfer and search-index status |
 | GET | /api/v1/users | Connected users and client metadata |
+| GET | /api/v1/transfers | Active uploads/downloads with progress, rate and ETA |
+| POST | /api/v1/transfers/{id}/cancel | Cancel an active transfer |
 | GET | /api/v1/accounts | Accounts |
 | POST | /api/v1/accounts | Create an account |
 | PATCH | /api/v1/accounts/{login} | Modify an account |
@@ -56,6 +58,52 @@ The built-in listener is plain HTTP. Keep it on loopback and put a TLS reverse p
 | POST | /api/v1/search-index/rebuild | Start a full search-index rebuild |
 
 All responses are JSON except successful DELETE requests, which return HTTP 204.
+
+## Transfers
+
+List active transfers:
+
+~~~http
+GET /api/v1/transfers
+Authorization: Bearer <token>
+~~~
+
+The response is a JSON array. Each active transfer includes:
+
+- `id` — server-local transfer identifier
+- `direction` — `download` or `upload`
+- `userID`, `accountID`, `login`, `user`, `nickname`, `peerIP`
+- `path` and `fileName`
+- `sizeBytes`
+- `transferredBytes`
+- `wireBytesTransferred`
+- `resumedBytes`
+- `speedBytesPerSecond`
+- `etaSeconds` — `-1` when no meaningful ETA is currently available
+- `isDirectory`
+- `status` — `active`, `paused`, or `cancelling`
+
+Cancel an active transfer:
+
+~~~http
+POST /api/v1/transfers/42/cancel
+Authorization: Bearer <token>
+~~~
+
+A successful cancellation request returns HTTP 202:
+
+~~~json
+{
+  "accepted": true,
+  "id": 42,
+  "status": "cancelling"
+}
+~~~
+
+Cancellation uses the same runtime transfer-control path as the native
+administration protocol. The transfer socket is interrupted immediately and
+the transfer worker then performs its normal cleanup. A transfer that no
+longer exists returns HTTP 404.
 
 ## Accounts
 

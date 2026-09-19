@@ -116,6 +116,10 @@ final class LegacyServerRuntime {
         var isDirectory = false
         var paused = false
         var aborting = false
+        var rateWindowStartUptime: TimeInterval = 0
+        var lastProgressUptime: TimeInterval = 0
+        var rateWindowBytes: UInt64 = 0
+        var bytesPerSecond: UInt64 = 0
         var nextDownloadSendUptime: TimeInterval = 0
         var downloadPacingGeneration: UInt64 = 0
     }
@@ -844,6 +848,8 @@ final class LegacyServerRuntime {
                 return (200, httpAdminStatusJSON())
             case ("GET", "/api/v1/users"):
                 return (200, httpAdminUsersJSON())
+            case ("GET", "/api/v1/transfers"):
+                return (200, httpAdminTransfersJSON())
             case ("GET", "/api/v1/accounts"):
                 return (200, httpAdminAccountsJSON())
             case ("GET", "/api/v1/conferences"):
@@ -890,6 +896,28 @@ final class LegacyServerRuntime {
                 }
             default:
                 break
+            }
+
+            if path.hasPrefix("/api/v1/transfers/") {
+                let suffix = String(path.dropFirst("/api/v1/transfers/".count))
+                let parts = suffix.split(separator: "/", omittingEmptySubsequences: false)
+                guard parts.count == 2, parts[1] == "cancel",
+                      let id = UInt32(parts[0]), id > 0 else {
+                    return (400, httpAdminError(code: "invalid_transfer_id",
+                                                message: "Transfer path must be /api/v1/transfers/{id}/cancel"))
+                }
+                guard method == "POST" else {
+                    return (405, httpAdminError(code: "method_not_allowed",
+                                                message: "Only POST is supported for transfer cancellation"))
+                }
+                do {
+                    try applyTransferControl(LegacyTransferControlRequest(transferID: id, action: .abort))
+                } catch {
+                    return (404, httpAdminError(code: "transfer_not_found",
+                                                message: "Active transfer not found"))
+                }
+                log("Transfer \(id) cancellation requested through HTTP administration API")
+                return (202, ["accepted": true, "id": NSNumber(value: id), "status": "cancelling"])
             }
 
             if path.hasPrefix("/api/v1/accounts/") {
@@ -990,6 +1018,59 @@ final class LegacyServerRuntime {
         return current.sorted {
             (($0["userID"] as? NSNumber)?.uint32Value ?? 0) < (($1["userID"] as? NSNumber)?.uint32Value ?? 0)
         }
+    }
+
+    private func httpAdminTransferPath(_ path: Data) -> String {
+        guard !path.isEmpty else { return "/" }
+        let components = path.split(separator: LegacyPath.separator, omittingEmptySubsequences: false)
+        guard components.allSatisfy({ !$0.isEmpty }) else { return "<invalid-path>" }
+        return "/" + components.map { CarrachoTextWire.string(from: Data($0)) }.joined(separator: "/")
+    }
+
+    private func httpAdminTransfersJSON() -> [[String: Any]] {
+        let now = ProcessInfo.processInfo.systemUptime
+        stateLock.lock()
+        let result = activeTransferDescriptors.values.sorted { $0.transferID < $1.transferID }.map { descriptor -> [String: Any] in
+            let session = authenticatedByUserID[descriptor.userID]
+            let account = session?.account
+            let login = account?.login ?? ""
+            let nickname = session.map { CarrachoTextWire.string(from: $0.nickname) } ?? login
+            let path = httpAdminTransferPath(descriptor.path)
+            let fileName = path.split(separator: "/", omittingEmptySubsequences: true).last.map(String.init) ?? path
+            let speed = currentTransferRate(descriptor, now: now)
+            let resumed = descriptor.bytesTransferred >= descriptor.wireBytesTransferred
+                ? descriptor.bytesTransferred - descriptor.wireBytesTransferred : 0
+            let eta: Double
+            if descriptor.totalBytes > 0, descriptor.bytesTransferred >= descriptor.totalBytes {
+                eta = 0
+            } else if descriptor.totalBytes > descriptor.bytesTransferred, speed > 0 {
+                eta = Double(descriptor.totalBytes - descriptor.bytesTransferred) / Double(speed)
+            } else {
+                eta = -1
+            }
+            return [
+                "id": NSNumber(value: descriptor.transferID),
+                "direction": descriptor.kind == LegacyTransferKind.download ? "download" : "upload",
+                "userID": NSNumber(value: descriptor.userID),
+                "accountID": account?.id.uuidString.lowercased() ?? "",
+                "login": login,
+                "user": nickname,
+                "nickname": nickname,
+                "peerIP": session?.peerIP ?? "",
+                "path": path,
+                "fileName": fileName,
+                "sizeBytes": NSNumber(value: descriptor.totalBytes),
+                "transferredBytes": NSNumber(value: descriptor.bytesTransferred),
+                "wireBytesTransferred": NSNumber(value: descriptor.wireBytesTransferred),
+                "resumedBytes": NSNumber(value: resumed),
+                "speedBytesPerSecond": NSNumber(value: speed),
+                "etaSeconds": eta,
+                "isDirectory": descriptor.isDirectory,
+                "status": descriptor.aborting ? "cancelling" : (descriptor.paused ? "paused" : "active"),
+            ]
+        }
+        stateLock.unlock()
+        return result
     }
 
     private func httpAdminAccountsJSON() -> [[String: Any]] {
@@ -5848,7 +5929,10 @@ extension LegacyServerRuntime {
             downloadTrafficBytesPerSecond = 0
             downloadTrafficLastActivityUptime = 0
         }
-        activeTransferDescriptors[transferID] = ActiveTransferDescriptor(transferID: transferID, kind: kind, userID: access.userID, socketFD: socketFD)
+        var descriptor = ActiveTransferDescriptor(transferID: transferID, kind: kind, userID: access.userID, socketFD: socketFD)
+        let now = ProcessInfo.processInfo.systemUptime
+        descriptor.rateWindowStartUptime = now
+        activeTransferDescriptors[transferID] = descriptor
         activeFileTransfers += 1
         activeFileTransfersByUser[access.userID] = userCount + 1
         if direction == .download {
@@ -5888,9 +5972,20 @@ extension LegacyServerRuntime {
             let (wire, wireOverflow) = descriptor.wireBytesTransferred.addingReportingOverflow(bytes)
             descriptor.bytesTransferred = logicalOverflow ? UInt64.max : logical
             descriptor.wireBytesTransferred = wireOverflow ? UInt64.max : wire
+            let now = ProcessInfo.processInfo.systemUptime
+            if descriptor.rateWindowStartUptime == 0 { descriptor.rateWindowStartUptime = now }
+            let (windowBytes, windowOverflow) = descriptor.rateWindowBytes.addingReportingOverflow(bytes)
+            descriptor.rateWindowBytes = windowOverflow ? UInt64.max : windowBytes
+            descriptor.lastProgressUptime = now
+            let elapsed = now - descriptor.rateWindowStartUptime
+            if elapsed >= 0.5 {
+                descriptor.bytesPerSecond = UInt64(min(Double(UInt64.max), Double(descriptor.rateWindowBytes) / elapsed))
+                descriptor.rateWindowBytes = 0
+                descriptor.rateWindowStartUptime = now
+            }
             activeTransferDescriptors[transferID] = descriptor
             if descriptor.kind == LegacyTransferKind.download {
-                recordDownloadTrafficLocked(bytes: bytes, now: ProcessInfo.processInfo.systemUptime)
+                recordDownloadTrafficLocked(bytes: bytes, now: now)
             }
         }
         stateLock.unlock()
@@ -5983,6 +6078,19 @@ extension LegacyServerRuntime {
             return (downloadTrafficBytesPerSecond / 2) + (partial / 2)
         }
         return downloadTrafficBytesPerSecond
+    }
+
+    private func currentTransferRate(_ descriptor: ActiveTransferDescriptor, now: TimeInterval) -> UInt64 {
+        guard !descriptor.paused, !descriptor.aborting,
+              descriptor.lastProgressUptime > 0,
+              now - descriptor.lastProgressUptime <= 1.5 else { return 0 }
+        let elapsed = now - descriptor.rateWindowStartUptime
+        if elapsed >= 0.15, descriptor.rateWindowBytes > 0 {
+            let partial = UInt64(min(Double(UInt64.max), Double(descriptor.rateWindowBytes) / elapsed))
+            if descriptor.bytesPerSecond == 0 { return partial }
+            return (descriptor.bytesPerSecond / 2) + (partial / 2)
+        }
+        return descriptor.bytesPerSecond
     }
 
     private func addTransferResumeProgress(_ transferID: UInt32, bytes: UInt64) {
@@ -6705,10 +6813,19 @@ extension LegacyServerRuntime {
             guard !entry.isFolder else { continue }
             let resume = try stream.readUInt64()
             guard resume <= entry.size else { throw LegacyServerRuntimeError.protocolFailure("download resume offset exceeds file size") }
+            let classicForkWire = access.legacyTransport
+            if classicForkWire {
+                // Classic operation 10 negotiates data and resource forks separately.
+                // The portable server has no native HFS resource fork, but the second
+                // resume value must still be consumed or the stream becomes misaligned.
+                _ = try stream.readUInt64()
+            }
             addTransferResumeProgress(transferID, bytes: resume)
             if resume > 0 { log("Resuming download for user \(access.userID) at \(resume)/\(entry.size) bytes") }
             let remaining = entry.size - resume
-            try stream.sendPayload(LegacyWire.uint64BE(remaining))
+            var forkLengths = LegacyWire.uint64BE(remaining)
+            if classicForkWire { forkLengths.append(LegacyWire.uint64BE(0)) }
+            try stream.sendPayload(forkLengths)
             let handle = try FileHandle(forReadingFrom: entry.url)
             defer { try? handle.close() }
             try handle.seek(toOffset: resume)
@@ -6725,7 +6842,7 @@ extension LegacyServerRuntime {
                 left -= UInt64(data.count)
                 addTransferProgress(transferID, bytes: UInt64(data.count))
             }
-            try stream.sendPayload(LegacyWire.uint16BE(0)) // modern protocol: no Finder comment
+            try stream.sendPayload(LegacyWire.uint16BE(0)) // no Finder comment
         }
         log("Download completed for user \(access.userID): \(LegacyPath.displayString(remotePath))")
     }

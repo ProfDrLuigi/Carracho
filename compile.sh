@@ -243,14 +243,37 @@ if command -v curl >/dev/null 2>&1; then
         cat /tmp/carracho-http-status.json
         echo
     else
-        echo "warning: HTTP API auf 127.0.0.1:6780 antwortet noch nicht." >&2
+        echo "error: HTTP API auf 127.0.0.1:6780 antwortet nicht." >&2
+        show_failure_log
+        exit 1
+    fi
+
+    if curl --silent --show-error --fail \
+        -H "Authorization: Bearer $TOKEN" \
+        http://127.0.0.1:6780/api/v1/transfers >/tmp/carracho-http-transfers.json; then
+        echo "    Transfer API: OK (GET /api/v1/transfers)"
+    else
+        echo "error: Transfer API GET /api/v1/transfers ist nicht verfügbar." >&2
+        show_failure_log
+        exit 1
     fi
 
     if curl --silent --show-error --fail \
         http://127.0.0.1:6781/healthz >/dev/null; then
         echo "    Web Admin : OK (127.0.0.1:6781)"
     else
-        echo "warning: Web Admin auf 127.0.0.1:6781 antwortet noch nicht." >&2
+        echo "error: Web Admin auf 127.0.0.1:6781 antwortet nicht." >&2
+        show_failure_log
+        exit 1
+    fi
+
+    if curl --silent --show-error --fail \
+        http://127.0.0.1:6781/proxy/transfers >/tmp/carracho-webadmin-transfers.json; then
+        echo "    Transfer Proxy: OK (/proxy/transfers)"
+    else
+        echo "error: WebAdmin-Proxy auf /proxy/transfers ist nicht verfügbar." >&2
+        show_failure_log
+        exit 1
     fi
 fi
 
