@@ -1,0 +1,905 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Carracho Admin</title>
+  <style>
+    :root{
+      color-scheme:dark;
+      --bg:#0b0d10;
+      --bg2:#0f1217;
+      --panel:#14181f;
+      --panel2:#191e26;
+      --panel3:#202733;
+      --line:#2a313d;
+      --line-soft:#222832;
+      --text:#eef2f7;
+      --muted:#98a2b2;
+      --muted2:#6f7886;
+      --accent:#69a7ff;
+      --accent-strong:#3f8cff;
+      --ok:#54d49a;
+      --ok-bg:#123329;
+      --warn:#efc36a;
+      --warn-bg:#382d16;
+      --danger:#ff7982;
+      --danger-bg:#351a1f;
+      --shadow:0 18px 45px rgba(0,0,0,.28);
+      --radius:14px;
+      --radius-sm:10px;
+      --sidebar:252px;
+      font-family:Inter,ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+    }
+    *{box-sizing:border-box}
+    html,body{margin:0;min-height:100%;background:
+      radial-gradient(circle at 18% 0%, rgba(70,108,180,.08), transparent 28%),
+      linear-gradient(180deg,var(--bg2),var(--bg));color:var(--text)}
+    body{min-height:100vh}
+    button,input,textarea,select{font:inherit}
+    button{cursor:pointer}
+    .app{display:grid;grid-template-columns:var(--sidebar) 1fr;min-height:100vh}
+    aside{
+      position:sticky;top:0;height:100vh;
+      border-right:1px solid var(--line-soft);
+      background:rgba(15,18,23,.92);
+      backdrop-filter:blur(16px);
+      padding:18px 14px;
+      display:flex;flex-direction:column;
+      z-index:20;
+    }
+    .brand{display:flex;align-items:center;gap:11px;padding:7px 8px 20px}
+    .brand-mark{
+      width:38px;height:38px;border-radius:11px;
+      display:grid;place-items:center;
+      background:linear-gradient(135deg,#7fb5ff,#4e8df2);
+      color:#06111f;font-weight:900;font-size:17px;
+      box-shadow:0 8px 22px rgba(67,132,230,.28)
+    }
+    .brand-title{font-weight:800;letter-spacing:.1px}
+    .brand-sub{font-size:11px;color:var(--muted);margin-top:2px}
+    nav{display:grid;gap:4px}
+    .nav-item{
+      width:100%;border:1px solid transparent;background:transparent;color:var(--muted);
+      text-align:left;padding:10px 11px;border-radius:10px;
+      display:flex;align-items:center;gap:10px;
+      transition:.16s ease;
+    }
+    .nav-item:hover{background:#171c23;color:var(--text)}
+    .nav-item.active{
+      background:linear-gradient(180deg,#1d2633,#19212d);
+      border-color:#2d3d52;color:#fff;
+      box-shadow:inset 0 0 0 1px rgba(105,167,255,.06)
+    }
+    .nav-icon{width:18px;height:18px;display:grid;place-items:center;opacity:.95}
+    .nav-icon svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+    .sidebar-foot{margin-top:auto;padding:14px 8px 4px}
+    .conn-card{
+      border:1px solid var(--line);background:var(--panel);border-radius:12px;padding:12px
+    }
+    .conn-row{display:flex;justify-content:space-between;align-items:center;gap:10px}
+    .conn-title{font-size:12px;color:var(--muted)}
+    .conn-name{font-size:13px;font-weight:700;margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .status-dot{width:8px;height:8px;border-radius:50%;background:var(--muted2);box-shadow:0 0 0 3px rgba(255,255,255,.025)}
+    .status-dot.ok{background:var(--ok);box-shadow:0 0 0 3px rgba(84,212,154,.10)}
+    .status-dot.bad{background:var(--danger);box-shadow:0 0 0 3px rgba(255,121,130,.10)}
+    main{padding:26px 30px 42px;overflow:auto}
+    .page{display:none}
+    .page.active{display:block}
+    header.page-head{
+      display:flex;align-items:center;justify-content:space-between;gap:18px;margin-bottom:22px
+    }
+    .eyebrow{font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:var(--muted2);font-weight:800}
+    h1{margin:3px 0 0;font-size:29px;letter-spacing:-.02em}
+    .sub{color:var(--muted);font-size:13px;margin-top:5px}
+    .actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+    .btn{
+      border:1px solid var(--line);background:var(--panel2);color:var(--text);
+      border-radius:10px;padding:8px 12px;font-weight:650;font-size:13px;
+      transition:.15s ease;display:inline-flex;align-items:center;gap:7px
+    }
+    .btn:hover{border-color:#465064;background:#202631}
+    .btn.primary{background:var(--accent-strong);border-color:var(--accent-strong);color:white}
+    .btn.primary:hover{filter:brightness(1.06)}
+    .btn.danger{background:var(--danger-bg);border-color:#613039;color:#ffd8db}
+    .btn.ghost{background:transparent}
+    .btn.small{padding:6px 9px;font-size:12px}
+    .btn svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+    .hero{
+      border:1px solid var(--line);
+      background:
+        linear-gradient(145deg,rgba(105,167,255,.10),transparent 34%),
+        var(--panel);
+      border-radius:18px;padding:18px 20px;margin-bottom:14px;
+      display:flex;justify-content:space-between;align-items:center;gap:16px;
+      box-shadow:var(--shadow)
+    }
+    .server-title{display:flex;align-items:center;gap:12px}
+    .server-icon{
+      width:46px;height:46px;border-radius:13px;background:#1e2a38;border:1px solid #30435b;
+      display:grid;place-items:center;color:#9cc5ff
+    }
+    .server-icon svg{width:24px;height:24px;stroke:currentColor;fill:none;stroke-width:1.6}
+    .server-name{font-size:20px;font-weight:800}
+    .server-meta{font-size:12px;color:var(--muted);margin-top:4px}
+    .status-pill{
+      display:inline-flex;align-items:center;gap:7px;border-radius:999px;padding:6px 10px;
+      font-size:12px;font-weight:750;border:1px solid var(--line);background:#181d24;color:var(--muted)
+    }
+    .status-pill.ok{border-color:#26523e;background:var(--ok-bg);color:#a6edc6}
+    .status-pill.warn{border-color:#5a4724;background:var(--warn-bg);color:#f1d28c}
+    .status-pill.bad{border-color:#5c3036;background:var(--danger-bg);color:#ffc2c6}
+    .metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+    .metric{
+      background:linear-gradient(180deg,#171c23,#14181f);
+      border:1px solid var(--line);border-radius:14px;padding:15px 16px
+    }
+    .metric-top{display:flex;align-items:center;justify-content:space-between;gap:10px}
+    .metric-label{color:var(--muted);font-size:12px}
+    .metric-icon{width:29px;height:29px;border-radius:9px;background:#1d2530;display:grid;place-items:center;color:#9bbcf0}
+    .metric-icon svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:1.8}
+    .metric-value{font-size:27px;font-weight:850;letter-spacing:-.03em;margin-top:10px}
+    .metric-foot{color:var(--muted2);font-size:11px;margin-top:4px}
+    .grid-2{display:grid;grid-template-columns:1.2fr .8fr;gap:12px;margin-top:12px}
+    .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:16px}
+    .card-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:13px}
+    .card-title{font-size:15px;font-weight:800}
+    .card-sub{font-size:11px;color:var(--muted);margin-top:3px}
+    .kv{display:grid;grid-template-columns:minmax(140px,.7fr) 1fr;border-top:1px solid var(--line-soft)}
+    .kv div{padding:9px 0;font-size:13px;border-bottom:1px solid var(--line-soft)}
+    .kv .k{color:var(--muted)}
+    .kv .v{font-weight:650;overflow-wrap:anywhere}
+    .toolbar{
+      display:flex;gap:10px;align-items:center;justify-content:space-between;
+      margin:0 0 10px
+    }
+    .searchbox{position:relative;max-width:320px;width:100%}
+    .searchbox svg{
+      position:absolute;left:10px;top:50%;transform:translateY(-50%);
+      width:15px;height:15px;stroke:var(--muted);fill:none;stroke-width:1.8
+    }
+    .searchbox input{padding-left:33px}
+    input,textarea,select{
+      width:100%;border:1px solid var(--line);background:#101319;color:var(--text);
+      border-radius:10px;padding:9px 10px;outline:none;transition:.15s ease
+    }
+    input:focus,textarea:focus,select:focus{border-color:#456999;box-shadow:0 0 0 3px rgba(85,143,224,.10)}
+    textarea{min-height:150px;resize:vertical}
+    .table-wrap{overflow:auto;border:1px solid var(--line);border-radius:var(--radius);background:var(--panel)}
+    table{width:100%;border-collapse:collapse;min-width:680px}
+    th,td{padding:10px 12px;border-bottom:1px solid var(--line-soft);text-align:left;vertical-align:middle;font-size:13px}
+    th{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.06em;background:#151a21;position:sticky;top:0;z-index:1}
+    tbody tr{transition:.12s ease}
+    tbody tr:hover{background:#171c23}
+    tr:last-child td{border-bottom:0}
+    td.actions-cell{white-space:nowrap;text-align:right}
+    .tag{display:inline-flex;align-items:center;border-radius:999px;padding:3px 8px;font-size:11px;background:#222a35;color:#c7d2df;border:1px solid #313b49}
+    .tag.ok{background:var(--ok-bg);border-color:#27513e;color:#a3e8c2}
+    .empty{padding:26px;text-align:center;color:var(--muted)}
+    .form-card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:18px}
+    .form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+    .field.full{grid-column:1/-1}
+    label{display:block;font-size:12px;color:var(--muted);margin-bottom:6px;font-weight:650}
+    .help{font-size:11px;color:var(--muted2);margin-top:6px}
+    .section-title{font-size:13px;font-weight:800;margin:4px 0 12px}
+    .divider{height:1px;background:var(--line-soft);margin:18px 0}
+    .raw-toggle{margin-top:14px}
+    .raw-editor{margin-top:10px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;min-height:260px}
+    .broadcast-wrap{max-width:760px}
+    .broadcast-box{min-height:180px}
+    .search-panel{display:grid;grid-template-columns:1fr auto;gap:16px;align-items:center}
+    .search-stat{font-size:36px;font-weight:850;letter-spacing:-.035em}
+    .search-label{font-size:12px;color:var(--muted);margin-top:4px}
+    .search-details{margin-top:12px}
+    .toast-stack{position:fixed;right:20px;bottom:20px;display:grid;gap:8px;z-index:100}
+    .toast{
+      min-width:280px;max-width:420px;background:#171c23;border:1px solid var(--line);
+      border-radius:12px;padding:12px 14px;box-shadow:var(--shadow);
+      animation:toastin .18s ease
+    }
+    .toast.ok{border-color:#27513e}
+    .toast.bad{border-color:#64343a}
+    .toast-title{font-weight:800;font-size:13px}
+    .toast-msg{color:var(--muted);font-size:12px;margin-top:3px;white-space:pre-wrap}
+    @keyframes toastin{from{transform:translateY(8px);opacity:0}to{transform:none;opacity:1}}
+    dialog{
+      width:min(700px,calc(100vw - 30px));border:1px solid var(--line);border-radius:16px;
+      background:var(--panel);color:var(--text);padding:0;box-shadow:var(--shadow)
+    }
+    dialog::backdrop{background:rgba(0,0,0,.62);backdrop-filter:blur(2px)}
+    .modal-head,.modal-foot{padding:14px 16px;display:flex;align-items:center;justify-content:space-between;gap:10px}
+    .modal-head{border-bottom:1px solid var(--line)}
+    .modal-foot{border-top:1px solid var(--line);justify-content:flex-end}
+    .modal-body{padding:16px}
+    .modal-title{font-size:16px;font-weight:800}
+    .error-banner{
+      display:none;margin-bottom:14px;border:1px solid #633138;background:#2b171b;color:#ffc1c5;
+      padding:11px 13px;border-radius:11px;font-size:12px;white-space:pre-wrap
+    }
+    .error-banner.show{display:block}
+    .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+    .mobile-toggle{display:none}
+    @media(max-width:1000px){
+      .metrics{grid-template-columns:repeat(2,minmax(0,1fr))}
+      .grid-2{grid-template-columns:1fr}
+    }
+    @media(max-width:820px){
+      .app{grid-template-columns:1fr}
+      aside{
+        position:sticky;height:auto;border-right:0;border-bottom:1px solid var(--line-soft);
+        padding:10px 12px;display:block
+      }
+      .brand{padding:4px 4px 10px}
+      nav{display:flex;overflow:auto;gap:5px;padding-bottom:2px}
+      .nav-item{width:auto;white-space:nowrap;padding:8px 10px}
+      .nav-item span:last-child{display:none}
+      .sidebar-foot{display:none}
+      main{padding:20px 14px 32px}
+      .hero{align-items:flex-start}
+      .form-grid{grid-template-columns:1fr}
+      .field.full{grid-column:auto}
+    }
+    @media(max-width:560px){
+      .metrics{grid-template-columns:1fr}
+      header.page-head{align-items:flex-start;flex-direction:column}
+      .hero{flex-direction:column}
+      .toolbar{align-items:stretch;flex-direction:column}
+      .search-panel{grid-template-columns:1fr}
+    }
+
+    .transfer-metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:12px}
+    .transfer-list{display:grid;gap:10px}
+    .transfer-row{background:var(--panel);border:1px solid var(--line);border-radius:13px;padding:13px 14px}
+    .transfer-head{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:14px;align-items:start}
+    .transfer-title{display:flex;align-items:center;gap:9px;min-width:0}
+    .transfer-dir{width:28px;height:28px;border-radius:8px;display:grid;place-items:center;background:#1d2530;color:#9bc2fa;font-weight:900;flex:0 0 auto}
+    .transfer-file{font-weight:760;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .transfer-meta{color:var(--muted);font-size:11px;margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .progress{height:7px;background:#0d1015;border:1px solid #202631;border-radius:999px;overflow:hidden;margin:11px 0 8px}
+    .progress>span{display:block;height:100%;background:linear-gradient(90deg,#4c8ff0,#74b3ff);border-radius:999px;transition:width .35s ease}
+    .transfer-foot{display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:11px;color:var(--muted)}
+    .transfer-stats{display:flex;gap:13px;flex-wrap:wrap}
+    .api-note{border:1px dashed #495365;background:#131820;border-radius:12px;padding:16px;color:var(--muted);font-size:12px;line-height:1.55}
+    .api-note strong{color:var(--text)}
+    .log-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}
+    .log-box{height:min(62vh,650px);overflow:auto;background:#0a0d11;border:1px solid var(--line);border-radius:12px;padding:11px 12px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;line-height:1.55}
+    .log-line{display:grid;grid-template-columns:145px 110px minmax(0,1fr);gap:10px;padding:3px 0;border-bottom:1px solid rgba(255,255,255,.025)}
+    .log-time{color:#657080}.log-type{color:#8fb7ef}.log-msg{color:#d1d8e2;white-space:pre-wrap;overflow-wrap:anywhere}
+    .live-badge{display:inline-flex;align-items:center;gap:7px;border-radius:999px;padding:5px 9px;background:#172029;border:1px solid #2a3849;color:var(--muted);font-size:11px;font-weight:700}
+    .live-badge.live{background:var(--ok-bg);border-color:#27513e;color:#a3e8c2}
+    .pulse{width:7px;height:7px;border-radius:50%;background:currentColor}
+    @media(max-width:1000px){.transfer-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}}
+    @media(max-width:560px){.transfer-metrics{grid-template-columns:1fr}.log-line{grid-template-columns:1fr;gap:1px;padding:7px 0}.log-time,.log-type{font-size:10px}}
+  </style>
+</head>
+<body>
+<div class="app">
+  <aside>
+    <div class="brand">
+      <div class="brand-mark">C</div>
+      <div>
+        <div class="brand-title">Carracho Admin</div>
+        <div class="brand-sub">Server Administration</div>
+      </div>
+    </div>
+
+    <nav id="nav">
+      <button class="nav-item active" data-page="overview"><span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M4 13h6V4H4zM14 20h6v-9h-6zM4 20h6v-3H4zM14 7h6V4h-6z"/></svg></span><span>Overview</span></button>
+      <button class="nav-item" data-page="users"><span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg></span><span>Users</span></button>
+      <button class="nav-item" data-page="transfers"><span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M7 7h11l-3-3M17 17H6l3 3M18 7l-3 3M6 17l3-3"/></svg></span><span>Transfers</span></button>
+      <button class="nav-item" data-page="accounts"><span class="nav-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M5 21a7 7 0 0 1 14 0"/></svg></span><span>Accounts</span></button>
+      <button class="nav-item" data-page="conferences"><span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M4 5h16v11H7l-3 3z"/></svg></span><span>Conferences</span></button>
+      <button class="nav-item" data-page="settings"><span class="nav-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21h-4v-.08A1.7 1.7 0 0 0 8.6 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H3v-4h.08A1.7 1.7 0 0 0 4.6 8.6a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V3h4v.08A1.7 1.7 0 0 0 15.4 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 9c.15.38.37.72.66 1 .29.28.64.49 1.02.6H21v4h-.08a1.7 1.7 0 0 0-1.52.4z"/></svg></span><span>Settings</span></button>
+      <button class="nav-item" data-page="search"><span class="nav-icon"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg></span><span>Search Index</span></button>
+      <button class="nav-item" data-page="activity"><span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M4 19h16M6 16l3-4 3 2 4-7 2 3"/></svg></span><span>Live Log</span></button>
+      <button class="nav-item" data-page="broadcast"><span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M3 11v2h4l5 4V7L7 11zM16 9a4 4 0 0 1 0 6M18.5 6.5a8 8 0 0 1 0 11"/></svg></span><span>Broadcast</span></button>
+    </nav>
+
+    <div class="sidebar-foot">
+      <div class="conn-card">
+        <div class="conn-row">
+          <div>
+            <div class="conn-title">API-Verbindung</div>
+            <div class="conn-name" id="side-server">Prüfe…</div>
+          </div>
+          <div class="status-dot" id="side-dot"></div>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <main>
+    <div id="error" class="error-banner"></div>
+
+    <section id="page-overview" class="page active">
+      <header class="page-head">
+        <div>
+          <div class="eyebrow">Dashboard</div>
+          <h1>Overview</h1>
+          <div class="sub">Live-Status und zentrale Serverinformationen.</div>
+        </div>
+        <div class="actions">
+          <button class="btn" onclick="loadOverview()"><svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0 2 5M20 4v7h-7"/></svg>Aktualisieren</button>
+        </div>
+      </header>
+
+      <div class="hero">
+        <div class="server-title">
+          <div class="server-icon"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="6" rx="2"/><rect x="4" y="14" width="16" height="6" rx="2"/><path d="M8 7h.01M8 17h.01"/></svg></div>
+          <div>
+            <div class="server-name" id="hero-name">Carracho Server</div>
+            <div class="server-meta" id="hero-meta">Lade Status…</div>
+          </div>
+        </div>
+        <div class="status-pill" id="hero-status"><span class="status-dot"></span>Verbinde…</div>
+      </div>
+
+      <div class="metrics">
+        <div class="metric">
+          <div class="metric-top"><div class="metric-label">Users online</div><div class="metric-icon"><svg viewBox="0 0 24 24"><circle cx="9" cy="7" r="3"/><path d="M3 20a6 6 0 0 1 12 0M16 5a3 3 0 0 1 0 6M17 14a5 5 0 0 1 4 5"/></svg></div></div>
+          <div class="metric-value" id="ov-users">–</div><div class="metric-foot">Aktive Sessions</div>
+        </div>
+        <div class="metric">
+          <div class="metric-top"><div class="metric-label">Transfers</div><div class="metric-icon"><svg viewBox="0 0 24 24"><path d="M12 3v14M7 8l5-5 5 5M5 21h14"/></svg></div></div>
+          <div class="metric-value" id="ov-transfers">–</div><div class="metric-foot" id="ov-transfers-foot">Aktive Transfers</div>
+        </div>
+        <div class="metric">
+          <div class="metric-top"><div class="metric-label">Uptime</div><div class="metric-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></div></div>
+          <div class="metric-value" id="ov-uptime">–</div><div class="metric-foot">Seit letztem Start</div>
+        </div>
+        <div class="metric">
+          <div class="metric-top"><div class="metric-label">Search Index</div><div class="metric-icon"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg></div></div>
+          <div class="metric-value" id="ov-index">–</div><div class="metric-foot" id="ov-index-foot">Status unbekannt</div>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-head"><div><div class="card-title">Serverdetails</div><div class="card-sub">Ports, Limits und Software</div></div></div>
+          <div id="server-kv"></div>
+        </div>
+        <div class="card">
+          <div class="card-head"><div><div class="card-title">Search Index</div><div class="card-sub">Aktueller Zustand</div></div><button class="btn small" onclick="goPage('search')">Öffnen</button></div>
+          <div id="index-kv"></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="page-users" class="page">
+      <header class="page-head"><div><div class="eyebrow">Sessions</div><h1>Users</h1><div class="sub">Aktuell eingeloggte Benutzer.</div></div><button class="btn" onclick="loadUsers()">Aktualisieren</button></header>
+      <div class="toolbar"><div class="searchbox"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input id="users-filter" placeholder="Users filtern…" oninput="renderUsers()"></div></div>
+      <div id="users-table"></div>
+    </section>
+
+    <section id="page-transfers" class="page">
+      <header class="page-head">
+        <div><div class="eyebrow">Realtime</div><h1>Transfers</h1><div class="sub">Aktive Up- und Downloads mit Durchsatz, Fortschritt und ETA.</div></div>
+        <div class="actions"><span class="live-badge" id="transfer-live"><span class="pulse"></span>Polling</span><button class="btn" onclick="loadTransfers(true)">Aktualisieren</button></div>
+      </header>
+      <div class="transfer-metrics">
+        <div class="metric"><div class="metric-label">Aktiv</div><div class="metric-value" id="tr-active">0</div><div class="metric-foot">Transfers insgesamt</div></div>
+        <div class="metric"><div class="metric-label">Downloads</div><div class="metric-value" id="tr-down-count">0</div><div class="metric-foot" id="tr-down-speed">0 B/s</div></div>
+        <div class="metric"><div class="metric-label">Uploads</div><div class="metric-value" id="tr-up-count">0</div><div class="metric-foot" id="tr-up-speed">0 B/s</div></div>
+        <div class="metric"><div class="metric-label">Durchsatz</div><div class="metric-value" id="tr-total-speed">0 B/s</div><div class="metric-foot">Aktuelle Summe</div></div>
+      </div>
+      <div id="transfers-list"><div class="api-note"><strong>Transfer-API wird geprüft…</strong></div></div>
+    </section>
+
+    <section id="page-accounts" class="page">
+      <header class="page-head">
+        <div><div class="eyebrow">Identity</div><h1>Accounts</h1><div class="sub">Benutzerkonten verwalten.</div></div>
+        <div class="actions"><button class="btn" onclick="loadAccounts()">Aktualisieren</button><button class="btn primary" onclick="openAccountModal()">Account anlegen</button></div>
+      </header>
+      <div class="toolbar"><div class="searchbox"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input id="accounts-filter" placeholder="Accounts filtern…" oninput="renderAccounts()"></div></div>
+      <div id="accounts-table"></div>
+    </section>
+
+    <section id="page-conferences" class="page">
+      <header class="page-head">
+        <div><div class="eyebrow">Rooms</div><h1>Conferences</h1><div class="sub">Konferenzräume verwalten.</div></div>
+        <div class="actions"><button class="btn" onclick="loadConferences()">Aktualisieren</button><button class="btn primary" onclick="openConferenceModal()">Conference anlegen</button></div>
+      </header>
+      <div class="toolbar"><div class="searchbox"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input id="conferences-filter" placeholder="Conferences filtern…" oninput="renderConferences()"></div></div>
+      <div id="conferences-table"></div>
+    </section>
+
+    <section id="page-settings" class="page">
+      <header class="page-head">
+        <div><div class="eyebrow">Configuration</div><h1>Settings</h1><div class="sub">Die wichtigsten Einstellungen ohne JSON-Gefrickel.</div></div>
+        <div class="actions"><button class="btn" onclick="loadSettings()">Neu laden</button><button class="btn primary" onclick="saveSettingsForm()">Speichern</button></div>
+      </header>
+      <div class="form-card">
+        <div class="section-title">Server</div>
+        <div class="form-grid">
+          <div class="field"><label>Server Name</label><input id="set-serverName" type="text"></div>
+          <div class="field"><label>Max Connections</label><input id="set-maxConnections" type="number" min="0"></div>
+          <div class="field full"><label>Description</label><textarea id="set-description"></textarea></div>
+          <div class="field"><label>Max Transfers</label><input id="set-maxTransfers" type="number" min="0"></div>
+          <div class="field"><label>Folder Depth</label><input id="set-folderDepth" type="number" min="0"></div>
+        </div>
+        <div class="divider"></div>
+        <div class="section-title">Search Index</div>
+        <div class="form-grid">
+          <div class="field"><label>Rebuild Interval (Stunden)</label><input id="set-searchRebuildIntervalHours" type="number" min="0"></div>
+          <div class="field"><label>Exclusions</label><input id="set-searchExclusions" type="text" placeholder="z.B. *.tmp, Cache"></div>
+        </div>
+        <div class="raw-toggle">
+          <button class="btn ghost small" onclick="toggleRawSettings()">Raw JSON anzeigen</button>
+          <textarea id="settings-json" class="raw-editor" style="display:none" spellcheck="false"></textarea>
+        </div>
+      </div>
+    </section>
+
+    <section id="page-search" class="page">
+      <header class="page-head">
+        <div><div class="eyebrow">Indexing</div><h1>Search Index</h1><div class="sub">Status prüfen und Rebuild auslösen.</div></div>
+        <div class="actions"><button class="btn" onclick="loadSearch()">Aktualisieren</button><button class="btn primary" onclick="rebuildSearch()">Rebuild starten</button></div>
+      </header>
+      <div class="card">
+        <div class="search-panel">
+          <div>
+            <div class="search-stat" id="search-entries">–</div>
+            <div class="search-label">indexierte Einträge</div>
+          </div>
+          <div class="status-pill" id="search-status"><span class="status-dot"></span>Unbekannt</div>
+        </div>
+        <div class="search-details" id="search-kv"></div>
+      </div>
+    </section>
+
+    <section id="page-activity" class="page">
+      <header class="page-head">
+        <div><div class="eyebrow">Events</div><h1>Live Log</h1><div class="sub">Serverereignisse und Logausgaben. SSE wird bevorzugt, Polling dient als Fallback.</div></div>
+        <div class="actions"><span class="live-badge" id="event-live"><span class="pulse"></span>Offline</span><button class="btn" onclick="loadLog(true)">Log laden</button><button class="btn ghost" onclick="clearActivity()">Leeren</button></div>
+      </header>
+      <div class="log-toolbar"><div class="sub" id="event-summary">Noch keine Ereignisse.</div></div>
+      <div class="log-box" id="log-box"></div>
+    </section>
+
+    <section id="page-broadcast" class="page">
+      <header class="page-head"><div><div class="eyebrow">Message</div><h1>Broadcast</h1><div class="sub">Nachricht an die verbundenen Benutzer senden.</div></div></header>
+      <div class="form-card broadcast-wrap">
+        <div class="field"><label>Nachricht</label><textarea id="broadcast-message" class="broadcast-box" placeholder="Nachricht eingeben…"></textarea></div>
+        <div class="actions" style="margin-top:12px"><button class="btn primary" onclick="sendBroadcast()">Broadcast senden</button></div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<dialog id="account-modal">
+  <div class="modal-head"><div class="modal-title" id="account-modal-title">Account</div><button class="btn small" onclick="closeDialog('account-modal')">Schließen</button></div>
+  <div class="modal-body">
+    <div class="form-grid">
+      <div class="field"><label>Login</label><input id="acc-login"></div>
+      <div class="field"><label>Nickname</label><input id="acc-nickname"></div>
+      <div class="field"><label>Group</label><input id="acc-group"></div>
+      <div class="field"><label>Password</label><input id="acc-password" type="password" placeholder="bei Änderung optional"></div>
+      <div class="field full">
+        <label>Zusätzliche Felder (JSON)</label>
+        <textarea id="acc-extra" class="mono" placeholder="{}"></textarea>
+        <div class="help">Für Felder, die deine Serverversion zusätzlich liefert.</div>
+      </div>
+    </div>
+  </div>
+  <div class="modal-foot"><button class="btn" onclick="closeDialog('account-modal')">Abbrechen</button><button class="btn primary" onclick="submitAccount()">Speichern</button></div>
+</dialog>
+
+<dialog id="conference-modal">
+  <div class="modal-head"><div class="modal-title">Conference anlegen</div><button class="btn small" onclick="closeDialog('conference-modal')">Schließen</button></div>
+  <div class="modal-body">
+    <div class="form-grid">
+      <div class="field"><label>Name</label><input id="conf-name"></div>
+      <div class="field"><label>Topic</label><input id="conf-topic"></div>
+      <div class="field full">
+        <label>Zusätzliche Felder (JSON)</label>
+        <textarea id="conf-extra" class="mono" placeholder="{}"></textarea>
+      </div>
+    </div>
+  </div>
+  <div class="modal-foot"><button class="btn" onclick="closeDialog('conference-modal')">Abbrechen</button><button class="btn primary" onclick="submitConference()">Anlegen</button></div>
+</dialog>
+
+<dialog id="confirm-modal">
+  <div class="modal-head"><div class="modal-title" id="confirm-title">Bestätigen</div></div>
+  <div class="modal-body"><div id="confirm-text" class="sub" style="font-size:13px"></div></div>
+  <div class="modal-foot"><button class="btn" onclick="confirmResolve(false)">Abbrechen</button><button class="btn danger" onclick="confirmResolve(true)">Löschen</button></div>
+</dialog>
+
+<div class="toast-stack" id="toasts"></div>
+
+<script>
+const pageNames = ["overview","users","transfers","accounts","conferences","settings","search","activity","broadcast"];
+let usersData = [];
+let accountsData = [];
+let conferencesData = [];
+let settingsData = {};
+let editingAccountLogin = null;
+let confirmResolver = null;
+let transfersData = [];
+let transferTimer = null;
+let eventSource = null;
+let activityData = [];
+let logTimer = null;
+
+function esc(s){return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]))}
+function pretty(v){return JSON.stringify(v,null,2)}
+function arr(v){
+  if(Array.isArray(v))return v;
+  if(v&&Array.isArray(v.items))return v.items;
+  if(v&&Array.isArray(v.users))return v.users;
+  if(v&&Array.isArray(v.accounts))return v.accounts;
+  if(v&&Array.isArray(v.conferences))return v.conferences;
+  return v?[v]:[];
+}
+function showError(err){
+  const el=document.getElementById("error");
+  if(!err){el.classList.remove("show");el.textContent="";return}
+  el.textContent=typeof err==="string"?err:pretty(err);
+  el.classList.add("show");
+}
+function toast(title,msg="",kind="ok"){
+  const stack=document.getElementById("toasts");
+  const el=document.createElement("div");
+  el.className=`toast ${kind}`;
+  el.innerHTML=`<div class="toast-title">${esc(title)}</div>${msg?`<div class="toast-msg">${esc(msg)}</div>`:""}`;
+  stack.appendChild(el);
+  setTimeout(()=>el.remove(),3300);
+}
+async function api(path,options={}){
+  showError(null);
+  const r=await fetch("/proxy"+path,{
+    ...options,
+    headers:{
+      "Accept":"application/json",
+      ...(options.body?{"Content-Type":"application/json"}:{}),
+      ...(options.headers||{})
+    }
+  });
+  if(r.status===204)return null;
+  const t=await r.text();
+  let d=null;
+  try{d=t?JSON.parse(t):null}catch{d=t}
+  if(!r.ok){const e=new Error(`HTTP ${r.status}`);e.data=d;throw e}
+  return d;
+}
+async function run(fn){
+  try{return await fn()}
+  catch(e){
+    showError(e.data??e.stack??String(e));
+    document.getElementById("side-dot").className="status-dot bad";
+    toast("Fehler", typeof e.data==="string"?e.data:(e.data?.error?.message||e.message||String(e)),"bad");
+  }
+}
+function hms(sec){
+  sec=Number(sec||0);const d=Math.floor(sec/86400),h=Math.floor(sec%86400/3600),m=Math.floor(sec%3600/60);
+  return (d?d+"d ":"")+h+"h "+m+"m";
+}
+function kv(obj,keys){
+  const rows=keys.map(([label,key])=>{
+    let v=obj?.[key];
+    if(v===undefined||v===null)v="–";
+    if(typeof v==="object")v=JSON.stringify(v);
+    return `<div class="kv"><div class="k">${esc(label)}</div><div class="v">${esc(v)}</div></div>`
+  }).join("");
+  return rows||'<div class="empty">Keine Daten.</div>';
+}
+function matchFilter(row,query){
+  return JSON.stringify(row).toLowerCase().includes(query.trim().toLowerCase());
+}
+function tableFor(rows,actions){
+  if(!rows.length)return '<div class="empty">Keine Einträge.</div>';
+  const keys=[...new Set(rows.flatMap(r=>Object.keys(r||{})))];
+  return `<div class="table-wrap"><table><thead><tr>${keys.map(k=>`<th>${esc(k)}</th>`).join("")}${actions?'<th style="text-align:right">Aktionen</th>':""}</tr></thead><tbody>`+
+    rows.map(r=>`<tr>${keys.map(k=>`<td>${formatCell(k,r?.[k])}</td>`).join("")}${actions?`<td class="actions-cell">${actions(r)}</td>`:""}</tr>`).join("")+
+    `</tbody></table></div>`;
+}
+function formatCell(k,v){
+  if(v===true)return '<span class="tag ok">true</span>';
+  if(v===false)return '<span class="tag">false</span>';
+  if(v===null||v===undefined)return '<span class="muted">–</span>';
+  if(typeof v==="object")return `<span class="mono">${esc(JSON.stringify(v))}</span>`;
+  if(/group|role|status/i.test(k))return `<span class="tag">${esc(v)}</span>`;
+  return esc(v);
+}
+function goPage(p){
+  pageNames.forEach(x=>document.getElementById("page-"+x).classList.toggle("active",x===p));
+  document.querySelectorAll(".nav-item").forEach(b=>b.classList.toggle("active",b.dataset.page===p));
+  stopTransferPolling(); stopLogPolling();
+  const loaders={overview:loadOverview,users:loadUsers,transfers:()=>{loadTransfers(true);startTransferPolling()},accounts:loadAccounts,conferences:loadConferences,settings:loadSettings,search:loadSearch,activity:()=>{startEvents();loadLog(false);startLogPolling()}};
+  loaders[p]?.();
+}
+document.getElementById("nav").addEventListener("click",e=>{
+  const b=e.target.closest("[data-page]");if(b)goPage(b.dataset.page);
+});
+
+async function loadOverview(){return run(async()=>{
+  const d=await api("/status");
+  document.getElementById("hero-name").textContent=d.serverName??"Carracho Server";
+  document.getElementById("hero-meta").textContent=`${d.software??"Carracho"} · Control ${d.controlPort??"–"} · Transfer ${d.transferPort??"–"}`;
+  const hs=document.getElementById("hero-status");hs.className="status-pill ok";hs.innerHTML='<span class="status-dot ok"></span>Online';
+  document.getElementById("ov-users").textContent=d.usersOnline??"–";
+  document.getElementById("ov-transfers").textContent=d.activeTransfers??"–";
+  document.getElementById("ov-uptime").textContent=hms(d.uptimeSeconds);
+  const si=d.searchIndex||{};
+  document.getElementById("ov-index").textContent=si.entries??0;
+  document.getElementById("ov-index-foot").textContent=si.rebuilding?"Rebuild läuft":(si.ready?"Ready":"Nicht bereit");
+  document.getElementById("server-kv").innerHTML=kv(d,[["Software","software"],["Control Port","controlPort"],["Transfer Port","transferPort"],["Max Connections","maxConnections"]]);
+  document.getElementById("index-kv").innerHTML=kv(si,[["Ready","ready"],["Rebuilding","rebuilding"],["Entries","entries"],["Interval (h)","rebuildIntervalHours"]]);
+  document.getElementById("side-server").textContent=d.serverName??"Verbunden";
+  document.getElementById("side-dot").className="status-dot ok";
+  try{
+    const td=transferArr(await api("/transfers")).map(normalizeTransfer);
+    const downs=td.filter(t=>t.direction==="download"),ups=td.filter(t=>t.direction==="upload");
+    const ds=downs.reduce((a,t)=>a+t.speed,0),us=ups.reduce((a,t)=>a+t.speed,0);
+    document.getElementById("ov-transfers").textContent=td.length;
+    document.getElementById("ov-transfers-foot").textContent=`↓ ${rate(ds)} · ↑ ${rate(us)}`;
+  }catch{}
+});}
+
+async function loadUsers(){return run(async()=>{usersData=arr(await api("/users"));renderUsers()})}
+function renderUsers(){
+  const q=document.getElementById("users-filter").value;
+  const rows=usersData.filter(r=>matchFilter(r,q));
+  document.getElementById("users-table").innerHTML=tableFor(rows,r=>{
+    const ident=r.sessionId??r.id??r.login??r.username??null;
+    if(ident===null)return '<span class="muted">keine ID</span>';
+    return `<button class="btn danger small" onclick='kickUser(${JSON.stringify(encodeURIComponent(String(ident)))})'>Kick</button>`;
+  });
+}
+async function kickUser(id){
+  if(!await askConfirm("User trennen",`Session/User „${decodeURIComponent(id)}“ wirklich trennen?`))return;
+  return run(async()=>{await api("/users/"+id+"/kick",{method:"POST"});toast("User getrennt",decodeURIComponent(id));await loadUsers()});
+}
+
+
+function transferArr(v){
+  if(Array.isArray(v))return v;
+  if(v&&Array.isArray(v.transfers))return v.transfers;
+  if(v&&Array.isArray(v.items))return v.items;
+  return [];
+}
+function num(v,...fallback){for(const x of [v,...fallback]){const n=Number(x);if(Number.isFinite(n))return n}return 0}
+function bytes(n){
+  n=Number(n||0);const u=["B","KB","MB","GB","TB"];let i=0;
+  while(Math.abs(n)>=1024&&i<u.length-1){n/=1024;i++}
+  return `${n>=100||i===0?n.toFixed(0):n>=10?n.toFixed(1):n.toFixed(2)} ${u[i]}`;
+}
+function rate(n){return bytes(n)+"/s"}
+function eta(sec){sec=Number(sec);if(!Number.isFinite(sec)||sec<0)return "–";if(sec<60)return Math.round(sec)+"s";const m=Math.floor(sec/60),s=Math.round(sec%60);if(m<60)return `${m}m ${s}s`;return `${Math.floor(m/60)}h ${m%60}m`}
+function normalizeTransfer(t){
+  const total=num(t.sizeBytes,t.totalBytes,t.size,t.length);
+  const done=num(t.transferredBytes,t.bytesTransferred,t.completedBytes,t.offset);
+  const speed=num(t.speedBytesPerSecond,t.bytesPerSecond,t.speed,t.rate);
+  let direction=String(t.direction??t.type??"").toLowerCase();
+  if(direction.startsWith("down"))direction="download";else if(direction.startsWith("up"))direction="upload";
+  const pct=total>0?Math.max(0,Math.min(100,done/total*100)):0;
+  return {raw:t,id:t.id??t.transferId??t.uuid,user:t.user??t.login??t.username??"–",direction,fileName:t.fileName??t.filename??t.name??t.path??"Transfer",path:t.path??"",total,done,speed,eta:num(t.etaSeconds,t.eta),status:t.status??"active",pct};
+}
+async function loadTransfers(manual=false){
+  try{
+    const d=await api("/transfers");transfersData=transferArr(d).map(normalizeTransfer);renderTransfers();
+    const live=document.getElementById("transfer-live");live.className="live-badge live";live.innerHTML='<span class="pulse"></span>Live · 1s';
+    if(manual)toast("Transfers aktualisiert",`${transfersData.length} aktiv`);
+  }catch(e){
+    const code=e?.data?.error?.code;
+    document.getElementById("transfer-live").className="live-badge";
+    document.getElementById("transfer-live").innerHTML='<span class="pulse"></span>Nicht verfügbar';
+    document.getElementById("transfers-list").innerHTML='<div class="api-note"><strong>Transfer-API noch nicht im Carracho-Server verfügbar.</strong><br>Erwartet werden <span class="mono">GET /api/v1/transfers</span> und <span class="mono">POST /api/v1/transfers/{id}/cancel</span>. Die Web-GUI ist dafür bereits fertig verdrahtet.</div>';
+    if(manual)toast("Transfer-API nicht verfügbar",e?.data?.error?.message||e.message||"HTTP-Fehler","bad");
+  }
+}
+function renderTransfers(){
+  const down=transfersData.filter(t=>t.direction==="download"),up=transfersData.filter(t=>t.direction==="upload");
+  const ds=down.reduce((a,t)=>a+t.speed,0),us=up.reduce((a,t)=>a+t.speed,0);
+  document.getElementById("tr-active").textContent=transfersData.length;
+  document.getElementById("tr-down-count").textContent=down.length;document.getElementById("tr-down-speed").textContent="↓ "+rate(ds);
+  document.getElementById("tr-up-count").textContent=up.length;document.getElementById("tr-up-speed").textContent="↑ "+rate(us);
+  document.getElementById("tr-total-speed").textContent=rate(ds+us);
+  if(!transfersData.length){document.getElementById("transfers-list").innerHTML='<div class="empty">Keine aktiven Transfers.</div>';return}
+  document.getElementById("transfers-list").innerHTML='<div class="transfer-list">'+transfersData.map(t=>{
+    const dir=t.direction==="upload"?"↑":"↓";const ident=t.id==null?null:encodeURIComponent(String(t.id));
+    return `<div class="transfer-row"><div class="transfer-head"><div class="transfer-title"><div class="transfer-dir">${dir}</div><div style="min-width:0"><div class="transfer-file">${esc(t.fileName)}</div><div class="transfer-meta">${esc(t.user)}${t.path&&t.path!==t.fileName?" · "+esc(t.path):""}</div></div></div>${ident?`<button class="btn danger small" onclick='cancelTransfer(${JSON.stringify(ident)})'>Abbrechen</button>`:""}</div><div class="progress"><span style="width:${t.pct.toFixed(2)}%"></span></div><div class="transfer-foot"><div class="transfer-stats"><span>${bytes(t.done)} / ${bytes(t.total)}</span><span>${t.pct.toFixed(1)}%</span><span>${rate(t.speed)}</span><span>ETA ${eta(t.eta)}</span></div><span class="tag">${esc(t.status)}</span></div></div>`;
+  }).join("")+'</div>';
+}
+async function cancelTransfer(id){
+  if(!await askConfirm("Transfer abbrechen",`Transfer „${decodeURIComponent(id)}“ wirklich abbrechen?`))return;
+  return run(async()=>{await api("/transfers/"+id+"/cancel",{method:"POST"});toast("Transfer abgebrochen",decodeURIComponent(id));await loadTransfers(false)});
+}
+function startTransferPolling(){stopTransferPolling();transferTimer=setInterval(()=>loadTransfers(false),1000)}
+function stopTransferPolling(){if(transferTimer){clearInterval(transferTimer);transferTimer=null}}
+
+function activityEntry(e){
+  if(typeof e==="string")return {time:new Date().toISOString(),type:"log",message:e};
+  return {time:e.time??e.timestamp??new Date().toISOString(),type:e.type??e.level??"event",message:e.message??e.msg??e.text??JSON.stringify(e)};
+}
+function addActivity(e){activityData.push(activityEntry(e));if(activityData.length>500)activityData.splice(0,activityData.length-500);renderActivity(true)}
+function renderActivity(stick=false){
+  const box=document.getElementById("log-box");
+  box.innerHTML=activityData.map(e=>`<div class="log-line"><span class="log-time">${esc(String(e.time))}</span><span class="log-type">${esc(e.type)}</span><span class="log-msg">${esc(e.message)}</span></div>`).join("")||'<div class="empty">Noch keine Log-/Eventdaten.</div>';
+  document.getElementById("event-summary").textContent=`${activityData.length} Einträge im lokalen Verlauf`;
+  if(stick)box.scrollTop=box.scrollHeight;
+}
+function clearActivity(){activityData=[];renderActivity()}
+function startEvents(){
+  if(eventSource)return;
+  const badge=document.getElementById("event-live");
+  try{
+    eventSource=new EventSource("/proxy/events");
+    eventSource.onopen=()=>{badge.className="live-badge live";badge.innerHTML='<span class="pulse"></span>SSE live'};
+    eventSource.onmessage=ev=>{let d=ev.data;try{d=JSON.parse(ev.data)}catch{}addActivity(d)};
+    eventSource.onerror=()=>{badge.className="live-badge";badge.innerHTML='<span class="pulse"></span>Polling';if(eventSource){eventSource.close();eventSource=null}};
+  }catch{badge.className="live-badge";badge.innerHTML='<span class="pulse"></span>Polling'}
+}
+async function loadLog(manual=false){
+  try{
+    const d=await api("/log?limit=200");
+    const rows=Array.isArray(d)?d:(d?.entries??d?.lines??[]);
+    if(typeof d==="string")activityData=d.split("\n").filter(Boolean).map(activityEntry);
+    else if(Array.isArray(rows))activityData=rows.map(activityEntry);
+    renderActivity(true);if(manual)toast("Log aktualisiert",`${activityData.length} Einträge`);
+  }catch(e){
+    if(manual)toast("Log-API nicht verfügbar",e?.data?.error?.message||e.message||"HTTP-Fehler","bad");
+    if(!activityData.length){document.getElementById("log-box").innerHTML='<div class="api-note"><strong>Live-Log noch nicht im Carracho-Server verfügbar.</strong><br>Die GUI erwartet <span class="mono">GET /api/v1/log?limit=200</span>. Optional liefert <span class="mono">GET /api/v1/events</span> Server-Sent Events.</div>'}
+  }
+}
+function startLogPolling(){stopLogPolling();logTimer=setInterval(()=>{if(!eventSource)loadLog(false)},3000)}
+function stopLogPolling(){if(logTimer){clearInterval(logTimer);logTimer=null}}
+
+async function loadAccounts(){return run(async()=>{accountsData=arr(await api("/accounts"));renderAccounts()})}
+function renderAccounts(){
+  const q=document.getElementById("accounts-filter").value;
+  const rows=accountsData.filter(r=>matchFilter(r,q));
+  document.getElementById("accounts-table").innerHTML=tableFor(rows,r=>{
+    const login=r.login??"";
+    if(!login)return '<span class="muted">kein login</span>';
+    const encoded=encodeURIComponent(login);
+    return `<button class="btn small" onclick='openAccountModal(${JSON.stringify(encoded)})'>Edit</button> <button class="btn danger small" onclick='deleteAccount(${JSON.stringify(encoded)})'>Löschen</button>`;
+  });
+}
+function openAccountModal(encodedLogin=null){
+  editingAccountLogin=encodedLogin;
+  const r=encodedLogin?accountsData.find(x=>String(x.login)===decodeURIComponent(encodedLogin)):null;
+  document.getElementById("account-modal-title").textContent=r?`Account bearbeiten: ${r.login}`:"Account anlegen";
+  document.getElementById("acc-login").value=r?.login??"";
+  document.getElementById("acc-login").disabled=!!r;
+  document.getElementById("acc-nickname").value=r?.nickname??"";
+  document.getElementById("acc-group").value=r?.group??"";
+  document.getElementById("acc-password").value="";
+  const extra={...(r||{})};["login","nickname","group","password"].forEach(k=>delete extra[k]);
+  document.getElementById("acc-extra").value=pretty(extra);
+  document.getElementById("account-modal").showModal();
+}
+async function submitAccount(){return run(async()=>{
+  let body={};
+  try{body=JSON.parse(document.getElementById("acc-extra").value||"{}")}catch{throw new Error("Zusätzliche Felder enthalten kein gültiges JSON")}
+  const login=document.getElementById("acc-login").value.trim();
+  const nickname=document.getElementById("acc-nickname").value.trim();
+  const group=document.getElementById("acc-group").value.trim();
+  const password=document.getElementById("acc-password").value;
+  if(login)body.login=login;if(nickname)body.nickname=nickname;if(group)body.group=group;if(password)body.password=password;
+  if(editingAccountLogin){
+    delete body.login;
+    await api("/accounts/"+editingAccountLogin,{method:"PATCH",body:JSON.stringify(body)});
+    toast("Account gespeichert",decodeURIComponent(editingAccountLogin));
+  }else{
+    await api("/accounts",{method:"POST",body:JSON.stringify(body)});
+    toast("Account angelegt",login||"");
+  }
+  closeDialog("account-modal");await loadAccounts();
+})}
+async function deleteAccount(login){
+  if(!await askConfirm("Account löschen",`Account „${decodeURIComponent(login)}“ wirklich löschen?`))return;
+  return run(async()=>{await api("/accounts/"+login,{method:"DELETE"});toast("Account gelöscht",decodeURIComponent(login));await loadAccounts()});
+}
+
+async function loadConferences(){return run(async()=>{conferencesData=arr(await api("/conferences"));renderConferences()})}
+function renderConferences(){
+  const q=document.getElementById("conferences-filter").value;
+  document.getElementById("conferences-table").innerHTML=tableFor(conferencesData.filter(r=>matchFilter(r,q)),r=>{
+    const id=r.id;
+    if(id===undefined||id===null)return '<span class="muted">keine id</span>';
+    return `<button class="btn danger small" onclick='deleteConference(${JSON.stringify(encodeURIComponent(id))})'>Löschen</button>`;
+  });
+}
+function openConferenceModal(){
+  document.getElementById("conf-name").value="";
+  document.getElementById("conf-topic").value="";
+  document.getElementById("conf-extra").value="{}";
+  document.getElementById("conference-modal").showModal();
+}
+async function submitConference(){return run(async()=>{
+  let body={};
+  try{body=JSON.parse(document.getElementById("conf-extra").value||"{}")}catch{throw new Error("Zusätzliche Felder enthalten kein gültiges JSON")}
+  const name=document.getElementById("conf-name").value.trim(),topic=document.getElementById("conf-topic").value.trim();
+  if(name)body.name=name;if(topic)body.topic=topic;
+  await api("/conferences",{method:"POST",body:JSON.stringify(body)});
+  closeDialog("conference-modal");toast("Conference angelegt",name);await loadConferences();
+})}
+async function deleteConference(id){
+  if(!await askConfirm("Conference löschen",`Conference „${decodeURIComponent(id)}“ wirklich löschen?`))return;
+  return run(async()=>{await api("/conferences/"+id,{method:"DELETE"});toast("Conference gelöscht",decodeURIComponent(id));await loadConferences()});
+}
+
+function setInput(id,v){const el=document.getElementById(id);if(el)el.value=v??""}
+async function loadSettings(){return run(async()=>{
+  settingsData=await api("/settings")||{};
+  setInput("set-serverName",settingsData.serverName);
+  setInput("set-description",settingsData.description);
+  setInput("set-maxConnections",settingsData.maxConnections);
+  setInput("set-maxTransfers",settingsData.maxTransfers);
+  setInput("set-folderDepth",settingsData.folderDepth);
+  const si=settingsData.searchIndex||settingsData.search||{};
+  setInput("set-searchRebuildIntervalHours",si.rebuildIntervalHours??settingsData.searchIndexRebuildIntervalHours);
+  const ex=si.exclusions??settingsData.searchIndexExclusions??[];
+  setInput("set-searchExclusions",Array.isArray(ex)?ex.join(", "):ex);
+  document.getElementById("settings-json").value=pretty(settingsData);
+})}
+function toggleRawSettings(){
+  const el=document.getElementById("settings-json");
+  el.style.display=el.style.display==="none"?"block":"none";
+}
+async function saveSettingsForm(){return run(async()=>{
+  const rawEl=document.getElementById("settings-json");
+  let body={...settingsData};
+  if(rawEl.style.display!=="none"){
+    try{body=JSON.parse(rawEl.value)}catch{throw new Error("Raw JSON ist ungültig")}
+  }
+  const sval=id=>document.getElementById(id).value.trim();
+  const nval=id=>{const s=sval(id);return s===""?undefined:Number(s)};
+  body.serverName=sval("set-serverName");
+  body.description=sval("set-description");
+  const mc=nval("set-maxConnections"),mt=nval("set-maxTransfers"),fd=nval("set-folderDepth");
+  if(mc!==undefined)body.maxConnections=mc;if(mt!==undefined)body.maxTransfers=mt;if(fd!==undefined)body.folderDepth=fd;
+  const interval=nval("set-searchRebuildIntervalHours");
+  const exclusions=sval("set-searchExclusions").split(",").map(x=>x.trim()).filter(Boolean);
+  if(body.searchIndex&&typeof body.searchIndex==="object"){
+    if(interval!==undefined)body.searchIndex.rebuildIntervalHours=interval;
+    body.searchIndex.exclusions=exclusions;
+  }else{
+    if(interval!==undefined)body.searchIndexRebuildIntervalHours=interval;
+    body.searchIndexExclusions=exclusions;
+  }
+  const res=await api("/settings",{method:"PATCH",body:JSON.stringify(body)});
+  settingsData=res||body;document.getElementById("settings-json").value=pretty(settingsData);
+  toast("Settings gespeichert");
+})}
+
+async function loadSearch(){return run(async()=>{
+  const d=await api("/search-index/status")||{};
+  document.getElementById("search-entries").textContent=d.entries??0;
+  const st=document.getElementById("search-status");
+  if(d.rebuilding){st.className="status-pill warn";st.innerHTML='<span class="status-dot"></span>Rebuild läuft'}
+  else if(d.ready){st.className="status-pill ok";st.innerHTML='<span class="status-dot ok"></span>Ready'}
+  else{st.className="status-pill bad";st.innerHTML='<span class="status-dot bad"></span>Nicht bereit'}
+  document.getElementById("search-kv").innerHTML=kv(d,[["Ready","ready"],["Rebuilding","rebuilding"],["Entries","entries"],["Interval (h)","rebuildIntervalHours"]]);
+})}
+async function rebuildSearch(){return run(async()=>{
+  await api("/search-index/rebuild",{method:"POST"});
+  toast("Index-Rebuild gestartet");
+  setTimeout(loadSearch,900);
+})}
+
+async function sendBroadcast(){return run(async()=>{
+  const message=document.getElementById("broadcast-message").value.trim();
+  if(!message)throw new Error("Nachricht ist leer");
+  await api("/broadcast",{method:"POST",body:JSON.stringify({message})});
+  document.getElementById("broadcast-message").value="";
+  toast("Broadcast gesendet");
+})}
+
+function closeDialog(id){document.getElementById(id).close()}
+function askConfirm(title,text){
+  document.getElementById("confirm-title").textContent=title;
+  document.getElementById("confirm-text").textContent=text;
+  document.getElementById("confirm-modal").showModal();
+  return new Promise(resolve=>confirmResolver=resolve);
+}
+function confirmResolve(v){
+  document.getElementById("confirm-modal").close();
+  if(confirmResolver){confirmResolver(v);confirmResolver=null}
+}
+loadOverview();
+startEvents();
+</script>
+</body>
+</html>

@@ -6,6 +6,13 @@ struct CarrachoServerTrackerConfiguration: Codable, Equatable {
     var port: UInt16 = LegacyTrackerProtocol.port
 }
 
+struct CarrachoHTTPAdminConfiguration: Codable, Equatable {
+    var enabled: Bool = false
+    var bind: String = "127.0.0.1"
+    var port: UInt16 = 6780
+    var token: String?
+}
+
 /// Startup/runtime configuration shared with the native Linux server. The JSON file is
 /// authoritative for these fields whenever the standalone server starts or restarts.
 struct CarrachoServerConfiguration: Codable, Equatable {
@@ -23,6 +30,7 @@ struct CarrachoServerConfiguration: Codable, Equatable {
     var uploadBandwidthLimitBytesPerSecond: UInt64 = 0
     var searchIndexExclusions: [String] = []
     var searchIndexRebuildIntervalHours: UInt32 = 0
+    var httpAdmin = CarrachoHTTPAdminConfiguration()
     var newsExpirationHour: UInt8 = 0
     var newsExpirationMinute: UInt8 = 0
 
@@ -31,7 +39,7 @@ struct CarrachoServerConfiguration: Codable, Equatable {
         case maxConnections, maxConnectionsPerIP, maxSimultaneousFileTransfers
         case maxFileTransfersPerUser, maxFolderDownloadDepth
         case uploadBandwidthLimitBytesPerSecond, searchIndexExclusions, searchIndexRebuildIntervalHours
-        case newsExpirationHour, newsExpirationMinute
+        case httpAdmin, newsExpirationHour, newsExpirationMinute
     }
 
     init() {}
@@ -52,6 +60,7 @@ struct CarrachoServerConfiguration: Codable, Equatable {
         uploadBandwidthLimitBytesPerSecond = try values.decodeIfPresent(UInt64.self, forKey: .uploadBandwidthLimitBytesPerSecond) ?? 0
         searchIndexExclusions = try values.decodeIfPresent([String].self, forKey: .searchIndexExclusions) ?? []
         searchIndexRebuildIntervalHours = try values.decodeIfPresent(UInt32.self, forKey: .searchIndexRebuildIntervalHours) ?? 0
+        httpAdmin = try values.decodeIfPresent(CarrachoHTTPAdminConfiguration.self, forKey: .httpAdmin) ?? CarrachoHTTPAdminConfiguration()
         newsExpirationHour = try values.decodeIfPresent(UInt8.self, forKey: .newsExpirationHour) ?? 0
         newsExpirationMinute = try values.decodeIfPresent(UInt8.self, forKey: .newsExpirationMinute) ?? 0
     }
@@ -109,6 +118,10 @@ final class CarrachoServerService {
         self.runtime = runtime
         self.botController = CarrachoServerBotController(rootURL: resolvedRoot, runtime: runtime)
         self.runtime.configureDownloadBandwidthLimit(configuration.uploadBandwidthLimitBytesPerSecond)
+        try self.runtime.configureHTTPAdministration(enabled: configuration.httpAdmin.enabled,
+                                                     bindAddress: configuration.httpAdmin.bind,
+                                                     port: configuration.httpAdmin.port,
+                                                     token: Self.effectiveHTTPAdminToken(configuration))
         self.trackerRuntime = LegacyTrackerRuntime()
         self.configuration = configuration
         self.trackerConfiguration = Self.loadTrackerConfiguration(rootURL: resolvedRoot)
@@ -211,6 +224,7 @@ final class CarrachoServerService {
             if object?["serverName"] == nil { configuration.serverName = state.identity.name; migrated = true }
             if object?["description"] == nil { configuration.description = state.identity.description; migrated = true }
             try validate(configuration)
+            try secureConfigurationPermissions(url)
             if migrated { try saveConfiguration(configuration, rootURL: rootURL) }
             if object?["trackerRegistration"] == nil {
                 try persistTrackerRegistrationMirror(state: state, rootURL: rootURL)
@@ -228,7 +242,12 @@ final class CarrachoServerService {
         let data = try Data(contentsOf: url)
         let configuration = try JSONDecoder().decode(CarrachoServerConfiguration.self, from: data)
         try validate(configuration)
+        try secureConfigurationPermissions(url)
         return configuration
+    }
+
+    private static func secureConfigurationPermissions(_ url: URL) throws {
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
     }
 
     private static func saveConfiguration(_ configuration: CarrachoServerConfiguration, rootURL: URL) throws {
@@ -238,6 +257,9 @@ final class CarrachoServerService {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
         try encoder.encode(configuration).write(to: url, options: .atomic)
+        // This file may contain the HTTP administration bearer token. Keep it private to
+        // the configured server user; the LaunchDaemon runs as that same user.
+        try secureConfigurationPermissions(url)
     }
 
     private static func persistTrackerRegistrationMirror(state: ServerState, rootURL: URL) throws {
@@ -266,6 +288,22 @@ final class CarrachoServerService {
         let updated = try JSONSerialization.data(withJSONObject: object,
                                                   options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
         try updated.write(to: url, options: .atomic)
+        try secureConfigurationPermissions(url)
+    }
+
+    private static func effectiveHTTPAdminToken(_ configuration: CarrachoServerConfiguration) -> String {
+        let environment = ProcessInfo.processInfo.environment["CARRACHO_HTTP_ADMIN_TOKEN"] ?? ""
+        return environment.isEmpty ? (configuration.httpAdmin.token ?? "") : environment
+    }
+
+    private static func isIPv4Address(_ value: String) -> Bool {
+        let parts = value.split(separator: ".", omittingEmptySubsequences: false)
+        guard parts.count == 4 else { return false }
+        return parts.allSatisfy { part in
+            guard !part.isEmpty, part.count <= 3, part.allSatisfy({ $0.isNumber }),
+                  let number = UInt16(part), number <= 255 else { return false }
+            return String(number) == part || part == "0"
+        }
     }
 
     private static func validate(_ configuration: CarrachoServerConfiguration) throws {
@@ -284,6 +322,14 @@ final class CarrachoServerService {
         }
         guard configuration.legacyFilesRoot.utf8.count < 4096 else {
             throw ServerStateError.invalidValue(L("legacyFilesRoot path is too long."))
+        }
+        guard isIPv4Address(configuration.httpAdmin.bind), configuration.httpAdmin.port > 0 else {
+            throw ServerStateError.invalidValue(L("httpAdmin.bind must be an IPv4 address and httpAdmin.port must be between 1 and 65535."))
+        }
+        if configuration.httpAdmin.enabled {
+            guard effectiveHTTPAdminToken(configuration).utf8.count >= 24 else {
+                throw ServerStateError.invalidValue(L("Enabled httpAdmin requires a token of at least 24 UTF-8 bytes or CARRACHO_HTTP_ADMIN_TOKEN."))
+            }
         }
         guard configuration.maxConnections > 0, configuration.maxConnectionsPerIP > 0,
               configuration.maxSimultaneousFileTransfers > 0, configuration.maxFileTransfersPerUser > 0 else {
@@ -345,6 +391,10 @@ final class CarrachoServerService {
         try Self.reconcile(configuration: latest, filesURL: latestFilesURL, rootURL: rootURL, backend: backend)
         try runtime.configureStorageRoot(latestFilesURL)
         runtime.configureDownloadBandwidthLimit(latest.uploadBandwidthLimitBytesPerSecond)
+        try runtime.configureHTTPAdministration(enabled: latest.httpAdmin.enabled,
+                                                bindAddress: latest.httpAdmin.bind,
+                                                port: latest.httpAdmin.port,
+                                                token: Self.effectiveHTTPAdminToken(latest))
         configuration = latest
         filesURL = latestFilesURL
     }
@@ -376,6 +426,10 @@ final class CarrachoServerService {
     var status: LegacyServerRuntimeStatus { runtime.status }
     var trackerStatus: LegacyTrackerRuntimeStatus { trackerRuntime.status }
     var serverState: ServerState { backend.snapshot() }
+    var httpAdminConfiguration: CarrachoHTTPAdminConfiguration { configuration.httpAdmin }
+    var httpAdminEnvironmentTokenActive: Bool {
+        !(ProcessInfo.processInfo.environment["CARRACHO_HTTP_ADMIN_TOKEN"] ?? "").isEmpty
+    }
 
     func updateServerPort(_ port: UInt16) throws {
         guard port > 0, port < UInt16.max else {
@@ -389,6 +443,41 @@ final class CarrachoServerService {
         if wasRunning { runtime.stop() }
         try reloadConfigurationAndReconcile()
         if wasRunning { _ = try runtime.start() }
+    }
+
+    func updateHTTPAdminConfiguration(_ value: CarrachoHTTPAdminConfiguration) throws {
+        var latest = try Self.loadConfiguration(rootURL: rootURL)
+        guard latest.httpAdmin != value else { return }
+        latest.httpAdmin = value
+        try Self.validate(latest)
+
+        if value.enabled {
+            let control = latest.serverPort
+            let transfer = control < UInt16.max ? control + 1 : UInt16.max
+            guard value.port != control, value.port != transfer else {
+                throw ServerStateError.invalidValue(L("The HTTP administration port must differ from the server control and transfer ports."))
+            }
+            guard value.port != trackerConfiguration.port else {
+                throw ServerStateError.invalidValue(L("The HTTP administration port must differ from the configured tracker port."))
+            }
+        }
+
+        let previous = configuration
+        let wasRunning = runtime.status.isRunning
+        try Self.saveConfiguration(latest, rootURL: rootURL)
+        if wasRunning { runtime.stop() }
+
+        do {
+            try reloadConfigurationAndReconcile()
+            if wasRunning { _ = try runtime.start() }
+        } catch {
+            // A bad bind address/port can still fail at socket-open time. Restore the previously
+            // working configuration and listener instead of leaving a saved-but-dead server.
+            try? Self.saveConfiguration(previous, rootURL: rootURL)
+            try? reloadConfigurationAndReconcile()
+            if wasRunning, !runtime.status.isRunning { _ = try? runtime.start() }
+            throw error
+        }
     }
 
     func updateFilesRoot(_ filesURL: URL) throws {

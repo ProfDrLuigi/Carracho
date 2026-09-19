@@ -1583,7 +1583,7 @@ extension ViewController {
             row.fillColor = currentWorkspace == .trackerBrowser && tracker.id == selectedTrackerID
                 ? CarrachoTheme.selectionSoft : .clear
             row.translatesAutoresizingMaskIntoConstraints = false
-            row.heightAnchor.constraint(equalToConstant: 34).isActive = true
+            row.heightAnchor.constraint(equalToConstant: 32).isActive = true
 
             let open = BookmarkActionButton(title: "", target: self, action: #selector(trackerBookmarkPressed(_:)))
             open.tag = index
@@ -1603,7 +1603,7 @@ extension ViewController {
             count.toolTip = trackerErrors[tracker.id] ?? L("Registered servers")
             count.translatesAutoresizingMaskIntoConstraints = false
             count.widthAnchor.constraint(greaterThanOrEqualToConstant: 24).isActive = true
-            let contentStack = horizontalStack([icon, address, count], spacing: 7)
+            let contentStack = horizontalStack([icon, address, count], spacing: 6)
             contentStack.translatesAutoresizingMaskIntoConstraints = false
             let openContent = BookmarkButtonContentView()
             openContent.translatesAutoresizingMaskIntoConstraints = false

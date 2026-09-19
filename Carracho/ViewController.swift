@@ -2422,7 +2422,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         userOfflineMessageButton.showsOfflineSlash = true
         userOfflineMessageButton.imagePosition = .imageLeading
         userOfflineMessageButton.imageHugsTitle = true
-        userOfflineMessageButton.heightAnchor.constraint(equalToConstant: 30).isActive = true
+        userOfflineMessageButton.heightAnchor.constraint(equalToConstant: 28).isActive = true
         userOfflineMessageButton.toolTip = L("Send an offline message to an account that accepts offline messages")
         CarrachoTheme.applySidebarButtonStyle(userOfflineMessageButton, selected: false)
 
@@ -2432,7 +2432,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         broadcastButton.image = symbolImage("megaphone", fallback: NSImage.shareTemplateName)
         broadcastButton.imagePosition = .imageLeading
         broadcastButton.imageHugsTitle = true
-        broadcastButton.heightAnchor.constraint(equalToConstant: 30).isActive = true
+        broadcastButton.heightAnchor.constraint(equalToConstant: 28).isActive = true
         broadcastButton.toolTip = L("Send a broadcast message to every connected user")
         CarrachoTheme.applySidebarButtonStyle(broadcastButton, selected: false)
         broadcastButton.isHidden = true
@@ -2445,7 +2445,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
                                                            action: #selector(toggleServerSidebarSection(_:)))
         let serverContent = verticalStack([
             overviewButton, conferenceNavigation, filesButton, transfersButton, newsButton, messageCenterButton, userOfflineMessageButton,
-        ], spacing: 3)
+        ], spacing: 2)
         serverContent.isHidden = serverCollapsed
         serverSidebarHeader = serverHeader
         serverSidebarContent = serverContent
@@ -2454,7 +2454,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         let administrationCollapsed = UserDefaults.standard.bool(forKey: Self.administrationSidebarCollapsedDefaultsKey)
         let adminHeader = collapsibleSidebarSectionButton(title: "ADMINISTRATION", collapsed: administrationCollapsed,
                                                           action: #selector(toggleAdministrationSidebarSection(_:)))
-        let adminContent = verticalStack(Array(adminButtons.prefix(3)) + [broadcastButton] + Array(adminButtons.dropFirst(3)), spacing: 3)
+        let adminContent = verticalStack(Array(adminButtons.prefix(3)) + [broadcastButton] + Array(adminButtons.dropFirst(3)), spacing: 2)
         administrationSidebarHeader = adminHeader
         administrationSidebarContent = adminContent
         adminHeader.isHidden = true
@@ -2469,7 +2469,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         )
         bookmarkStack.isHidden = bookmarksCollapsed
         bookmarkSidebarHeader = bookmarkCollapseButton
-        let bookmarkBlock = verticalStack([bookmarkHeader, bookmarkStack], spacing: 3)
+        let bookmarkBlock = verticalStack([bookmarkHeader, bookmarkStack], spacing: 2)
         configureSidebarBlock(bookmarkBlock, block: .bookmarks, handle: bookmarkDragHandle)
         NSLayoutConstraint.activate([
             bookmarkHeader.widthAnchor.constraint(equalTo: bookmarkBlock.widthAnchor),
@@ -2484,7 +2484,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         )
         trackerStack.isHidden = trackersCollapsed
         trackerSidebarHeader = trackerCollapseButton
-        let trackerBlock = verticalStack([trackerHeader, trackerStack], spacing: 3)
+        let trackerBlock = verticalStack([trackerHeader, trackerStack], spacing: 2)
         configureSidebarBlock(trackerBlock, block: .trackers, handle: trackerDragHandle)
         NSLayoutConstraint.activate([
             trackerHeader.widthAnchor.constraint(equalTo: trackerBlock.widthAnchor),
@@ -2492,7 +2492,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         ])
 
         let (serverHeaderRow, serverDragHandle) = collapsibleSidebarBlockHeader(serverHeader, block: .server)
-        let serverBlock = verticalStack([serverHeaderRow, serverContent], spacing: 5)
+        let serverBlock = verticalStack([serverHeaderRow, serverContent], spacing: 4)
         configureSidebarBlock(serverBlock, block: .server, handle: serverDragHandle)
         NSLayoutConstraint.activate([
             serverHeaderRow.widthAnchor.constraint(equalTo: serverBlock.widthAnchor),
@@ -2500,7 +2500,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         ])
 
         let (adminHeaderRow, adminDragHandle) = collapsibleSidebarBlockHeader(adminHeader, block: .administration)
-        let adminBlock = verticalStack([adminHeaderRow, adminContent], spacing: 5)
+        let adminBlock = verticalStack([adminHeaderRow, adminContent], spacing: 4)
         NSLayoutConstraint.activate([
             adminHeaderRow.widthAnchor.constraint(equalTo: adminBlock.widthAnchor),
             adminContent.widthAnchor.constraint(equalTo: adminBlock.widthAnchor),
@@ -2521,14 +2521,14 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         }
         sidebarBlockStack.orientation = .vertical
         sidebarBlockStack.alignment = .leading
-        sidebarBlockStack.spacing = 11
+        sidebarBlockStack.spacing = 9
         sidebarBlockStack.translatesAutoresizingMaskIntoConstraints = false
         sidebarBlockStack.onMoveBlock = { [weak self] identifier, index in
             self?.moveSidebarBlock(identifier: identifier, to: index)
         }
         applySidebarBlockOrder(savedSidebarBlockOrder())
 
-        let navigation = verticalStack([logo, sidebarBlockStack], spacing: 6)
+        let navigation = verticalStack([logo, sidebarBlockStack], spacing: 5)
         // The reorderable modules must continue to occupy the complete sidebar width.
         // NSStackView otherwise sizes the new draggable wrapper from its intrinsic content,
         // which made all cards/buttons collapse into a narrow centered column.
@@ -3222,7 +3222,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
 
     func collapsibleSidebarNavigationButton(title: String, collapsed: Bool, action: Selector) -> NSButton {
         let button = CarrachoSidebarButton(title: L(title), target: self, action: action)
-        button.heightAnchor.constraint(equalToConstant: 30).isActive = true
+        button.heightAnchor.constraint(equalToConstant: 28).isActive = true
         button.disclosureImage = symbolImage(collapsed ? "chevron.right" : "chevron.down",
                                              fallback: NSImage.rightFacingTriangleTemplateName)
         button.image = symbolImage("bubble.left.and.bubble.right", fallback: NSImage.userGroupName)
@@ -3286,7 +3286,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
     func makeSidebarButton(_ workspace: Workspace) -> NSButton {
         let button = CarrachoSidebarButton(title: workspace.title, target: self, action: #selector(sidebarPressed(_:)))
         button.tag = workspace.rawValue
-        button.heightAnchor.constraint(equalToConstant: 30).isActive = true
+        button.heightAnchor.constraint(equalToConstant: 28).isActive = true
         button.image = sidebarSymbol(for: workspace)
         button.imagePosition = .imageLeading
         button.imageHugsTitle = true
@@ -4689,7 +4689,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         guard !serverBookmarks.isEmpty else {
             let empty = infoLabel(L("No saved servers"))
             empty.font = .systemFont(ofSize: 10.5)
-            empty.heightAnchor.constraint(equalToConstant: 20).isActive = true
+            empty.heightAnchor.constraint(equalToConstant: 18).isActive = true
             bookmarkStack.addArrangedSubview(empty)
             empty.widthAnchor.constraint(equalTo: bookmarkStack.widthAnchor).isActive = true
             return
@@ -4699,7 +4699,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
             let row = CarrachoBackgroundView()
             row.fillColor = bookmark.id == selectedBookmarkID ? CarrachoTheme.selectionSoft : .clear
             row.translatesAutoresizingMaskIntoConstraints = false
-            row.heightAnchor.constraint(equalToConstant: 34).isActive = true
+            row.heightAnchor.constraint(equalToConstant: 32).isActive = true
 
             // Keep saved-server cards deliberately compact: icon, server name, status and edit.
             // Endpoint/login details belong in the bookmark editor, not in a second card line.
@@ -4727,7 +4727,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
             var bookmarkViews: [NSView] = [icon, statusDot, name]
             let notificationCount = bookmarkConnections[bookmark.id]?.notificationCount ?? 0
             if notificationCount > 0 { bookmarkViews.append(bookmarkNotificationBadge(notificationCount)) }
-            let openStack = horizontalStack(bookmarkViews, spacing: 8)
+            let openStack = horizontalStack(bookmarkViews, spacing: 7)
             openStack.translatesAutoresizingMaskIntoConstraints = false
             let openContent = BookmarkButtonContentView()
             openContent.translatesAutoresizingMaskIntoConstraints = false

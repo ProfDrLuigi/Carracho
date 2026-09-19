@@ -737,6 +737,15 @@ final class CarrachoServerWindowController: NSWindowController, NSTextFieldDeleg
     private let serverPortApplyButton = NSButton(title: L("Apply"), target: nil, action: nil)
     private let configuredTransferPortLabel = NSTextField(labelWithString: L("Transfer port — · configured"))
     private let serverSettingsStatusLabel = NSTextField(labelWithString: "")
+    private let httpAdminEnabledButton = NSButton(checkboxWithTitle: L("Enable HTTP administration API"), target: nil, action: nil)
+    private let httpAdminBindField = NSTextField(string: "127.0.0.1")
+    private let httpAdminPortField = NSTextField(string: "6780")
+    private let httpAdminTokenField = NSSecureTextField(string: "")
+    private let httpAdminGenerateTokenButton = NSButton(title: L("Generate"), target: nil, action: nil)
+    private let httpAdminCopyTokenButton = NSButton(title: L("Copy"), target: nil, action: nil)
+    private let httpAdminApplyButton = NSButton(title: L("Apply"), target: nil, action: nil)
+    private let httpAdminEndpointLabel = NSTextField(labelWithString: L("Disabled"))
+    private let httpAdminStatusLabel = NSTextField(labelWithString: "")
     private let adminValue = NSTextField(labelWithString: "—")
     private let passwordButton = NSButton(title: L("Change Password…"), target: nil, action: nil)
     private let storageValue = NSTextField(labelWithString: "—")
@@ -857,6 +866,7 @@ final class CarrachoServerWindowController: NSWindowController, NSTextFieldDeleg
         let server = stack([
             makeHeader(),
             ServerResponsiveColumnsView(left: [makeServerSettingsCard()], right: [makeFilesRootCard()]),
+            makeDisclosure(title: L("HTTP Administration API"), content: makeHTTPAdminCard()),
             makeDisclosure(title: L("System Service"), content: makeDaemonCard(kind: .server)),
             makeDisclosure(title: L("Administrator"), content: makeAdminCard()),
             serverLog,
@@ -907,20 +917,40 @@ final class CarrachoServerWindowController: NSWindowController, NSTextFieldDeleg
         passwordButton.action = #selector(administratorAction(_:))
         passwordButton.isEnabled = false
 
-        for field in [serverPortField, trackerPortField] {
+        for field in [serverPortField, trackerPortField, httpAdminPortField] {
             field.alignment = .right
             field.font = .monospacedDigitSystemFont(ofSize: 12, weight: .regular)
             field.delegate = self
             field.translatesAutoresizingMaskIntoConstraints = false
         }
+        for field in [httpAdminBindField, httpAdminTokenField] {
+            field.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
+            field.delegate = self
+            field.translatesAutoresizingMaskIntoConstraints = false
+        }
         serverPortField.widthAnchor.constraint(equalToConstant: 92).isActive = true
         trackerPortField.widthAnchor.constraint(equalToConstant: 76).isActive = true
+        httpAdminPortField.widthAnchor.constraint(equalToConstant: 86).isActive = true
+        httpAdminBindField.widthAnchor.constraint(greaterThanOrEqualToConstant: 150).isActive = true
         serverPortField.setAccessibilityLabel(L("Server port"))
         trackerPortField.setAccessibilityLabel(L("Built-in tracker TCP port"))
 
         serverPortApplyButton.target = self
         serverPortApplyButton.action = #selector(saveServerSettings(_:))
         serverPortApplyButton.controlSize = .small
+
+        httpAdminEnabledButton.target = self
+        httpAdminEnabledButton.action = #selector(httpAdminControlChanged(_:))
+        httpAdminGenerateTokenButton.target = self
+        httpAdminGenerateTokenButton.action = #selector(generateHTTPAdminToken(_:))
+        httpAdminCopyTokenButton.target = self
+        httpAdminCopyTokenButton.action = #selector(copyHTTPAdminToken(_:))
+        httpAdminApplyButton.target = self
+        httpAdminApplyButton.action = #selector(saveHTTPAdminSettings(_:))
+        for button in [httpAdminGenerateTokenButton, httpAdminCopyTokenButton, httpAdminApplyButton] {
+            button.controlSize = .small
+        }
+
         trackerPortButton.target = self
         trackerPortButton.action = #selector(trackerPortChanged(_:))
         trackerPortButton.controlSize = .small
@@ -1059,6 +1089,56 @@ final class CarrachoServerWindowController: NSWindowController, NSTextFieldDeleg
             stack([settingsLabel(L("Active Ports")), NSView(), portValue]), serverSettingsStatusLabel,
         ], vertical: true, spacing: 6)
         body.toolTip = note.stringValue
+        return card(body)
+    }
+
+    private func makeHTTPAdminCard() -> NSView {
+        httpAdminEnabledButton.controlSize = .small
+        httpAdminBindField.setAccessibilityLabel(L("HTTP administration bind address"))
+        httpAdminPortField.setAccessibilityLabel(L("HTTP administration TCP port"))
+        httpAdminTokenField.setAccessibilityLabel(L("HTTP administration bearer token"))
+        httpAdminTokenField.placeholderString = L("At least 24 UTF-8 bytes")
+
+        httpAdminEndpointLabel.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+        httpAdminEndpointLabel.textColor = .secondaryLabelColor
+        httpAdminEndpointLabel.lineBreakMode = .byTruncatingMiddle
+        httpAdminEndpointLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        httpAdminStatusLabel.font = .systemFont(ofSize: 10.5)
+        httpAdminStatusLabel.textColor = .secondaryLabelColor
+        httpAdminStatusLabel.lineBreakMode = .byTruncatingTail
+        httpAdminStatusLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        let bindLabel = settingsLabel(L("Bind address"))
+        let portLabel = settingsLabel(L("TCP port"))
+        let tokenLabel = settingsLabel(L("Bearer token"))
+        let bindRow = stack([bindLabel, NSView(), httpAdminBindField], spacing: 8)
+        let portRow = stack([portLabel, NSView(), httpAdminPortField], spacing: 8)
+        let tokenButtons = stack([httpAdminGenerateTokenButton, httpAdminCopyTokenButton], spacing: 6)
+        tokenButtons.setContentHuggingPriority(.required, for: .horizontal)
+        let tokenRow = stack([httpAdminTokenField, tokenButtons], spacing: 8)
+
+        let securityNote = NSTextField(wrappingLabelWithString: L("The API uses plain HTTP. Keep it on 127.0.0.1 or place it behind a trusted TLS reverse proxy. The bearer token is stored only in the private server configuration file (mode 0600); CARRACHO_HTTP_ADMIN_TOKEN overrides the stored token at runtime."))
+        securityNote.font = .systemFont(ofSize: 10.5)
+        securityNote.textColor = .secondaryLabelColor
+
+        let applyRow = stack([
+            stack([settingsLabel(L("Endpoint")), NSView(), httpAdminEndpointLabel], spacing: 8),
+            NSView(),
+            httpAdminApplyButton,
+        ], spacing: 8)
+
+        let body = stack([
+            sectionHeader(symbol: "lock.shield", title: L("HTTP Administration")),
+            httpAdminEnabledButton,
+            bindRow,
+            portRow,
+            tokenLabel,
+            tokenRow,
+            applyRow,
+            httpAdminStatusLabel,
+            securityNote,
+        ], vertical: true, spacing: 7)
         return card(body)
     }
 
@@ -1424,6 +1504,7 @@ final class CarrachoServerWindowController: NSWindowController, NSTextFieldDeleg
     }
 
     func controlTextDidChange(_ obj: Notification) {
+        updateHTTPAdminEndpointLabel()
         updateApplyButtonStates()
     }
 
@@ -1433,10 +1514,36 @@ final class CarrachoServerWindowController: NSWindowController, NSTextFieldDeleg
         trackerPort == serverPort || (serverPort < UInt16.max && trackerPort == serverPort + 1)
     }
 
+    private func isIPv4Literal(_ value: String) -> Bool {
+        let parts = value.split(separator: ".", omittingEmptySubsequences: false)
+        guard parts.count == 4 else { return false }
+        return parts.allSatisfy { part in
+            guard !part.isEmpty, part.count <= 3, part.allSatisfy({ $0.isNumber }),
+                  let number = UInt16(part), number <= 255 else { return false }
+            return String(number) == part || part == "0"
+        }
+    }
+
+    private func httpAdminDraftConfiguration() -> CarrachoHTTPAdminConfiguration? {
+        let bind = httpAdminBindField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard isIPv4Literal(bind),
+              let port = UInt16(httpAdminPortField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)),
+              port > 0 else { return nil }
+        let rawToken = httpAdminTokenField.stringValue
+        return CarrachoHTTPAdminConfiguration(
+            enabled: httpAdminEnabledButton.state == .on,
+            bind: bind,
+            port: port,
+            token: rawToken.isEmpty ? nil : rawToken
+        )
+    }
+
     private func updateApplyButtonStates() {
         guard let service else {
             serverPortApplyButton.isEnabled = false
             trackerPortButton.isEnabled = false
+            httpAdminApplyButton.isEnabled = false
+            httpAdminCopyTokenButton.isEnabled = false
             return
         }
         let serverText = serverPortField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1454,6 +1561,24 @@ final class CarrachoServerWindowController: NSWindowController, NSTextFieldDeleg
         let validTracker = trackerPort.map { $0 > 0 && !portsConflict(serverPort: service.serverState.advanced.controlPort, trackerPort: $0) } == true
         trackerPortButton.isEnabled = validTracker && trackerPort != service.trackerConfiguration.port && !trackerActive && !trackerOperationInProgress
         trackerStartStopButton.isEnabled = !trackerOperationInProgress
+
+        let token = httpAdminTokenField.stringValue
+        httpAdminCopyTokenButton.isEnabled = !token.isEmpty
+        if let draft = httpAdminDraftConfiguration() {
+            let control = service.serverState.advanced.controlPort
+            let transfer = control < UInt16.max ? control + 1 : UInt16.max
+            let portConflict = draft.enabled &&
+                (draft.port == control || draft.port == transfer || draft.port == service.trackerConfiguration.port)
+            let tokenValid = !draft.enabled || service.httpAdminEnvironmentTokenActive ||
+                (draft.token?.utf8.count ?? 0) >= 24
+            httpAdminApplyButton.isEnabled =
+                draft != service.httpAdminConfiguration &&
+                !portConflict &&
+                tokenValid &&
+                serverOperationState == .idle
+        } else {
+            httpAdminApplyButton.isEnabled = false
+        }
     }
 
     @objc private func useModernRootForLegacy(_ sender: Any?) {
@@ -1595,6 +1720,7 @@ final class CarrachoServerWindowController: NSWindowController, NSTextFieldDeleg
             DispatchQueue.main.async {
                 self?.refreshAdminAccount()
                 self?.refreshServerSettings()
+                self?.refreshHTTPAdminSettings()
             }
         }
         service.trackerRuntime.onStatus = { [weak self] status in
@@ -1613,6 +1739,7 @@ final class CarrachoServerWindowController: NSWindowController, NSTextFieldDeleg
         passwordButton.isEnabled = service.administratorAccount != nil
         refreshAdminAccount()
         refreshServerSettings()
+        refreshHTTPAdminSettings()
         refreshRuntimeStatus()
         refreshBotAvatar()
         refreshBotGreetingConfiguration()
@@ -1854,6 +1981,34 @@ final class CarrachoServerWindowController: NSWindowController, NSTextFieldDeleg
         updateApplyButtonStates()
     }
 
+    private func refreshHTTPAdminSettings() {
+        guard let service else { return }
+        let configuration = service.httpAdminConfiguration
+        httpAdminEnabledButton.state = configuration.enabled ? .on : .off
+        httpAdminBindField.stringValue = configuration.bind
+        httpAdminPortField.stringValue = String(configuration.port)
+        httpAdminTokenField.stringValue = configuration.token ?? ""
+        httpAdminStatusLabel.stringValue = service.httpAdminEnvironmentTokenActive
+            ? L("CARRACHO_HTTP_ADMIN_TOKEN is active and overrides the stored token.")
+            : ""
+        updateHTTPAdminEndpointLabel()
+        updateApplyButtonStates()
+    }
+
+    private func updateHTTPAdminEndpointLabel() {
+        guard httpAdminEnabledButton.state == .on else {
+            httpAdminEndpointLabel.stringValue = L("Disabled")
+            return
+        }
+        let bind = httpAdminBindField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let port = httpAdminPortField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        if isIPv4Literal(bind), let value = UInt16(port), value > 0 {
+            httpAdminEndpointLabel.stringValue = "http://\(bind):\(value)/api/v1/"
+        } else {
+            httpAdminEndpointLabel.stringValue = L("Invalid endpoint")
+        }
+    }
+
     private func refreshLegacyFileRootDisplay() {
         guard let service else { return }
         let serverDaemon = daemonStatus(.server)
@@ -1927,6 +2082,98 @@ final class CarrachoServerWindowController: NSWindowController, NSTextFieldDeleg
             setServerPrimaryButtonTitle(startStopButton, L("Stopping…"))
         }
         startStopButton.isEnabled = false
+    }
+
+    @objc private func httpAdminControlChanged(_ sender: Any?) {
+        updateHTTPAdminEndpointLabel()
+        updateApplyButtonStates()
+    }
+
+    @objc private func generateHTTPAdminToken(_ sender: Any?) {
+        var generator = SystemRandomNumberGenerator()
+        let bytes = (0..<32).map { _ in UInt8.random(in: UInt8.min...UInt8.max, using: &generator) }
+        httpAdminTokenField.stringValue = bytes.map { String(format: "%02x", $0) }.joined()
+        httpAdminStatusLabel.stringValue = L("New token generated. Apply to save it.")
+        updateApplyButtonStates()
+    }
+
+    @objc private func copyHTTPAdminToken(_ sender: Any?) {
+        let token = httpAdminTokenField.stringValue
+        guard !token.isEmpty else { return }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(token, forType: .string)
+        httpAdminStatusLabel.stringValue = L("Token copied to the clipboard.")
+    }
+
+    @objc private func saveHTTPAdminSettings(_ sender: Any?) {
+        guard let service, serverOperationState == .idle else { return }
+        guard let configuration = httpAdminDraftConfiguration() else {
+            httpAdminStatusLabel.stringValue = L("Not saved")
+            presentMessage(title: L("Invalid HTTP Administration Settings"),
+                           message: L("Enter a valid IPv4 bind address and a TCP port between 1 and 65535."),
+                           style: .warning)
+            updateApplyButtonStates()
+            return
+        }
+
+        if configuration.enabled {
+            let control = service.serverState.advanced.controlPort
+            let transfer = control < UInt16.max ? control + 1 : UInt16.max
+            if configuration.port == control || configuration.port == transfer ||
+                configuration.port == service.trackerConfiguration.port {
+                httpAdminStatusLabel.stringValue = L("Not saved")
+                presentMessage(title: L("HTTP Administration Port Conflict"),
+                               message: L("The HTTP administration port must differ from the server control, transfer and tracker ports."),
+                               style: .warning)
+                updateApplyButtonStates()
+                return
+            }
+            if !service.httpAdminEnvironmentTokenActive &&
+                (configuration.token?.utf8.count ?? 0) < 24 {
+                httpAdminStatusLabel.stringValue = L("Not saved")
+                presentMessage(title: L("HTTP Administration Token Is Too Short"),
+                               message: L("Enable the API with a stored bearer token of at least 24 UTF-8 bytes, or provide CARRACHO_HTTP_ADMIN_TOKEN in the server environment."),
+                               style: .warning)
+                updateApplyButtonStates()
+                return
+            }
+        }
+
+        let daemon = daemonStatus(.server)
+        httpAdminStatusLabel.stringValue = L("Applying…")
+        httpAdminApplyButton.isEnabled = false
+        do {
+            try service.updateHTTPAdminConfiguration(configuration)
+        } catch {
+            httpAdminStatusLabel.stringValue = L("Not saved")
+            presentError(title: L("HTTP Administration Settings Could Not Be Saved"), error: error)
+            appendLog(LF("ERROR: HTTP administration settings change failed: %@", error.localizedDescription))
+            refreshHTTPAdminSettings()
+            refreshRuntimeStatus()
+            return
+        }
+
+        refreshHTTPAdminSettings()
+        if daemon.installed && daemon.loaded {
+            do {
+                try daemonManager.setRunning(true, kind: .server)
+                httpAdminStatusLabel.stringValue = L("Saved · system service restarted")
+                appendLog(L("HTTP administration settings saved. System service restarted."))
+            } catch {
+                httpAdminStatusLabel.stringValue = L("Saved · restart failed")
+                appendLog(LF("ERROR: HTTP administration settings were saved, but the system service restart failed: %@", error.localizedDescription))
+                presentMessage(title: L("Settings Saved, but Service Restart Failed"),
+                               message: L("The HTTP administration settings were saved, but the system service could not be restarted. Restart it before relying on the new endpoint."),
+                               style: .warning)
+            }
+        } else {
+            httpAdminStatusLabel.stringValue = L("Saved")
+            appendLog(L("HTTP administration settings saved."))
+        }
+        refreshRuntimeStatus()
+        refreshDaemonControls()
+        updateApplyButtonStates()
     }
 
     @objc private func saveServerSettings(_ sender: Any?) {
@@ -2667,6 +2914,10 @@ final class CarrachoServerWindowController: NSWindowController, NSTextFieldDeleg
             "trackerRunning": service?.trackerStatus.isRunning ?? false,
             "trackerPort": service?.trackerStatus.port ?? service?.trackerConfiguration.port ?? LegacyTrackerProtocol.port,
             "trackerRegisteredServers": service?.trackerStatus.registeredServers ?? 0,
+            "httpAdminEnabled": service?.httpAdminConfiguration.enabled ?? false,
+            "httpAdminBind": service?.httpAdminConfiguration.bind ?? "127.0.0.1",
+            "httpAdminPort": service?.httpAdminConfiguration.port ?? 6780,
+            "httpAdminHasStoredToken": service?.httpAdminConfiguration.token?.isEmpty == false,
             "bannerBytes": service?.serverState.identity.bannerData?.count ?? 0,
         ]
         if let data = try? JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys]) {

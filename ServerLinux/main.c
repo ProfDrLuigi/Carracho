@@ -2,6 +2,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include "server_runtime.h"
 #include "carracho_protocol.h"
+#include "carracho_web_admin_service.h"
 
 #include <json-c/json.h>
 #include <errno.h>
@@ -19,6 +20,7 @@
 #endif
 
 static cr_server *g_server;
+static cr_web_admin_service g_web_admin;
 
 static int copy_path(char *out, size_t cap, const char *value) {
     size_t n = value ? strlen(value) : 0;
@@ -313,6 +315,71 @@ static int load_startup_config(const char *config_path, const char *instance_roo
     config->persistent.search_index_rebuild_interval_hours = (uint32_t)number;
     if (config_search_index_exclusions(root, &config->persistent.search_index_exclusions)) { json_object_put(root); return -1; }
 
+    config->http_admin_enabled = 0;
+    snprintf(config->http_admin_bind, sizeof(config->http_admin_bind), "%s", "127.0.0.1");
+    config->http_admin_port = 6780;
+    config->http_admin_token[0] = '\0';
+    json_object *http_admin = NULL;
+    if (json_object_object_get_ex(root, "httpAdmin", &http_admin)) {
+        if (!json_object_is_type(http_admin, json_type_object)) {
+            fprintf(stderr, "carracho-server: config field 'httpAdmin' must be an object\n");
+            json_object_put(root);
+            return -1;
+        }
+        json_object *hv = NULL;
+        if (json_object_object_get_ex(http_admin, "enabled", &hv)) {
+            if (!json_object_is_type(hv, json_type_boolean)) {
+                fprintf(stderr, "carracho-server: httpAdmin.enabled must be a boolean\n");
+                json_object_put(root);
+                return -1;
+            }
+            config->http_admin_enabled = json_object_get_boolean(hv) ? 1 : 0;
+        }
+        if (json_object_object_get_ex(http_admin, "bind", &hv)) {
+            if (!json_object_is_type(hv, json_type_string) ||
+                strlen(json_object_get_string(hv)) >= sizeof(config->http_admin_bind)) {
+                fprintf(stderr, "carracho-server: httpAdmin.bind must be a short IPv4 address string\n");
+                json_object_put(root);
+                return -1;
+            }
+            snprintf(config->http_admin_bind, sizeof(config->http_admin_bind), "%s",
+                     json_object_get_string(hv));
+        }
+        if (json_object_object_get_ex(http_admin, "port", &hv)) {
+            int64_t port = json_object_get_int64(hv);
+            if (!json_object_is_type(hv, json_type_int) || port < 1 || port > 65535) {
+                fprintf(stderr, "carracho-server: httpAdmin.port must be between 1 and 65535\n");
+                json_object_put(root);
+                return -1;
+            }
+            config->http_admin_port = (uint16_t)port;
+        }
+        if (json_object_object_get_ex(http_admin, "token", &hv)) {
+            if (!json_object_is_type(hv, json_type_string) ||
+                strlen(json_object_get_string(hv)) >= sizeof(config->http_admin_token)) {
+                fprintf(stderr, "carracho-server: httpAdmin.token is invalid or too long\n");
+                json_object_put(root);
+                return -1;
+            }
+            snprintf(config->http_admin_token, sizeof(config->http_admin_token), "%s",
+                     json_object_get_string(hv));
+        }
+    }
+    const char *http_admin_env_token = getenv("CARRACHO_HTTP_ADMIN_TOKEN");
+    if (http_admin_env_token && *http_admin_env_token) {
+        if (strlen(http_admin_env_token) >= sizeof(config->http_admin_token)) {
+            fprintf(stderr, "carracho-server: CARRACHO_HTTP_ADMIN_TOKEN is too long\n");
+            json_object_put(root);
+            return -1;
+        }
+        snprintf(config->http_admin_token, sizeof(config->http_admin_token), "%s", http_admin_env_token);
+    }
+    if (config->http_admin_enabled && strlen(config->http_admin_token) < 24) {
+        fprintf(stderr, "carracho-server: enabled httpAdmin requires a token of at least 24 characters (or CARRACHO_HTTP_ADMIN_TOKEN)\n");
+        json_object_put(root);
+        return -1;
+    }
+
     if (!config->persistent.server_name_configured || !config->persistent.description_configured) {
         cr_server_state state;
         if (cr_state_open_at_root(&state, config->state_path, instance_root)) {
@@ -499,7 +566,60 @@ int main(int argc, char **argv) {
         fprintf(stderr, "carracho-server: initialization failed\n");
         return 1;
     }
+
+    if (config.http_admin_enabled) {
+        char upstream_url[384];
+        const char *upstream_override = getenv("CARRACHO_HTTP_ADMIN_URL");
+        const char *upstream_host = config.http_admin_bind;
+
+        if (upstream_override != NULL && upstream_override[0] != '\0') {
+            if (snprintf(upstream_url, sizeof(upstream_url), "%s", upstream_override)
+                >= (int)sizeof(upstream_url)) {
+                fprintf(stderr, "carracho-server: CARRACHO_HTTP_ADMIN_URL is too long\n");
+                cr_server_destroy(g_server);
+                g_server = NULL;
+                return 1;
+            }
+        } else {
+            /*
+             * 0.0.0.0 is a valid listen address but not a useful upstream
+             * target. The helper runs on the same host, so loop back in that
+             * case.
+             */
+            if (!upstream_host[0] || !strcmp(upstream_host, "0.0.0.0"))
+                upstream_host = "127.0.0.1";
+
+            if (snprintf(upstream_url, sizeof(upstream_url),
+                         "http://%s:%u/api/v1",
+                         upstream_host,
+                         config.http_admin_port ? config.http_admin_port : 6780)
+                >= (int)sizeof(upstream_url)) {
+                fprintf(stderr, "carracho-server: HTTP admin upstream URL is too long\n");
+                cr_server_destroy(g_server);
+                g_server = NULL;
+                return 1;
+            }
+        }
+
+        if (cr_web_admin_start(
+                &g_web_admin,
+                NULL,
+                config.http_admin_token,
+                upstream_url,
+                NULL,
+                0) != 0) {
+            fprintf(stderr,
+                    "carracho-server: warning: could not start bundled WebAdmin helper: %s\n",
+                    strerror(errno));
+        } else {
+            fprintf(stdout,
+                    "carracho-server: WebAdmin helper started (pid=%ld)\n",
+                    (long)g_web_admin.pid);
+        }
+    }
+
     int rc = cr_server_run(g_server);
+    cr_web_admin_stop(&g_web_admin);
     cr_server_destroy(g_server);
     g_server = NULL;
     return rc ? 1 : 0;

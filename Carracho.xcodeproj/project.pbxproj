@@ -67,6 +67,23 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
+				Webinterface/docs/BACKEND_INTEGRATION.md,
+				Webinterface/docs/CODESIGN_ONEFILE_V8.md,
+				Webinterface/docs/COPY_BUNDLE_RESOURCES_CLEANUP.md,
+				Webinterface/docs/XCODE_BUILD_PHASE_V6.md,
+				Webinterface/docs/XCODE_BUILD_PHASE.md,
+				Webinterface/docs/XCODE_INTEGRATION.md,
+				Webinterface/helper/web_admin.py,
+				Webinterface/macos/CarrachoWebAdminService.swift,
+				Webinterface/README.md,
+				"Webinterface/scripts/build-helper.sh",
+				"Webinterface/scripts/cleanup-old-build-artifacts.sh",
+				"Webinterface/scripts/embed-into-app.sh",
+				"Webinterface/scripts/verify-bundle.sh",
+				"Webinterface/scripts/xcode-build-and-embed-helper.sh",
+				"Webinterface/scripts/xcode-build-phase.sh",
+				"Webinterface/scripts/xcode-copy-helper.sh",
+				Webinterface/web/index.html,
 			);
 			target = 2AD52C513052E26B00CD47B6 /* Carracho */;
 		};
@@ -115,6 +132,23 @@
 				Networking/LegacyNewsClient.swift,
 				Networking/LegacyTrackerClient.swift,
 				ViewController.swift,
+				Webinterface/docs/BACKEND_INTEGRATION.md,
+				Webinterface/docs/CODESIGN_ONEFILE_V8.md,
+				Webinterface/docs/COPY_BUNDLE_RESOURCES_CLEANUP.md,
+				Webinterface/docs/XCODE_BUILD_PHASE_V6.md,
+				Webinterface/docs/XCODE_BUILD_PHASE.md,
+				Webinterface/docs/XCODE_INTEGRATION.md,
+				Webinterface/helper/web_admin.py,
+				Webinterface/macos/CarrachoWebAdminService.swift,
+				Webinterface/README.md,
+				"Webinterface/scripts/build-helper.sh",
+				"Webinterface/scripts/cleanup-old-build-artifacts.sh",
+				"Webinterface/scripts/embed-into-app.sh",
+				"Webinterface/scripts/verify-bundle.sh",
+				"Webinterface/scripts/xcode-build-and-embed-helper.sh",
+				"Webinterface/scripts/xcode-build-phase.sh",
+				"Webinterface/scripts/xcode-copy-helper.sh",
+				Webinterface/web/index.html,
 			);
 			target = 2AD53F443054732E00CD47B6 /* Carracho Server */;
 		};
@@ -226,6 +260,7 @@
 				2AD53F453054732E00CD47B6 /* Sources */,
 				2AD53F463054732E00CD47B6 /* Frameworks */,
 				2AD53F473054732E00CD47B6 /* Resources */,
+				2A80A9F7305EA9B700ECFBC3 /* Bundle Webinterface */,
 			);
 			buildRules = (
 			);
@@ -341,6 +376,24 @@
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "MAIN_APP_PATH=\"${BUILD_DIR}/Release/Carracho Server.app\"\nUPLOAD_DIR=\"/Volumes/Homeshare/Xcode/CarrachoServer/upload\"\n\necho \"🔍 Prüfe Release-App:\"\necho \"$MAIN_APP_PATH\"\n\n# Sicherstellen, dass die Release-App überhaupt existiert\nif [ ! -d \"$MAIN_APP_PATH\" ]; then\n    echo \"❌ Release-App nicht gefunden:\"\n    echo \"$MAIN_APP_PATH\"\n    exit 1\nfi\n\n# Gatekeeper prüfen\nif ! spctl --assess --type execute --verbose=4 \"$MAIN_APP_PATH\"; then\n    echo \"❌ Gatekeeper hat die App abgelehnt.\"\n    exit 1\nfi\n\n# Gesamtes Bundle prüfen\nif ! codesign --verify --deep --strict --verbose=4 \"$MAIN_APP_PATH\"; then\n    echo \"❌ Signaturprüfung fehlgeschlagen.\"\n    exit 1\nfi\n\n# Einzelne ausführbare Dateien prüfen\nERROR_FILE=\"$(mktemp)\"\n\nfind \"$MAIN_APP_PATH\" -type f -perm -111 -print0 |\nwhile IFS= read -r -d '' file; do\n    if ! codesign --verify --verbose=4 \"$file\" >/dev/null 2>&1; then\n        echo \"❌ Fehlerhafte Signatur: $file\"\n        echo \"$file\" >> \"$ERROR_FILE\"\n    fi\ndone\n\nif [ -s \"$ERROR_FILE\" ]; then\n    echo \"❌ Mindestens eine Datei im Bundle ist falsch signiert.\"\n    rm -f \"$ERROR_FILE\"\n    exit 1\nfi\n\nrm -f \"$ERROR_FILE\"\n\n# Upload vorbereiten\nif [ -d \"$UPLOAD_DIR\" ]; then\n\n    # HTML-Datei kopieren\n    cp \"${SRCROOT}/carrachoserver.html\" \"$UPLOAD_DIR/\"\n\n    # Altes ZIP sicherheitshalber entfernen\n    rm -f \"$UPLOAD_DIR/carrachoserver.zip\"\n\n    # App als ZIP-Archiv erstellen\n    ditto -c -k --sequesterRsrc --keepParent \\\n        \"$MAIN_APP_PATH\" \\\n        \"$UPLOAD_DIR/carrachoserver.zip\"\nfi\n\n# Alte Desktop-Version entfernen\nDESKTOP_APP=\"$HOME/Desktop/Carracho Server.app\"\n\nif [ -d \"$DESKTOP_APP\" ]; then\n    rm -rf \"$DESKTOP_APP\"\nfi\n\n# Release-App auf Desktop kopieren\nditto \"$MAIN_APP_PATH\" \"$DESKTOP_APP\"\n\n# Upload starten\nif [ -d \"$UPLOAD_DIR\" ]; then\n    bash \"/Volumes/Homeshare/Xcode/CarrachoServer/push.command\"\nfi\n";
+		};
+		2A80A9F7305EA9B700ECFBC3 /* Bundle Webinterface */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Bundle Webinterface";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"${SRCROOT}/Carracho/Webinterface/scripts/xcode-build-phase.sh\"\n";
 		};
 		2AD5498230556A4900CD47B6 /* Sync Server */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -543,6 +596,10 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 4;
 				ENABLE_APP_SANDBOX = NO;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/Carracho/Webinterface/.xcode-build/dist/carracho-web-admin-helper/_internal",
+				);
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Carracho/Info.plist;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.social-networking";
@@ -576,6 +633,10 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 4;
 				ENABLE_APP_SANDBOX = NO;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/Carracho/Webinterface/.xcode-build/dist/carracho-web-admin-helper/_internal",
+				);
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Carracho/Info.plist;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.social-networking";
@@ -609,6 +670,11 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 4;
 				ENABLE_APP_SANDBOX = NO;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/Carracho/Webinterface/.xcode-build/dist/carracho-web-admin-helper/_internal",
+				);
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "Carracho-Server-Info.plist";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.social-networking";
@@ -642,6 +708,11 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 4;
 				ENABLE_APP_SANDBOX = NO;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/Carracho/Webinterface/.xcode-build/dist/carracho-web-admin-helper/_internal",
+				);
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "Carracho-Server-Info.plist";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.social-networking";

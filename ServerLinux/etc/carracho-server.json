@@ -1,27 +1,40 @@
 {
-  "serverName": "Carracho Dev Server",
-  "description": "Hopefully a new era of carracho",
-  "serverPort": 6700,
-  "filesRoot": "../Files",
-  "legacyFilesRoot": "../Files-Legacy",
-  "authenticationMode": "legacyCompatible",
-  "maxConnections": 100,
-  "maxConnectionsPerIP": 5,
-  "maxSimultaneousFileTransfers": 20,
-  "maxFileTransfersPerUser": 1,
-  "maxFolderDownloadDepth": 8,
-  "uploadBandwidthLimitBytesPerSecond": 0,
-  "searchIndexExclusions": [],
-  "searchIndexRebuildIntervalHours": 0,
-  "newsExpirationHour": 0,
-  "newsExpirationMinute": 0,
-  "trackerRegistration": {
-    "enabled": false,
-    "private": false,
-    "bandwidthCode": 0,
-    "bandwidth": "T3",
-    "flags": 0,
-    "description": "Carracho Dev Server",
-    "trackers": []
+  "serverName":"Carracho Dev Server",
+  "description":"Hopefully a new era of carracho",
+  "serverPort":6700,
+  "filesRoot":"..\/Files",
+  "legacyFilesRoot":"\/opt\/carracho\/etc\/..\/Files-Legacy",
+  "authenticationMode":"legacyCompatible",
+  "maxConnections":100,
+  "maxConnectionsPerIP":5,
+  "maxSimultaneousFileTransfers":20,
+  "maxFileTransfersPerUser":1,
+  "maxFolderDownloadDepth":8,
+  "uploadBandwidthLimitBytesPerSecond":0,
+  "searchIndexExclusions":[],
+  "newsExpirationHour":0,
+  "newsExpirationMinute":0,
+  "trackerRegistration":{
+    "enabled":true,
+    "private":false,
+    "bandwidthCode":13,
+    "bandwidth":"Other Speed",
+    "flags":226492416,
+    "description":"Carracho Dev Server",
+    "trackers":[
+      {
+        "name":"wired",
+        "address":"wired.istation.pw",
+        "enabled":true,
+        "reservedString":"",
+        "reservedValue":0
+      }
+    ]
+  },
+  "searchIndexRebuildIntervalHours":0,
+  "httpAdmin":{
+    "enabled":true,
+    "bind":"127.0.0.1",
+    "port":6780
   }
 }

@@ -16,6 +16,12 @@ typedef struct cr_server_config {
     char state_path[PATH_MAX];
     char config_path[PATH_MAX];
     cr_startup_persistent_settings persistent;
+
+    /* Optional localhost-first HTTP administration API. */
+    int http_admin_enabled;
+    char http_admin_bind[64];
+    uint16_t http_admin_port;
+    char http_admin_token[256];
 } cr_server_config;
 
 int cr_server_init(cr_server **out, const cr_server_config *config);

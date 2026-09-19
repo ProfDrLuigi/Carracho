@@ -1,5 +1,7 @@
 import Foundation
 import Dispatch
+import CryptoKit
+import CoreFoundation
 #if canImport(AppKit)
 import AppKit
 #endif
@@ -177,6 +179,13 @@ final class LegacyServerRuntime {
     private var downloadTrafficLastActivityUptime: TimeInterval = 0
     private let acceptQueue = DispatchQueue(label: "com.carracho.server.accept", qos: .userInitiated)
     private let transferAcceptQueue = DispatchQueue(label: "com.carracho.server.transfer-accept", qos: .userInitiated)
+    private let httpAdminQueue = DispatchQueue(label: "com.carracho.server.http-admin", qos: .utility)
+    private var httpAdminEnabled = false
+    private var httpAdminBindAddress = "127.0.0.1"
+    private var httpAdminPort: UInt16 = 6780
+    private var httpAdminTokenDigest = Data()
+    private var httpAdminListenerFD: Int32 = -1
+    private var boundHTTPAdminPort: UInt16?
     private let newsExpirationQueue = DispatchQueue(label: "com.carracho.server.news-expiration", qos: .utility)
     private let newsTimerLock = NSLock()
     private var newsExpirationTimer: DispatchSourceTimer?
@@ -247,6 +256,25 @@ final class LegacyServerRuntime {
 
     func configureDownloadBandwidthLimit(_ bytesPerSecond: UInt64) {
         setDownloadBandwidthLimit(bytesPerSecond)
+    }
+
+    func configureHTTPAdministration(enabled: Bool, bindAddress: String, port: UInt16, token: String) throws {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        guard !running, httpAdminListenerFD < 0 else {
+            throw LegacyServerRuntimeError.protocolFailure("HTTP administration configuration cannot change while the server is running")
+        }
+        if enabled {
+            guard token.utf8.count >= 24 else {
+                throw LegacyServerRuntimeError.protocolFailure("HTTP administration requires a token of at least 24 UTF-8 bytes")
+            }
+            httpAdminTokenDigest = Data(SHA256.hash(data: Data(token.utf8)))
+        } else {
+            httpAdminTokenDigest.removeAll(keepingCapacity: false)
+        }
+        httpAdminEnabled = enabled
+        httpAdminBindAddress = bindAddress
+        httpAdminPort = port
     }
 
     private static func isTransferStagingName(_ name: String) -> Bool {
@@ -488,8 +516,29 @@ final class LegacyServerRuntime {
         let pair = try LegacySocket.makeListenerPair(controlPort: requestedPort)
 
         stateLock.lock()
+        let shouldStartHTTPAdmin = httpAdminEnabled
+        let adminBindAddress = httpAdminBindAddress
+        let adminRequestedPort = httpAdminPort
+        stateLock.unlock()
+
+        var adminFD: Int32 = -1
+        var adminBoundPort: UInt16?
+        if shouldStartHTTPAdmin {
+            do {
+                adminFD = try LegacySocket.makeIPv4Listener(bindAddress: adminBindAddress, port: adminRequestedPort, backlog: 16)
+                adminBoundPort = try LegacySocket.localPort(fd: adminFD)
+            } catch {
+                LegacySocket.shutdownAndClose(pair.controlFD)
+                LegacySocket.shutdownAndClose(pair.transferFD)
+                throw error
+            }
+        }
+
+        stateLock.lock()
         listenerFD = pair.controlFD
         transferListenerFD = pair.transferFD
+        httpAdminListenerFD = adminFD
+        boundHTTPAdminPort = adminBoundPort
         if channels[Self.publicChannelID] == nil {
             channels[Self.publicChannelID] = RuntimeChannel(id: Self.publicChannelID, name: Self.publicChannelName, password: Data())
         }
@@ -503,6 +552,10 @@ final class LegacyServerRuntime {
 
         acceptQueue.async { [weak self] in self?.acceptLoop(fd: pair.controlFD) }
         transferAcceptQueue.async { [weak self] in self?.transferAcceptLoop(fd: pair.transferFD) }
+        if let adminBoundPort {
+            log("HTTP administration API listening on http://\(adminBindAddress):\(adminBoundPort)/api/v1/")
+            httpAdminQueue.async { [weak self] in self?.httpAdminAcceptLoop(fd: adminFD) }
+        }
         scheduleNextNewsExpiration()
         refreshTrackerConfiguration()
         refreshSearchIndexRebuildSchedule()
@@ -517,16 +570,20 @@ final class LegacyServerRuntime {
         let clients: [LegacyServerSession]
         let fd: Int32
         let transferFD: Int32
+        let httpAdminFD: Int32
         let activeTransferFDs: [Int32]
         stateLock.lock()
-        guard running || listenerFD >= 0 || transferListenerFD >= 0 else { stateLock.unlock(); return }
+        guard running || listenerFD >= 0 || transferListenerFD >= 0 || httpAdminListenerFD >= 0 else { stateLock.unlock(); return }
         running = false
         fd = listenerFD
         transferFD = transferListenerFD
+        httpAdminFD = httpAdminListenerFD
         listenerFD = -1
         transferListenerFD = -1
+        httpAdminListenerFD = -1
         boundPort = nil
         boundTransferPort = nil
+        boundHTTPAdminPort = nil
         startedAt = nil
         clients = Array(sessions.values)
         activeTransferFDs = activeTransferDescriptors.values.map(\.socketFD)
@@ -538,6 +595,7 @@ final class LegacyServerRuntime {
 
         if fd >= 0 { LegacySocket.shutdownAndClose(fd) }
         if transferFD >= 0 { LegacySocket.shutdownAndClose(transferFD) }
+        if httpAdminFD >= 0 { LegacySocket.shutdownAndClose(httpAdminFD) }
         activeTransferFDs.forEach { LegacySocket.interrupt($0) }
         clients.forEach { $0.close() }
         stateLock.lock()
@@ -581,6 +639,783 @@ final class LegacyServerRuntime {
                 return
             }
         }
+    }
+
+    // MARK: - HTTP administration
+
+    private static let httpAdminMaximumHeaderBytes = 64 * 1024
+    private static let httpAdminMaximumBodyBytes = 1024 * 1024
+
+    private func httpAdminAcceptLoop(fd: Int32) {
+        while true {
+            stateLock.lock()
+            let shouldRun = running && httpAdminListenerFD == fd
+            stateLock.unlock()
+            guard shouldRun else { return }
+            do {
+                let accepted = try LegacySocket.accept(fd: fd)
+                LegacySocket.setTimeouts(fd: accepted.fd, seconds: 5)
+                DispatchQueue.global(qos: .utility).async { [weak self] in
+                    defer { LegacySocket.shutdownAndClose(accepted.fd) }
+                    self?.handleHTTPAdminConnection(fd: accepted.fd)
+                }
+            } catch {
+                stateLock.lock()
+                let stillRunning = running && httpAdminListenerFD == fd
+                stateLock.unlock()
+                if stillRunning { log("HTTP administration accept failed: \(error.localizedDescription)") }
+                return
+            }
+        }
+    }
+
+    private func handleHTTPAdminConnection(fd: Int32) {
+        do {
+            var input = Data()
+            let delimiter = Data("\r\n\r\n".utf8)
+            var headerRange: Range<Data.Index>?
+            while input.count <= Self.httpAdminMaximumHeaderBytes {
+                if let range = input.range(of: delimiter) {
+                    headerRange = range
+                    break
+                }
+                input.append(try LegacySocket.readSome(fd: fd, maximum: 4096))
+            }
+            guard let headerRange else {
+                try sendHTTPAdminResponse(fd: fd, status: 413,
+                                          object: httpAdminError(code: "header_too_large",
+                                                                 message: "HTTP header is too large or incomplete"))
+                return
+            }
+            let headerLength = headerRange.upperBound
+            guard headerLength <= Self.httpAdminMaximumHeaderBytes,
+                  let headerText = String(data: input[..<headerRange.lowerBound], encoding: .utf8) else {
+                try sendHTTPAdminResponse(fd: fd, status: 400,
+                                          object: httpAdminError(code: "bad_request", message: "Malformed HTTP request"))
+                return
+            }
+            let lines = headerText.components(separatedBy: "\r\n")
+            guard let requestLine = lines.first else {
+                try sendHTTPAdminResponse(fd: fd, status: 400,
+                                          object: httpAdminError(code: "bad_request", message: "Malformed HTTP request"))
+                return
+            }
+            let requestParts = requestLine.split(separator: " ", omittingEmptySubsequences: true)
+            guard requestParts.count == 3,
+                  requestParts[2].hasPrefix("HTTP/1."),
+                  requestParts[0].count <= 15,
+                  requestParts[1].count <= 2047 else {
+                try sendHTTPAdminResponse(fd: fd, status: 400,
+                                          object: httpAdminError(code: "bad_request", message: "Malformed HTTP request"))
+                return
+            }
+            let method = String(requestParts[0])
+            var path = String(requestParts[1])
+            if let query = path.firstIndex(of: "?") { path = String(path[..<query]) }
+
+            var headers: [String: String] = [:]
+            for line in lines.dropFirst() where !line.isEmpty {
+                guard let colon = line.firstIndex(of: ":") else {
+                    try sendHTTPAdminResponse(fd: fd, status: 400,
+                                              object: httpAdminError(code: "bad_request", message: "Malformed HTTP header"))
+                    return
+                }
+                let name = line[..<colon].trimmingCharacters(in: .whitespaces).lowercased()
+                let value = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
+                guard !name.isEmpty else {
+                    try sendHTTPAdminResponse(fd: fd, status: 400,
+                                              object: httpAdminError(code: "bad_request", message: "Malformed HTTP header"))
+                    return
+                }
+                headers[name] = value
+            }
+
+            if headers["transfer-encoding"] != nil {
+                try sendHTTPAdminResponse(fd: fd, status: 400,
+                                          object: httpAdminError(code: "bad_request",
+                                                                 message: "Chunked request bodies are not supported"))
+                return
+            }
+            let contentLength: Int
+            if let raw = headers["content-length"] {
+                guard let parsed = Int(raw), parsed >= 0 else {
+                    try sendHTTPAdminResponse(fd: fd, status: 400,
+                                              object: httpAdminError(code: "bad_request", message: "Invalid Content-Length"))
+                    return
+                }
+                guard parsed <= Self.httpAdminMaximumBodyBytes else {
+                    try sendHTTPAdminResponse(fd: fd, status: 413,
+                                              object: httpAdminError(code: "payload_too_large", message: "JSON body is too large"))
+                    return
+                }
+                contentLength = parsed
+            } else {
+                contentLength = 0
+            }
+
+            guard let authorization = headers["authorization"],
+                  authorization.hasPrefix("Bearer "),
+                  httpAdminTokenMatches(String(authorization.dropFirst(7))) else {
+                try sendHTTPAdminResponse(fd: fd, status: 401,
+                                          object: httpAdminError(code: "unauthorized", message: "Valid Bearer token required"))
+                return
+            }
+
+            while input.count - headerLength < contentLength {
+                input.append(try LegacySocket.readSome(
+                    fd: fd, maximum: min(4096, contentLength - (input.count - headerLength))))
+            }
+            let bodyData = contentLength == 0 ? Data()
+                : input.subdata(in: headerLength..<(headerLength + contentLength))
+            let body: Any?
+            if bodyData.isEmpty {
+                body = nil
+            } else {
+                do {
+                    body = try JSONSerialization.jsonObject(with: bodyData)
+                } catch {
+                    try sendHTTPAdminResponse(fd: fd, status: 400,
+                                              object: httpAdminError(code: "invalid_json",
+                                                                     message: "Request body must contain valid JSON"))
+                    return
+                }
+            }
+
+            let response = httpAdminDispatch(method: method, path: path, body: body)
+            try sendHTTPAdminResponse(fd: fd, status: response.status, object: response.object)
+        } catch LegacyServerRuntimeError.stopped {
+            // A health probe may connect only to test the port and close without an HTTP request.
+            return
+        } catch {
+            try? sendHTTPAdminResponse(fd: fd, status: 500,
+                                       object: httpAdminError(code: "internal_error",
+                                                              message: "HTTP administration request failed"))
+            log("HTTP administration request failed: \(error.localizedDescription)")
+        }
+    }
+
+    private func httpAdminTokenMatches(_ token: String) -> Bool {
+        stateLock.lock()
+        let expected = httpAdminTokenDigest
+        stateLock.unlock()
+        guard expected.count == 32 else { return false }
+        let candidate = Data(SHA256.hash(data: Data(token.utf8)))
+        return Self.constantTimeEqual(candidate, expected)
+    }
+
+    private func httpAdminError(code: String, message: String) -> [String: Any] {
+        ["error": ["code": code, "message": message]]
+    }
+
+    private func sendHTTPAdminResponse(fd: Int32, status: Int, object: Any?) throws {
+        let body = status == 204 ? Data()
+            : try JSONSerialization.data(withJSONObject: object ?? [:], options: [])
+        let reason: String
+        switch status {
+        case 200: reason = "OK"
+        case 201: reason = "Created"
+        case 202: reason = "Accepted"
+        case 204: reason = "No Content"
+        case 400: reason = "Bad Request"
+        case 401: reason = "Unauthorized"
+        case 404: reason = "Not Found"
+        case 405: reason = "Method Not Allowed"
+        case 409: reason = "Conflict"
+        case 413: reason = "Payload Too Large"
+        case 500: reason = "Internal Server Error"
+        case 503: reason = "Service Unavailable"
+        default: reason = "Error"
+        }
+        let header =
+            "HTTP/1.1 \(status) \(reason)\r\n" +
+            "Content-Type: application/json; charset=utf-8\r\n" +
+            "Content-Length: \(body.count)\r\n" +
+            "Connection: close\r\n" +
+            "Cache-Control: no-store\r\n" +
+            "X-Content-Type-Options: nosniff\r\n\r\n"
+        try LegacySocket.writeAll(fd: fd, data: Data(header.utf8))
+        if !body.isEmpty { try LegacySocket.writeAll(fd: fd, data: body) }
+    }
+
+    private func httpAdminDispatch(method: String, path: String, body: Any?) -> (status: Int, object: Any?) {
+        do {
+            switch (method, path) {
+            case ("GET", "/api/v1/status"):
+                return (200, httpAdminStatusJSON())
+            case ("GET", "/api/v1/users"):
+                return (200, httpAdminUsersJSON())
+            case ("GET", "/api/v1/accounts"):
+                return (200, httpAdminAccountsJSON())
+            case ("GET", "/api/v1/conferences"):
+                return (200, httpAdminConferencesJSON())
+            case ("GET", "/api/v1/settings"):
+                return (200, httpAdminSettingsJSON())
+            case ("GET", "/api/v1/search-index/status"):
+                return (200, httpAdminSearchIndexJSON())
+            case ("PATCH", "/api/v1/settings"):
+                guard let object = body as? [String: Any] else {
+                    return (400, httpAdminError(code: "invalid_settings",
+                                                message: "Settings payload must be a JSON object"))
+                }
+                try httpAdminPatchSettings(object)
+                return (200, httpAdminSettingsJSON())
+            case ("POST", "/api/v1/search-index/rebuild"):
+                let wasRunning = httpAdminSearchIndexRebuilding()
+                rebuildSearchIndexInBackground(reason: "HTTP administration request")
+                return (202, ["accepted": true, "alreadyRunning": wasRunning])
+            case ("POST", "/api/v1/broadcast"):
+                guard let object = body as? [String: Any], let message = object["message"] as? String else {
+                    return (400, httpAdminError(code: "invalid_broadcast",
+                                                message: "A non-empty message up to 509 UTF-8 bytes is required"))
+                }
+                try httpAdminBroadcast(message)
+                return (200, ["ok": true])
+            case ("POST", "/api/v1/accounts"):
+                guard let object = body as? [String: Any] else {
+                    return (400, httpAdminError(code: "account_save_failed",
+                                                message: "Account payload must be a JSON object"))
+                }
+                let account = try httpAdminCreateAccount(object)
+                return (201, httpAdminAccountJSON(account))
+            case ("POST", "/api/v1/conferences"):
+                guard let object = body as? [String: Any] else {
+                    return (400, httpAdminError(code: "conference_create_failed",
+                                                message: "Invalid conference payload"))
+                }
+                switch try httpAdminCreateConference(object) {
+                case let .success(id): return (201, ["id": NSNumber(value: id)])
+                case .duplicate:
+                    return (409, httpAdminError(code: "conference_create_failed",
+                                                message: "A conference with that name already exists"))
+                }
+            default:
+                break
+            }
+
+            if path.hasPrefix("/api/v1/accounts/") {
+                let encoded = String(path.dropFirst("/api/v1/accounts/".count))
+                guard let login = encoded.removingPercentEncoding, !login.isEmpty else {
+                    return (400, httpAdminError(code: "invalid_login", message: "Malformed account login in URL"))
+                }
+                if method == "PATCH" {
+                    guard let object = body as? [String: Any] else {
+                        return (400, httpAdminError(code: "account_save_failed",
+                                                    message: "Account payload must be a JSON object"))
+                    }
+                    guard let account = try httpAdminPatchAccount(login: login, object) else {
+                        return (404, httpAdminError(code: "account_save_failed", message: "Account not found"))
+                    }
+                    return (200, httpAdminAccountJSON(account))
+                }
+                if method == "DELETE" {
+                    guard try httpAdminDeleteAccount(login: login) else {
+                        return (404, httpAdminError(code: "account_delete_failed", message: "Account not found"))
+                    }
+                    return (204, nil)
+                }
+                return (405, httpAdminError(code: "method_not_allowed",
+                                            message: "Use PATCH or DELETE for an account resource"))
+            }
+
+            if path.hasPrefix("/api/v1/conferences/") {
+                guard method == "DELETE" else {
+                    return (405, httpAdminError(code: "method_not_allowed",
+                                                message: "Only DELETE is supported for this conference resource"))
+                }
+                let raw = String(path.dropFirst("/api/v1/conferences/".count))
+                guard let id = UInt32(raw), id > 0 else {
+                    return (400, httpAdminError(code: "invalid_conference_id",
+                                                message: "Conference ID must be a positive integer"))
+                }
+                guard httpAdminDeleteConference(id: id) else {
+                    return (404, httpAdminError(code: "conference_delete_failed",
+                                                message: "Conference not found or Public cannot be deleted"))
+                }
+                return (204, nil)
+            }
+
+            return (404, httpAdminError(code: "not_found", message: "Unknown API endpoint"))
+        } catch {
+            return (400, httpAdminError(code: "invalid_request", message: error.localizedDescription))
+        }
+    }
+
+    private func httpAdminStatusJSON() -> [String: Any] {
+        let state = backend.snapshot()
+        stateLock.lock()
+        let controlPort = boundPort
+        let transferPort = boundTransferPort
+        let userCount = authenticatedByUserID.count
+        let transferCount = activeFileTransfers
+        let start = startedAt
+        stateLock.unlock()
+        return [
+            "serverName": state.identity.name,
+            "software": "Carracho Server 1.0",
+            "uptimeSeconds": NSNumber(value: max(0, Int64(Date().timeIntervalSince(start ?? Date())))),
+            "usersOnline": userCount,
+            "maxConnections": Int(state.advanced.maxConnections),
+            "activeTransfers": transferCount,
+            "controlPort": Int(controlPort ?? 0),
+            "transferPort": Int(transferPort ?? 0),
+            "searchIndex": httpAdminSearchIndexJSON(),
+        ]
+    }
+
+    private func httpAdminUsersJSON() -> [[String: Any]] {
+        stateLock.lock()
+        let current = authenticatedByUserID.values.map { session -> [String: Any] in
+            let account = session.account
+            let nickname = String(data: session.nickname, encoding: .macOSRoman) ?? account?.login ?? ""
+            let status = String(data: session.statusMessage, encoding: .macOSRoman) ?? ""
+            return [
+                "userID": NSNumber(value: session.userID ?? 0),
+                "accountID": account?.id.uuidString.lowercased() ?? "",
+                "login": account?.login ?? "",
+                "nickname": nickname,
+                "mode": account?.mode.rawValue ?? ServerAccountMode.guest.rawValue,
+                "peerIP": session.peerIP,
+                "transport": session.isLegacyTransport ? "legacy-Blowfish" : "AES-256-GCM",
+                "sleeping": session.sleeping,
+                "loginUnix": NSNumber(value: Int64(session.loginAt.timeIntervalSince1970)),
+                "lastActivityUnix": NSNumber(value: Int64(session.lastActivityAt.timeIntervalSince1970)),
+                "status": status,
+                "operatingSystem": String(data: session.clientOperatingSystem, encoding: .utf8) ?? "",
+                "cpuArchitecture": String(data: session.clientCPUArchitecture, encoding: .utf8) ?? "",
+                "clientVersion": String(data: session.clientVersion, encoding: .utf8) ?? "",
+                "clientBuild": String(data: session.clientBuild, encoding: .utf8) ?? "",
+            ]
+        }
+        stateLock.unlock()
+        return current.sorted {
+            (($0["userID"] as? NSNumber)?.uint32Value ?? 0) < (($1["userID"] as? NSNumber)?.uint32Value ?? 0)
+        }
+    }
+
+    private func httpAdminAccountsJSON() -> [[String: Any]] {
+        let state = backend.snapshot()
+        return state.accounts.map { httpAdminAccountJSON($0, state: state) }
+    }
+
+    private func httpAdminPermissionBits(_ account: ServerAccount) -> UInt64 {
+        var bits: UInt64 = 0
+        func set(_ bit: Int) {
+            guard bit >= 0, bit < 64 else { return }
+            bits |= UInt64(1) << UInt64(bit)
+        }
+        switch account.mode {
+        case .administrator: set(LegacyAccountPermissionBit.administrator)
+        case .accountHolder: set(LegacyAccountPermissionBit.accountHolder)
+        case .guest: break
+        }
+        switch account.personalDirectory {
+        case .none: break
+        case .nestedInRoot: set(LegacyAccountPermissionBit.personalDirectoryNestedInRoot)
+        case .rootDirectory: set(LegacyAccountPermissionBit.personalDirectoryIsRoot)
+        }
+        account.permissions.forEach { set($0.rawValue) }
+        return bits
+    }
+
+    private func httpAdminAccountJSON(_ account: ServerAccount, state: ServerState? = nil) -> [String: Any] {
+        let state = state ?? backend.snapshot()
+        let formatter = ISO8601DateFormatter()
+        var result: [String: Any] = [
+            "id": account.id.uuidString.lowercased(),
+            "login": account.login,
+            "name": account.name,
+            "profileName": account.profileName ?? "",
+            "mode": account.mode.rawValue,
+            "groupID": account.groupID?.uuidString.lowercased() ?? "",
+            "permissionBits": NSNumber(value: httpAdminPermissionBits(account)),
+            "colorRGB": NSNumber(value: state.accountColorRGB(for: account) ?? 0),
+            "hasColorOverride": account.colorOverridesGroupDefault == true,
+            "personalDirectory": account.personalDirectory == .rootDirectory ? "root"
+                : (account.personalDirectory == .nestedInRoot ? "nested" : "none"),
+            "createdAt": formatter.string(from: account.createdAt),
+            "modifiedAt": formatter.string(from: account.modifiedAt),
+            "lastLoginAt": account.lastLoginAt.map(formatter.string(from:)) ?? "",
+            "localLoginOnly": account.isLocalLoginOnly,
+        ]
+        if let email = account.email { result["email"] = email }
+        return result
+    }
+
+    private func httpAdminConferencesJSON() -> [[String: Any]] {
+        stateLock.lock()
+        let result = channels.values.map { channel -> [String: Any] in
+            [
+                "id": NSNumber(value: channel.id),
+                "name": String(data: channel.name, encoding: .macOSRoman) ?? "Channel \(channel.id)",
+                "topic": String(data: channel.topic, encoding: .macOSRoman) ?? "",
+                "members": channel.members.count,
+                "passwordProtected": !channel.password.isEmpty,
+                "restrictedChat": (channel.flags & Self.channelRestrictedChatFlag) != 0,
+                "permanent": (channel.flags & Self.channelPermanentFlag) != 0,
+            ]
+        }
+        stateLock.unlock()
+        return result.sorted {
+            (($0["id"] as? NSNumber)?.uint32Value ?? 0) < (($1["id"] as? NSNumber)?.uint32Value ?? 0)
+        }
+    }
+
+    private func httpAdminSettingsJSON() -> [String: Any] {
+        let state = backend.snapshot()
+        return [
+            "serverName": state.identity.name,
+            "description": state.identity.description,
+            "authenticationMode": state.authentication.mode.rawValue,
+            "maxConnections": Int(state.advanced.maxConnections),
+            "maxConnectionsPerIP": Int(state.advanced.maxConnectionsPerIP),
+            "maxSimultaneousFileTransfers": Int(state.advanced.maxSimultaneousFileTransfers),
+            "maxFileTransfersPerUser": Int(state.advanced.maxFileTransfersPerUser),
+            "maxFolderDownloadDepth": Int(state.advanced.maxFolderDownloadDepth),
+            "filesRoot": state.runtime.filesRoot.isEmpty ? storageRoot.standardizedFileURL.path : state.runtime.filesRoot,
+            "legacyFilesRoot": state.runtime.legacyFilesRoot,
+            "searchIndexRebuildIntervalHours": NSNumber(value: state.runtime.searchIndexRebuildIntervalHours),
+            "searchIndexExclusions": state.runtime.searchIndexExclusions,
+        ]
+    }
+
+    private func httpAdminSearchIndexRebuilding() -> Bool {
+        fileSearchIndexStateLock.lock()
+        let rebuilding = fileSearchIndexRebuildWorkerActive
+        fileSearchIndexStateLock.unlock()
+        return rebuilding
+    }
+
+    private func httpAdminSearchIndexJSON() -> [String: Any] {
+        let index = currentFileSearchIndex()
+        var result: [String: Any] = [
+            "ready": index != nil,
+            "rebuilding": httpAdminSearchIndexRebuilding(),
+            "rebuildIntervalHours": NSNumber(value: backend.snapshot().runtime.searchIndexRebuildIntervalHours),
+        ]
+        if let index {
+            if let count = try? index.entryCount() { result["entries"] = count }
+            do {
+                if let date = try index.lastFullRebuildDate() {
+                    result["lastFullRebuildUnix"] = NSNumber(value: Int64(date.timeIntervalSince1970))
+                }
+            } catch {
+                log("HTTP administration could not read search-index metadata: \(error.localizedDescription)")
+            }
+        } else {
+            result["entries"] = 0
+        }
+        return result
+    }
+
+    private func httpAdminString(_ object: [String: Any], key: String,
+                                 maximumUTF8Bytes: Int, required: Bool = false) throws -> String? {
+        guard let raw = object[key] else {
+            if required { throw ServerStateError.invalidValue("\(key) is required.") }
+            return nil
+        }
+        guard let value = raw as? String,
+              value.utf8.count <= maximumUTF8Bytes,
+              (!required || !value.isEmpty) else {
+            throw ServerStateError.invalidValue("\(key) is invalid.")
+        }
+        return value
+    }
+
+    private func httpAdminUInt64(_ object: [String: Any], key: String, maximum: UInt64) throws -> UInt64? {
+        guard let raw = object[key] else { return nil }
+        guard let number = raw as? NSNumber,
+              CFGetTypeID(number) != CFBooleanGetTypeID(),
+              !CFNumberIsFloatType(number) else {
+            throw ServerStateError.invalidValue("\(key) must be an integer.")
+        }
+        let signed = number.int64Value
+        guard signed >= 0, UInt64(signed) <= maximum else {
+            throw ServerStateError.invalidValue("\(key) is outside the supported integer range.")
+        }
+        return UInt64(signed)
+    }
+
+    private func httpAdminPermissions(bits: UInt64) -> Set<ServerPermission> {
+        Set(ServerPermission.allCases.filter { permission in
+            (bits & (UInt64(1) << UInt64(permission.rawValue))) != 0
+        })
+    }
+
+    private func httpAdminPersonalDirectory(bits: UInt64) -> ServerPersonalDirectoryMode {
+        if (bits & (UInt64(1) << UInt64(LegacyAccountPermissionBit.personalDirectoryIsRoot))) != 0 {
+            return .rootDirectory
+        }
+        if (bits & (UInt64(1) << UInt64(LegacyAccountPermissionBit.personalDirectoryNestedInRoot))) != 0 {
+            return .nestedInRoot
+        }
+        return .none
+    }
+
+    private func httpAdminPatchSettings(_ object: [String: Any]) throws {
+        let serverName = try httpAdminString(object, key: "serverName", maximumUTF8Bytes: 255)
+        let description = try httpAdminString(object, key: "description", maximumUTF8Bytes: 16_384)
+        let maxConnections = try httpAdminUInt64(object, key: "maxConnections", maximum: UInt64(UInt16.max))
+        let maxConnectionsPerIP = try httpAdminUInt64(object, key: "maxConnectionsPerIP", maximum: UInt64(UInt16.max))
+        let maxTransfers = try httpAdminUInt64(object, key: "maxSimultaneousFileTransfers", maximum: UInt64(UInt16.max))
+        let maxUserTransfers = try httpAdminUInt64(object, key: "maxFileTransfersPerUser", maximum: UInt64(UInt16.max))
+        let maxFolderDepth = try httpAdminUInt64(object, key: "maxFolderDownloadDepth", maximum: UInt64(UInt16.max))
+        let rebuildHours = try httpAdminUInt64(object, key: "searchIndexRebuildIntervalHours", maximum: UInt64(UInt32.max))
+        let exclusions: [String]?
+        if let raw = object["searchIndexExclusions"] {
+            guard let values = raw as? [Any] else {
+                throw ServerStateError.invalidValue("searchIndexExclusions must be an array.")
+            }
+            let strings = try values.map { value -> String in
+                guard let text = value as? String else {
+                    throw ServerStateError.invalidValue("searchIndexExclusions must contain strings.")
+                }
+                return text
+            }
+            _ = try LegacyServerSettingField.encodeSearchIndexExclusions(strings)
+            exclusions = strings
+        } else {
+            exclusions = nil
+        }
+
+        let before = backend.snapshot()
+        try backend.updateServerState { state in
+            if let serverName { state.identity.name = serverName }
+            if let description { state.identity.description = description }
+            if let maxConnections {
+                guard maxConnections > 0 else {
+                    throw ServerStateError.invalidValue("maxConnections must be greater than zero.")
+                }
+                state.advanced.maxConnections = UInt16(maxConnections)
+            }
+            if let maxConnectionsPerIP {
+                guard maxConnectionsPerIP > 0 else {
+                    throw ServerStateError.invalidValue("maxConnectionsPerIP must be greater than zero.")
+                }
+                state.advanced.maxConnectionsPerIP = UInt16(maxConnectionsPerIP)
+            }
+            if let maxTransfers {
+                guard maxTransfers > 0 else {
+                    throw ServerStateError.invalidValue("maxSimultaneousFileTransfers must be greater than zero.")
+                }
+                state.advanced.maxSimultaneousFileTransfers = UInt16(maxTransfers)
+            }
+            if let maxUserTransfers {
+                guard maxUserTransfers > 0 else {
+                    throw ServerStateError.invalidValue("maxFileTransfersPerUser must be greater than zero.")
+                }
+                state.advanced.maxFileTransfersPerUser = UInt16(maxUserTransfers)
+            }
+            if let maxFolderDepth { state.advanced.maxFolderDownloadDepth = UInt16(maxFolderDepth) }
+            if let rebuildHours { state.runtime.searchIndexRebuildIntervalHours = UInt32(rebuildHours) }
+            if let exclusions { state.runtime.searchIndexExclusions = exclusions }
+            try ServerStateValidator.validate(identity: state.identity)
+            try ServerStateValidator.validate(advanced: state.advanced)
+        }
+        let after = backend.snapshot()
+        try persistStartupConfigurationToJSON(after)
+        if before.runtime.searchIndexRebuildIntervalHours != after.runtime.searchIndexRebuildIntervalHours {
+            refreshSearchIndexRebuildSchedule()
+        }
+        if before.runtime.searchIndexExclusions != after.runtime.searchIndexExclusions {
+            log("Search-index exclusions updated through HTTP administration; removals take full effect on the next manual or scheduled rebuild")
+        }
+        onStateChanged?()
+        log("Server settings updated through HTTP administration API")
+    }
+
+    private func httpAdminCreateAccount(_ object: [String: Any]) throws -> ServerAccount {
+        let login = try httpAdminString(object, key: "login", maximumUTF8Bytes: 255, required: true)!
+        let suppliedName = try httpAdminString(object, key: "name", maximumUTF8Bytes: 511)
+        let password = try httpAdminString(object, key: "password", maximumUTF8Bytes: 1024, required: true)!
+        let snapshot = backend.snapshot()
+        let groupID: UUID
+        if let raw = try httpAdminString(object, key: "groupID", maximumUTF8Bytes: 63) {
+            guard let parsed = UUID(uuidString: raw) else {
+                throw ServerStateError.invalidValue("groupID is invalid.")
+            }
+            groupID = parsed
+        } else {
+            groupID = ServerState.builtInMemberGroupID
+        }
+        guard let group = snapshot.accountGroups.first(where: { $0.id == groupID }) else {
+            throw ServerStateError.accountGroupNotFound(groupID)
+        }
+        let bits = try httpAdminUInt64(object, key: "permissionBits", maximum: UInt64(Int64.max))
+        let color = try httpAdminUInt64(object, key: "colorRGB", maximum: 0x00ff_ffff)
+        var account = ServerAccount(
+            login: login,
+            name: suppliedName ?? login,
+            mode: group.legacyMode,
+            groupID: groupID,
+            personalDirectory: bits.map { httpAdminPersonalDirectory(bits: $0) } ?? .none,
+            permissions: bits.map { httpAdminPermissions(bits: $0) } ?? group.permissions,
+            colorRGB: color.map(UInt32.init)
+        )
+        account.permissionsOverrideGroupDefaults = bits == nil ? false : nil
+        let saved = try backend.createAccount(account, password: password)
+        try synchronizePersonalDirectory(oldAccount: nil, newAccount: saved)
+        refreshConnectedAccountsFromBackendAndBroadcastColor()
+        onStateChanged?()
+        log("Account created through HTTP administration API: \(saved.login)")
+        return saved
+    }
+
+    private func httpAdminPatchAccount(login: String, _ object: [String: Any]) throws -> ServerAccount? {
+        let snapshot = backend.snapshot()
+        guard let existing = snapshot.accounts.first(where: {
+            $0.login.compare(login, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame
+        }) else { return nil }
+
+        var replacement = existing
+        if let value = try httpAdminString(object, key: "login", maximumUTF8Bytes: 255) {
+            guard !value.isEmpty else { throw ServerStateError.invalidValue("login must not be empty.") }
+            replacement.login = value
+        }
+        if let value = try httpAdminString(object, key: "name", maximumUTF8Bytes: 511) {
+            replacement.name = value
+        }
+        if let value = try httpAdminString(object, key: "groupID", maximumUTF8Bytes: 63) {
+            guard let id = UUID(uuidString: value),
+                  let group = snapshot.accountGroups.first(where: { $0.id == id }) else {
+                throw ServerStateError.invalidValue("groupID is invalid.")
+            }
+            replacement.groupID = id
+            replacement.mode = group.legacyMode
+        }
+        if let bits = try httpAdminUInt64(object, key: "permissionBits", maximum: UInt64(Int64.max)) {
+            replacement.permissions = httpAdminPermissions(bits: bits)
+            replacement.personalDirectory = httpAdminPersonalDirectory(bits: bits)
+        }
+        if let color = try httpAdminUInt64(object, key: "colorRGB", maximum: 0x00ff_ffff) {
+            replacement.colorRGB = UInt32(color)
+        }
+        let password = try httpAdminString(object, key: "password", maximumUTF8Bytes: 1024)
+        let saved = try backend.updateAccount(id: existing.id, with: replacement, newPassword: password)
+        try synchronizePersonalDirectory(oldAccount: existing, newAccount: saved)
+        refreshConnectedAccountsFromBackendAndBroadcastColor()
+        onStateChanged?()
+        log("Account modified through HTTP administration API: \(saved.login)")
+        return saved
+    }
+
+    private func httpAdminDeleteAccount(login: String) throws -> Bool {
+        let snapshot = backend.snapshot()
+        guard let account = snapshot.accounts.first(where: {
+            $0.login.compare(login, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame
+        }) else { return false }
+        try backend.deleteAccount(id: account.id)
+        refreshConnectedAccountsFromBackendAndBroadcastColor()
+        onStateChanged?()
+        log("Account deleted through HTTP administration API: \(account.login)")
+        return true
+    }
+
+    private enum HTTPAdminConferenceCreateResult {
+        case success(UInt32)
+        case duplicate
+    }
+
+    private func httpAdminCreateConference(_ object: [String: Any]) throws -> HTTPAdminConferenceCreateResult {
+        let name = try httpAdminString(object, key: "name", maximumUTF8Bytes: 255, required: true)!
+        let password = try httpAdminString(object, key: "password", maximumUTF8Bytes: 255) ?? ""
+        guard let nameData = name.data(using: .macOSRoman), !nameData.isEmpty, nameData.count <= 64,
+              let passwordData = password.data(using: .macOSRoman), passwordData.count <= 32 else {
+            throw ServerStateError.invalidValue("Conference name/password exceeds Classic MacRoman limits.")
+        }
+        let permanent: Bool
+        if let raw = object["permanent"] {
+            guard let value = raw as? Bool else {
+                throw ServerStateError.invalidValue("permanent must be a boolean.")
+            }
+            permanent = value
+        } else {
+            permanent = true
+        }
+        let restricted: Bool
+        if let raw = object["restrictedChat"] {
+            guard let value = raw as? Bool else {
+                throw ServerStateError.invalidValue("restrictedChat must be a boolean.")
+            }
+            restricted = value
+        } else {
+            restricted = false
+        }
+
+        stateLock.lock()
+        if channels.values.contains(where: { channelNameEquals($0.name, nameData) }) {
+            stateLock.unlock()
+            return .duplicate
+        }
+        let id = nextAvailableChannelIDLocked()
+        var channel = RuntimeChannel(id: id, name: nameData, password: passwordData)
+        if permanent { channel.flags |= Self.channelPermanentFlag }
+        if restricted { channel.flags |= Self.channelRestrictedChatFlag }
+        channels[id] = channel
+        stateLock.unlock()
+        log("Channel \(id) created through HTTP administration API")
+        return .success(id)
+    }
+
+    private func httpAdminDeleteConference(id: UInt32) -> Bool {
+        guard id != Self.publicChannelID else { return false }
+        stateLock.lock()
+        guard let channel = channels.removeValue(forKey: id) else {
+            stateLock.unlock()
+            return false
+        }
+        let memberIDs = channel.members.keys.sorted()
+        let classicMembers = memberIDs.compactMap { authenticatedByUserID[$0] }.filter { $0.isLegacyTransport }
+        let modernRecipients = authenticatedByUserID.values.filter { !$0.isLegacyTransport }
+        stateLock.unlock()
+
+        for classic in classicMembers {
+            for userID in memberIDs {
+                let left = LegacyPacket(command: LegacyCommand.channelUserLeft, transactionID: 0, fields: [
+                    LegacyTLV(type: LegacyChannelField.channelID, value: LegacyWire.uint32BE(id)),
+                    LegacyTLV(type: LegacyChannelField.userID, value: LegacyWire.uint32BE(userID)),
+                ])
+                try? classic.sendAuthenticated(left)
+            }
+        }
+        let deleted = LegacyPacket(command: LegacyCommand.channelDeleted, transactionID: 0, fields: [
+            LegacyTLV(type: LegacyChannelField.channelID, value: LegacyWire.uint32BE(id)),
+            LegacyTLV(type: LegacyChannelField.name, value: channel.name),
+        ])
+        modernRecipients.forEach { try? $0.sendAuthenticated(deleted) }
+        log("Channel \(id) deleted through HTTP administration API")
+        return true
+    }
+
+    private func httpAdminBroadcast(_ message: String) throws {
+        let normalized = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty, message.utf8.count <= 509 else {
+            throw ServerStateError.invalidValue("Broadcast message must contain 1 to 509 UTF-8 bytes.")
+        }
+        let wire = try CarrachoTextWire.encode(message, maximumBytes: 0x200)
+        stateLock.lock()
+        let recipients = Array(authenticatedByUserID.values)
+        let senderID = localBotSession?.userID ?? 0
+        stateLock.unlock()
+
+        for recipient in recipients {
+            let outbound: Data
+            if recipient.isLegacyTransport, CarrachoTextWire.isTaggedUTF8(wire) {
+                guard let classic = CarrachoTextWire.macRomanDescribingEmoji(from: wire, maximumBytes: 0x200),
+                      !classic.isEmpty else { continue }
+                outbound = classic
+            } else {
+                outbound = wire
+            }
+            try? recipient.sendAuthenticated(LegacyPacket(
+                command: LegacyCommand.broadcastMessage,
+                transactionID: 0,
+                fields: [
+                    LegacyTLV(type: 1, value: outbound),
+                    LegacyTLV(type: 2, value: LegacyWire.uint32BE(senderID)),
+                ]))
+        }
+        recordMessage()
+        log("Broadcast sent through HTTP administration API")
     }
 
     private func admit(peerIP: String) -> (allowed: Bool, reason: String) {
@@ -3455,6 +4290,9 @@ final class LegacyServerRuntime {
         let updated = try JSONSerialization.data(withJSONObject: object,
                                                   options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
         try updated.write(to: url, options: .atomic)
+        // Standalone server configuration can contain the HTTP administration bearer token.
+        // Preserve private file permissions after any remote/settings mirror rewrite.
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
     }
 
     private func flatNewsHeaderString(session: LegacyServerSession, now: Date = Date()) -> String {
@@ -6727,7 +7565,7 @@ private enum LegacySocket {
     static let streamType = Int32(SOCK_STREAM.rawValue)
     #endif
 
-    static func makeListener(port: UInt16) throws -> Int32 {
+    static func makeIPv4Listener(bindAddress: String, port: UInt16, backlog: Int32 = 64) throws -> Int32 {
         let fd = socket(AF_INET, streamType, 0)
         guard fd >= 0 else { throw socketError("socket") }
         do {
@@ -6741,19 +7579,25 @@ private enum LegacySocket {
             var address = sockaddr_in()
             address.sin_family = sa_family_t(AF_INET)
             address.sin_port = port.bigEndian
-            address.sin_addr = in_addr(s_addr: INADDR_ANY)
+            guard bindAddress.withCString({ inet_pton(AF_INET, $0, &address.sin_addr) }) == 1 else {
+                throw LegacyServerRuntimeError.socket("invalid IPv4 bind address \(bindAddress)")
+            }
             let bindResult = withUnsafePointer(to: &address) {
                 $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
                     bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
                 }
             }
             guard bindResult == 0 else { throw socketError("bind") }
-            guard listen(fd, 64) == 0 else { throw socketError("listen") }
+            guard listen(fd, backlog) == 0 else { throw socketError("listen") }
             return fd
         } catch {
             closeFD(fd)
             throw error
         }
+    }
+
+    static func makeListener(port: UInt16) throws -> Int32 {
+        try makeIPv4Listener(bindAddress: "0.0.0.0", port: port)
     }
 
     static func makeListenerPair(controlPort requestedPort: UInt16) throws -> (controlFD: Int32, transferFD: Int32, controlPort: UInt16, transferPort: UInt16) {
@@ -6831,6 +7675,14 @@ private enum LegacySocket {
         return (clientFD, peerAddress(storage))
     }
 
+    static func setTimeouts(fd: Int32, seconds: Int) {
+        var timeout = timeval()
+        timeout.tv_sec = seconds
+        timeout.tv_usec = 0
+        _ = setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout.size(ofValue: timeout)))
+        _ = setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout.size(ofValue: timeout)))
+    }
+
     static func readAEADFrame(fd: Int32, maximumCiphertextLength: Int) throws -> Data {
         let header = try readExactly(fd: fd, count: CarrachoModernCrypto.frameHeaderLength)
         var cursor = LegacyByteCursor(header)
@@ -6854,6 +7706,25 @@ private enum LegacySocket {
         var frame = prefix
         frame.append(try readExactly(fd: fd, count: length))
         return frame
+    }
+
+    static func readSome(fd: Int32, maximum: Int) throws -> Data {
+        guard maximum > 0 else { return Data() }
+        var result = Data(count: maximum)
+        let count = try result.withUnsafeMutableBytes { raw -> Int in
+            guard let base = raw.baseAddress else { return 0 }
+            while true {
+                let n = platformRecv(fd, base, maximum)
+                if n == 0 { throw LegacyServerRuntimeError.stopped }
+                if n < 0 {
+                    if errno == EINTR { continue }
+                    throw socketError("recv")
+                }
+                return n
+            }
+        }
+        result.count = count
+        return result
     }
 
     static func readExactly(fd: Int32, count: Int) throws -> Data {

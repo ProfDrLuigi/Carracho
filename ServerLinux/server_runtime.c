@@ -363,6 +363,14 @@ struct cr_server {
     int transfer_listener_fd;
     uint16_t port;
     uint16_t transfer_port;
+
+    int http_admin_enabled;
+    char http_admin_bind[64];
+    uint16_t http_admin_port;
+    uint8_t http_admin_token_hash[32];
+    int http_admin_listener_fd;
+    pthread_t http_admin_thread;
+    int http_admin_thread_started;
     time_t started_at;
     time_t last_news_expiration_minute;
     time_t last_tracker_registration;
@@ -4962,6 +4970,953 @@ static void maybe_schedule_file_search_index_rebuild(cr_server*s){
     repair_file_search_index(s);
 }
 
+
+#define HTTP_ADMIN_MAX_HEADER (64u * 1024u)
+#define HTTP_ADMIN_MAX_BODY (1024u * 1024u)
+
+static const char *http_mode_name(cr_account_mode mode) {
+    return mode == CR_MODE_ADMIN ? "administrator" :
+           mode == CR_MODE_ACCOUNT ? "accountHolder" : "guest";
+}
+
+static json_object *http_error_object(const char *code, const char *message) {
+    json_object *root = json_object_new_object();
+    json_object *error = json_object_new_object();
+    if (!root || !error) {
+        if (root) json_object_put(root);
+        if (error) json_object_put(error);
+        return NULL;
+    }
+    json_object_object_add(error, "code", json_object_new_string(code ? code : "error"));
+    json_object_object_add(error, "message", json_object_new_string(message ? message : "Request failed"));
+    json_object_object_add(root, "error", error);
+    return root;
+}
+
+static const char *http_reason_phrase(int status) {
+    switch (status) {
+        case 200: return "OK";
+        case 201: return "Created";
+        case 202: return "Accepted";
+        case 204: return "No Content";
+        case 400: return "Bad Request";
+        case 401: return "Unauthorized";
+        case 404: return "Not Found";
+        case 405: return "Method Not Allowed";
+        case 409: return "Conflict";
+        case 413: return "Payload Too Large";
+        case 415: return "Unsupported Media Type";
+        case 500: return "Internal Server Error";
+        case 503: return "Service Unavailable";
+        default: return "Error";
+    }
+}
+
+static int http_send_json(int fd, int status, json_object *object) {
+    const char *body = object ? json_object_to_json_string_ext(object, JSON_C_TO_STRING_PLAIN) : "";
+    size_t body_len = status == 204 ? 0 : strlen(body);
+    char header[1024];
+    int n = snprintf(header, sizeof(header),
+                     "HTTP/1.1 %d %s\r\n"
+                     "Content-Type: application/json; charset=utf-8\r\n"
+                     "Content-Length: %zu\r\n"
+                     "Connection: close\r\n"
+                     "Cache-Control: no-store\r\n"
+                     "X-Content-Type-Options: nosniff\r\n"
+                     "\r\n",
+                     status, http_reason_phrase(status), body_len);
+    if (n <= 0 || (size_t)n >= sizeof(header) ||
+        cr_write_all(fd, (const uint8_t *)header, (size_t)n))
+        return -1;
+    return body_len ? cr_write_all(fd, (const uint8_t *)body, body_len) : 0;
+}
+
+static int http_hash_token(const char *token, uint8_t out[32]) {
+    unsigned int length = 0;
+    return token && EVP_Digest(token, strlen(token), out, &length, EVP_sha256(), NULL) == 1 &&
+           length == 32 ? 0 : -1;
+}
+
+static int http_token_matches(cr_server *s, const char *token) {
+    uint8_t digest[32];
+    if (!s || !token || http_hash_token(token, digest)) return 0;
+    return CRYPTO_memcmp(digest, s->http_admin_token_hash, sizeof(digest)) == 0;
+}
+
+static int http_header_value(const char *headers, const char *name, char *out, size_t cap) {
+    if (!headers || !name || !out || !cap) return -1;
+    size_t name_len = strlen(name);
+    const char *line = strstr(headers, "\r\n");
+    if (!line) return -1;
+    line += 2;
+    while (*line) {
+        const char *end = strstr(line, "\r\n");
+        if (!end) break;
+        if (end == line) break;
+        const char *colon = memchr(line, ':', (size_t)(end - line));
+        if (colon && (size_t)(colon - line) == name_len &&
+            !strncasecmp(line, name, name_len)) {
+            const char *value = colon + 1;
+            while (value < end && isspace((unsigned char)*value)) value++;
+            const char *last = end;
+            while (last > value && isspace((unsigned char)last[-1])) last--;
+            size_t n = (size_t)(last - value);
+            if (n >= cap) return -1;
+            memcpy(out, value, n);
+            out[n] = 0;
+            return 0;
+        }
+        line = end + 2;
+    }
+    return 1;
+}
+
+static int http_url_decode_component(const char *input, char *out, size_t cap) {
+    size_t used = 0;
+    for (size_t i = 0; input && input[i]; i++) {
+        unsigned char c = (unsigned char)input[i];
+        if (c == '%') {
+            if (!isxdigit((unsigned char)input[i + 1]) || !isxdigit((unsigned char)input[i + 2]))
+                return -1;
+            char hex[3] = {input[i + 1], input[i + 2], 0};
+            c = (unsigned char)strtoul(hex, NULL, 16);
+            i += 2;
+        }
+        if (used + 1 >= cap || c == 0) return -1;
+        out[used++] = (char)c;
+    }
+    out[used] = 0;
+    return 0;
+}
+
+static json_object *http_account_json(const cr_account *a) {
+    json_object *o = json_object_new_object();
+    if (!o) return NULL;
+    json_object_object_add(o, "id", json_object_new_string(a->id));
+    json_object_object_add(o, "login", json_object_new_string(a->login));
+    json_object_object_add(o, "name", json_object_new_string(a->name));
+    json_object_object_add(o, "profileName", json_object_new_string(a->profile_name));
+    json_object_object_add(o, "mode", json_object_new_string(http_mode_name(a->mode)));
+    json_object_object_add(o, "groupID", json_object_new_string(a->group_id));
+    json_object_object_add(o, "permissionBits", json_object_new_int64((int64_t)a->permission_bits));
+    json_object_object_add(o, "colorRGB", json_object_new_int64(a->color_rgb));
+    json_object_object_add(o, "hasColorOverride", json_object_new_boolean(a->has_color));
+    json_object_object_add(o, "personalDirectory",
+                           json_object_new_string(a->personal == CR_PERSONAL_ROOT ? "root" :
+                                                  a->personal == CR_PERSONAL_NESTED ? "nested" : "none"));
+    json_object_object_add(o, "createdAt", json_object_new_string(a->created_at));
+    json_object_object_add(o, "modifiedAt", json_object_new_string(a->modified_at));
+    json_object_object_add(o, "lastLoginAt", json_object_new_string(a->last_login_at));
+    json_object_object_add(o, "localLoginOnly", json_object_new_boolean(a->local_login_only));
+    return o;
+}
+
+static json_object *http_status_json(cr_server *s) {
+    json_object *root = json_object_new_object();
+    if (!root) return NULL;
+
+    char server_name[512];
+    uint16_t max_connections = 0;
+    pthread_mutex_lock(&s->state.mutex);
+    snprintf(server_name, sizeof(server_name), "%s", s->state.identity.name);
+    max_connections = s->state.advanced.max_connections;
+    pthread_mutex_unlock(&s->state.mutex);
+
+    size_t online = 0, transfers = 0;
+    int rebuilding = 0;
+    pthread_mutex_lock(&s->mutex);
+    online = announced_count_locked(s);
+    transfers = s->active_file_transfers;
+    rebuilding = s->file_index_thread_running;
+    pthread_mutex_unlock(&s->mutex);
+
+    time_t now = time(NULL);
+    int64_t uptime = now > s->started_at ? (int64_t)(now - s->started_at) : 0;
+    json_object_object_add(root, "serverName", json_object_new_string(server_name));
+    json_object_object_add(root, "software", json_object_new_string("Carracho Server 1.0"));
+    json_object_object_add(root, "uptimeSeconds", json_object_new_int64(uptime));
+    json_object_object_add(root, "usersOnline", json_object_new_int64((int64_t)online));
+    json_object_object_add(root, "maxConnections", json_object_new_int(max_connections));
+    json_object_object_add(root, "activeTransfers", json_object_new_int64((int64_t)transfers));
+    json_object_object_add(root, "controlPort", json_object_new_int(s->port));
+    json_object_object_add(root, "transferPort", json_object_new_int(s->transfer_port));
+
+    json_object *index = json_object_new_object();
+    int ready = atomic_load(&s->file_index_ready);
+    json_object_object_add(index, "ready", json_object_new_boolean(ready));
+    json_object_object_add(index, "rebuilding", json_object_new_boolean(rebuilding));
+    json_object_object_add(index, "rebuildIntervalHours",
+                           json_object_new_int64(s->search_index_rebuild_interval_hours));
+    if (s->file_index.ready && !rebuilding) {
+        uint64_t count = 0;
+        int64_t rebuilt = 0;
+        int found = 0;
+        if (cr_file_search_index_entry_count(&s->file_index, &count) == 0)
+            json_object_object_add(index, "entries", json_object_new_int64((int64_t)count));
+        if (cr_file_search_index_last_full_rebuild(&s->file_index, &rebuilt, &found) == 0 && found)
+            json_object_object_add(index, "lastFullRebuildUnix", json_object_new_int64(rebuilt));
+    }
+    json_object_object_add(root, "searchIndex", index);
+    return root;
+}
+
+static json_object *http_users_json(cr_server *s) {
+    json_object *array = json_object_new_array();
+    if (!array) return NULL;
+    pthread_mutex_lock(&s->mutex);
+    for (size_t i = 0; i < s->allocated_session_count; i++) {
+        cr_session *x = s->sessions[i];
+        if (!session_ready_for_async(x)) continue;
+        char nickname[1024] = "";
+        char status[1024] = "";
+        if (cr_macroman_to_utf8(x->nickname, x->nickname_len, nickname, sizeof(nickname)))
+            snprintf(nickname, sizeof(nickname), "%s", x->login);
+        if (x->status_message_len)
+            (void)cr_macroman_to_utf8(x->status_message, x->status_message_len, status, sizeof(status));
+        json_object *o = json_object_new_object();
+        if (!o) continue;
+        json_object_object_add(o, "userID", json_object_new_int64(x->user_id));
+        json_object_object_add(o, "accountID", json_object_new_string(x->account_id));
+        json_object_object_add(o, "login", json_object_new_string(x->login));
+        json_object_object_add(o, "nickname", json_object_new_string(nickname));
+        json_object_object_add(o, "mode", json_object_new_string(http_mode_name(x->mode)));
+        json_object_object_add(o, "peerIP", json_object_new_string(x->peer_ip));
+        json_object_object_add(o, "transport",
+                               json_object_new_string(x->modern_transport ? "AES-256-GCM" : "legacy-Blowfish"));
+        json_object_object_add(o, "sleeping", json_object_new_boolean(x->sleeping));
+        json_object_object_add(o, "loginUnix", json_object_new_int64((int64_t)x->login_at));
+        json_object_object_add(o, "lastActivityUnix", json_object_new_int64((int64_t)x->last_activity));
+        json_object_object_add(o, "status", json_object_new_string(status));
+        json_object_object_add(o, "operatingSystem", json_object_new_string(x->client_operating_system));
+        json_object_object_add(o, "cpuArchitecture", json_object_new_string(x->client_cpu_architecture));
+        json_object_object_add(o, "clientVersion", json_object_new_string(x->client_version));
+        json_object_object_add(o, "clientBuild", json_object_new_string(x->client_build));
+        json_object_array_add(array, o);
+    }
+    pthread_mutex_unlock(&s->mutex);
+    return array;
+}
+
+static json_object *http_accounts_json(cr_server *s) {
+    json_object *array = json_object_new_array();
+    if (!array) return NULL;
+    pthread_mutex_lock(&s->state.mutex);
+    for (size_t i = 0; i < s->state.account_count; i++) {
+        json_object *o = http_account_json(&s->state.accounts[i]);
+        if (o) json_object_array_add(array, o);
+    }
+    pthread_mutex_unlock(&s->state.mutex);
+    return array;
+}
+
+static json_object *http_conferences_json(cr_server *s) {
+    json_object *array = json_object_new_array();
+    if (!array) return NULL;
+    pthread_mutex_lock(&s->mutex);
+    for (size_t i = 0; i < CR_SERVER_MAX_CHANNELS; i++) {
+        cr_channel *c = &s->channels[i];
+        if (!c->used) continue;
+        char name[256] = "", topic[1024] = "";
+        if (cr_macroman_to_utf8(c->name, c->name_len, name, sizeof(name)))
+            snprintf(name, sizeof(name), "Channel %u", c->id);
+        if (c->topic_len)
+            (void)cr_macroman_to_utf8(c->topic, c->topic_len, topic, sizeof(topic));
+        json_object *o = json_object_new_object();
+        if (!o) continue;
+        json_object_object_add(o, "id", json_object_new_int64(c->id));
+        json_object_object_add(o, "name", json_object_new_string(name));
+        json_object_object_add(o, "topic", json_object_new_string(topic));
+        json_object_object_add(o, "members", json_object_new_int64((int64_t)c->member_count));
+        json_object_object_add(o, "passwordProtected", json_object_new_boolean(c->password_len != 0));
+        json_object_object_add(o, "restrictedChat", json_object_new_boolean((c->flags & CHANNEL_RESTRICTED_CHAT) != 0));
+        json_object_object_add(o, "permanent", json_object_new_boolean((c->flags & CHANNEL_PERMANENT) != 0));
+        json_object_array_add(array, o);
+    }
+    pthread_mutex_unlock(&s->mutex);
+    return array;
+}
+
+static json_object *http_settings_json(cr_server *s) {
+    json_object *o = json_object_new_object();
+    if (!o) return NULL;
+    pthread_mutex_lock(&s->state.mutex);
+    json_object_object_add(o, "serverName", json_object_new_string(s->state.identity.name));
+    json_object_object_add(o, "description", json_object_new_string(s->state.identity.description));
+    json_object_object_add(o, "authenticationMode",
+                           json_object_new_string(s->state.legacy_compatible ? "legacyCompatible" : "modernOnly"));
+    json_object_object_add(o, "maxConnections", json_object_new_int(s->state.advanced.max_connections));
+    json_object_object_add(o, "maxConnectionsPerIP", json_object_new_int(s->state.advanced.max_connections_per_ip));
+    json_object_object_add(o, "maxSimultaneousFileTransfers",
+                           json_object_new_int(s->state.advanced.max_simultaneous_file_transfers));
+    json_object_object_add(o, "maxFileTransfersPerUser",
+                           json_object_new_int(s->state.advanced.max_file_transfers_per_user));
+    json_object_object_add(o, "maxFolderDownloadDepth",
+                           json_object_new_int(s->state.advanced.max_folder_download_depth));
+    json_object_object_add(o, "filesRoot", json_object_new_string(s->state.storage_root));
+    json_object_object_add(o, "legacyFilesRoot", json_object_new_string(s->state.legacy_storage_root));
+    pthread_mutex_unlock(&s->state.mutex);
+
+    pthread_mutex_lock(&s->mutex);
+    json_object_object_add(o, "searchIndexRebuildIntervalHours",
+                           json_object_new_int64(s->search_index_rebuild_interval_hours));
+    json_object *ex = json_object_new_array();
+    for (size_t i = 0; i < s->search_index_exclusions.count; i++)
+        json_object_array_add(ex, json_object_new_string(s->search_index_exclusions.patterns[i]));
+    pthread_mutex_unlock(&s->mutex);
+    json_object_object_add(o, "searchIndexExclusions", ex);
+    return o;
+}
+
+static int http_json_string(json_object *body, const char *key, const char **value) {
+    json_object *v = NULL;
+    if (!json_object_object_get_ex(body, key, &v)) return 0;
+    if (!json_object_is_type(v, json_type_string)) return -1;
+    *value = json_object_get_string(v);
+    return 1;
+}
+
+static int http_json_int64(json_object *body, const char *key, int64_t *value) {
+    json_object *v = NULL;
+    if (!json_object_object_get_ex(body, key, &v)) return 0;
+    if (!json_object_is_type(v, json_type_int)) return -1;
+    *value = json_object_get_int64(v);
+    return 1;
+}
+
+static int http_patch_settings(cr_server *s, json_object *body) {
+    if (!body || !json_object_is_type(body, json_type_object)) return -1;
+    const char *server_name = NULL, *description = NULL;
+    int server_name_set = http_json_string(body, "serverName", &server_name);
+    int description_set = http_json_string(body, "description", &description);
+    if (server_name_set < 0 || description_set < 0 ||
+        (server_name_set && (!*server_name || strlen(server_name) > 255)) ||
+        (description_set && strlen(description) > CR_MAX_IDENTITY_TEXT))
+        return -1;
+
+    struct {
+        const char *key;
+        int64_t min, max, value;
+        int set;
+    } numbers[] = {
+        {"maxConnections", 1, 65535, 0, 0},
+        {"maxConnectionsPerIP", 1, 65535, 0, 0},
+        {"maxSimultaneousFileTransfers", 1, 65535, 0, 0},
+        {"maxFileTransfersPerUser", 1, 65535, 0, 0},
+        {"maxFolderDownloadDepth", 0, 65535, 0, 0},
+        {"searchIndexRebuildIntervalHours", 0, UINT32_MAX, 0, 0},
+    };
+    for (size_t i = 0; i < sizeof(numbers) / sizeof(numbers[0]); i++) {
+        int r = http_json_int64(body, numbers[i].key, &numbers[i].value);
+        if (r < 0 || (r > 0 && (numbers[i].value < numbers[i].min || numbers[i].value > numbers[i].max)))
+            return -1;
+        numbers[i].set = r > 0;
+    }
+
+    cr_search_index_exclusions exclusions;
+    int exclusions_set = 0;
+    memset(&exclusions, 0, sizeof(exclusions));
+    json_object *ex = NULL;
+    if (json_object_object_get_ex(body, "searchIndexExclusions", &ex)) {
+        if (!json_object_is_type(ex, json_type_array) ||
+            json_object_array_length(ex) > CR_MAX_SEARCH_INDEX_EXCLUSIONS)
+            return -1;
+        exclusions_set = 1;
+        exclusions.count = json_object_array_length(ex);
+        for (size_t i = 0; i < exclusions.count; i++) {
+            json_object *v = json_object_array_get_idx(ex, i);
+            if (!v || !json_object_is_type(v, json_type_string) ||
+                strlen(json_object_get_string(v)) >= CR_MAX_SEARCH_INDEX_PATTERN)
+                return -1;
+            snprintf(exclusions.patterns[i], sizeof(exclusions.patterns[i]), "%s",
+                     json_object_get_string(v));
+        }
+    }
+
+    pthread_mutex_lock(&s->state.mutex);
+    json_object *identity = NULL, *advanced = NULL, *runtime = NULL;
+    if (!json_object_object_get_ex(s->state.root, "identity", &identity) ||
+        !json_object_object_get_ex(s->state.root, "advanced", &advanced) ||
+        !json_object_object_get_ex(s->state.root, "runtime", &runtime)) {
+        pthread_mutex_unlock(&s->state.mutex);
+        return -1;
+    }
+    if (server_name_set) json_object_object_add(identity, "name", json_object_new_string(server_name));
+    if (description_set) json_object_object_add(identity, "description", json_object_new_string(description));
+    for (size_t i = 0; i < sizeof(numbers) / sizeof(numbers[0]); i++) {
+        if (!numbers[i].set) continue;
+        if (!strcmp(numbers[i].key, "searchIndexRebuildIntervalHours"))
+            json_object_object_add(runtime, numbers[i].key, json_object_new_int64(numbers[i].value));
+        else
+            json_object_object_add(advanced, numbers[i].key, json_object_new_int64(numbers[i].value));
+    }
+    if (exclusions_set) {
+        json_object *a = json_object_new_array();
+        for (size_t i = 0; i < exclusions.count; i++)
+            json_object_array_add(a, json_object_new_string(exclusions.patterns[i]));
+        json_object_object_add(runtime, "searchIndexExclusions", a);
+    }
+    int rc = cr_state_save_locked(&s->state);
+    if (!rc) rc = cr_state_refresh_parsed_locked(&s->state);
+    pthread_mutex_unlock(&s->state.mutex);
+    if (rc) return -1;
+
+    for (size_t i = 0; i < sizeof(numbers) / sizeof(numbers[0]); i++) {
+        if (numbers[i].set && !strcmp(numbers[i].key, "searchIndexRebuildIntervalHours")) {
+            pthread_mutex_lock(&s->mutex);
+            s->search_index_rebuild_interval_hours = (uint32_t)numbers[i].value;
+            s->last_file_index_schedule_check = 0;
+            pthread_mutex_unlock(&s->mutex);
+        }
+    }
+    if (exclusions_set) {
+        pthread_mutex_lock(&s->mutex);
+        s->search_index_exclusions = exclusions;
+        pthread_mutex_unlock(&s->mutex);
+    }
+    if (persist_startup_configuration_config(s)) return -1;
+    if (exclusions_set && persist_search_index_exclusions_config(s, &exclusions)) return -1;
+    log_msg("Server settings updated through HTTP administration API");
+    return 0;
+}
+
+static int http_account_upsert(cr_server *s, const char *old_login, json_object *body,
+                               char out_login[256]) {
+    if (!body || !json_object_is_type(body, json_type_object)) return -1;
+    cr_account existing;
+    memset(&existing, 0, sizeof(existing));
+    int modifying = old_login && *old_login;
+    if (modifying) {
+        pthread_mutex_lock(&s->state.mutex);
+        int idx = cr_state_find_account(&s->state, old_login);
+        if (idx < 0) {
+            pthread_mutex_unlock(&s->state.mutex);
+            return 1;
+        }
+        existing = s->state.accounts[idx];
+        existing.picture = NULL;
+        pthread_mutex_unlock(&s->state.mutex);
+    }
+
+    const char *login = modifying ? existing.login : NULL;
+    const char *name = modifying ? existing.name : NULL;
+    const char *password = NULL;
+    const char *group_id = modifying ? existing.group_id : NULL;
+    int lr = http_json_string(body, "login", &login);
+    int nr = http_json_string(body, "name", &name);
+    int pr = http_json_string(body, "password", &password);
+    int gr = http_json_string(body, "groupID", &group_id);
+    if (lr < 0 || nr < 0 || pr < 0 || gr < 0 || !login || !*login || strlen(login) > 255)
+        return -1;
+    if (!name) name = login;
+    if (strlen(name) > 511) return -1;
+    if (!modifying && (!password || !*password)) return -1;
+    if (password && strlen(password) > 511) return -1;
+
+    if (!group_id || !*group_id)
+        group_id = "00000000-0000-0000-0000-000000000002";
+
+    uint64_t bits = modifying ? existing.permission_bits : 0;
+    int64_t bits_raw = 0;
+    int br = http_json_int64(body, "permissionBits", &bits_raw);
+    if (br < 0 || (br > 0 && bits_raw < 0)) return -1;
+    if (br > 0) bits = (uint64_t)bits_raw;
+    if (!modifying && br == 0) {
+        pthread_mutex_lock(&s->state.mutex);
+        int found = 0;
+        for (size_t i = 0; i < s->state.account_group_count; i++) {
+            if (!strcasecmp(s->state.account_groups[i].id, group_id)) {
+                bits = s->state.account_groups[i].permission_bits;
+                found = 1;
+                break;
+            }
+        }
+        pthread_mutex_unlock(&s->state.mutex);
+        if (!found) return -1;
+    }
+
+    int has_color = modifying ? existing.has_color : 0;
+    uint32_t color = modifying ? existing.color_rgb : 0;
+    int64_t color_raw = 0;
+    int cr = http_json_int64(body, "colorRGB", &color_raw);
+    if (cr < 0 || (cr > 0 && (color_raw < 0 || color_raw > 0x00ffffff))) return -1;
+    if (cr > 0) { has_color = 1; color = (uint32_t)color_raw; }
+
+    char password_buffer[512] = "";
+    if (password) snprintf(password_buffer, sizeof(password_buffer), "%s", password);
+    else if (modifying && existing.has_legacy_password)
+        snprintf(password_buffer, sizeof(password_buffer), "%s", existing.legacy_password);
+
+    cr_personal_mode old_personal = modifying ? existing.personal : CR_PERSONAL_NONE;
+    int action = 0;
+    if (cr_state_account_upsert(&s->state, modifying ? old_login : "", login, name,
+                                password_buffer, bits, group_id, has_color, color, &action))
+        return -1;
+    refresh_connected_account_state(s);
+
+    cr_personal_mode new_personal = CR_PERSONAL_NONE;
+    pthread_mutex_lock(&s->state.mutex);
+    int idx = cr_state_find_account(&s->state, login);
+    if (idx >= 0) new_personal = s->state.accounts[idx].personal;
+    pthread_mutex_unlock(&s->state.mutex);
+    if (idx < 0 ||
+        synchronize_personal_account_home(s, modifying ? old_login : "", old_personal,
+                                          login, new_personal))
+        return -1;
+
+    snprintf(out_login, 256, "%s", login);
+    log_msg("Account %s through HTTP API: %s", action ? "modified" : "created", login);
+    return 0;
+}
+
+static int http_broadcast(cr_server *s, const char *message) {
+    if (!message || !*message || strlen(message) > 509) return -1;
+    size_t input_len = strlen(message);
+    uint8_t wire[512];
+    char text[512];
+    size_t wire_len = 0;
+    int tagged = 0;
+    if (bot_encode_wire_text((const uint8_t *)message, input_len, wire, sizeof(wire),
+                             &wire_len, &tagged, text, sizeof(text)))
+        return -1;
+
+    uint8_t classic[512];
+    size_t classic_len = 0;
+    if (tagged && classic_text_describing_emoji(wire, wire_len, classic, sizeof(classic), &classic_len))
+        return -1;
+
+    pthread_mutex_lock(&s->mutex);
+    uint32_t source_id = s->bot_session ? s->bot_session->user_id : 0;
+    uint8_t uid[4];
+    cr_write_be32(uid, source_id);
+    for (size_t i = 0; i < s->allocated_session_count; i++) {
+        cr_session *x = s->sessions[i];
+        if (!session_ready_for_async(x)) continue;
+        const uint8_t *out = wire;
+        size_t out_len = wire_len;
+        if (tagged && !x->modern_transport) {
+            if (!classic_len) continue;
+            out = classic;
+            out_len = classic_len;
+        }
+        cr_tlv_out fields[] = {{1, out, (uint16_t)out_len}, {2, uid, 4}};
+        (void)session_send(x, CMD_BROADCAST, 0, fields, 2);
+    }
+    pthread_mutex_unlock(&s->mutex);
+    (void)cr_state_stat_add(&s->state, "totalMessages", 1);
+    log_msg("Broadcast sent through HTTP administration API");
+    return 0;
+}
+
+static int http_create_conference(cr_server *s, json_object *body, uint32_t *out_id) {
+    if (!body || !json_object_is_type(body, json_type_object)) return -1;
+    const char *name = NULL, *password = "";
+    int nr = http_json_string(body, "name", &name);
+    int pr = http_json_string(body, "password", &password);
+    if (nr <= 0 || pr < 0 || !name || !*name || strlen(name) > 255 || strlen(password) > 255)
+        return -1;
+    uint8_t wn[64], wp[32];
+    size_t nn = 0, pn = 0;
+    if (cr_utf8_to_macroman(name, wn, sizeof(wn), &nn) || !nn || nn > sizeof(wn) ||
+        cr_utf8_to_macroman(password, wp, sizeof(wp), &pn) || pn > sizeof(wp))
+        return -1;
+
+    int permanent = 1, restricted = 0;
+    json_object *v = NULL;
+    if (json_object_object_get_ex(body, "permanent", &v)) {
+        if (!json_object_is_type(v, json_type_boolean)) return -1;
+        permanent = json_object_get_boolean(v);
+    }
+    if (json_object_object_get_ex(body, "restrictedChat", &v)) {
+        if (!json_object_is_type(v, json_type_boolean)) return -1;
+        restricted = json_object_get_boolean(v);
+    }
+
+    pthread_mutex_lock(&s->mutex);
+    for (size_t i = 0; i < CR_SERVER_MAX_CHANNELS; i++) {
+        cr_channel *x = &s->channels[i];
+        if (x->used && x->name_len == nn && !strncasecmp((const char *)x->name, (const char *)wn, nn)) {
+            pthread_mutex_unlock(&s->mutex);
+            return 1;
+        }
+    }
+    cr_channel *c = allocate_channel_locked(s, wn, nn, wp, pn);
+    if (!c) {
+        pthread_mutex_unlock(&s->mutex);
+        return -1;
+    }
+    if (permanent) c->flags |= CHANNEL_PERMANENT;
+    if (restricted) c->flags |= CHANNEL_RESTRICTED_CHAT;
+    *out_id = c->id;
+    pthread_mutex_unlock(&s->mutex);
+    log_msg("Channel %u created through HTTP administration API", *out_id);
+    return 0;
+}
+
+static int http_delete_conference(cr_server *s, uint32_t cid) {
+    if (cid == 1) return 1;
+    uint8_t name[64];
+    size_t name_len = 0;
+    uint32_t member_ids[CR_CHANNEL_MAX_MEMBERS];
+    size_t member_count = 0;
+    cr_session *classic_members[CR_CHANNEL_MAX_MEMBERS];
+    size_t classic_count = 0;
+    cr_session *modern_recipients[CR_SERVER_MAX_SESSIONS];
+    size_t modern_count = 0;
+
+    pthread_mutex_lock(&s->mutex);
+    cr_channel *c = channel_by_id_locked(s, cid);
+    if (!c) {
+        pthread_mutex_unlock(&s->mutex);
+        return 1;
+    }
+    name_len = c->name_len;
+    memcpy(name, c->name, name_len);
+    member_count = c->member_count;
+    for (size_t i = 0; i < member_count; i++) {
+        member_ids[i] = c->members[i].user_id;
+        cr_session *x = find_session_locked(s, member_ids[i]);
+        if (x && !x->local_only && !x->modern_transport && classic_count < CR_CHANNEL_MAX_MEMBERS)
+            classic_members[classic_count++] = x;
+    }
+    for (size_t i = 0; i < s->allocated_session_count; i++) {
+        cr_session *x = s->sessions[i];
+        if (session_ready_for_async(x) && x->modern_transport && modern_count < CR_SERVER_MAX_SESSIONS)
+            modern_recipients[modern_count++] = x;
+    }
+    memset(c, 0, sizeof(*c));
+    pthread_mutex_unlock(&s->mutex);
+
+    uint8_t cb[4];
+    cr_write_be32(cb, cid);
+    for (size_t r = 0; r < classic_count; r++) {
+        for (size_t i = 0; i < member_count; i++) {
+            uint8_t ub[4];
+            cr_write_be32(ub, member_ids[i]);
+            cr_tlv_out left[] = {{CHANNEL_FIELD_ID, cb, 4}, {CHANNEL_FIELD_USER_ID, ub, 4}};
+            (void)session_send(classic_members[r], CMD_CHANNEL_USER_LEFT, 0, left, 2);
+        }
+    }
+    cr_tlv_out deleted[] = {{CHANNEL_FIELD_ID, cb, 4}, {CHANNEL_FIELD_NAME, name, (uint16_t)name_len}};
+    for (size_t i = 0; i < modern_count; i++)
+        (void)session_send(modern_recipients[i], CMD_CHANNEL_DELETED, 0, deleted, 2);
+    log_msg("Channel %u deleted through HTTP administration API", cid);
+    return 0;
+}
+
+static json_object *http_dispatch(cr_server *s, const char *method, const char *path,
+                                  json_object *body, int *status) {
+    *status = 200;
+    if (!strcmp(method, "GET") && !strcmp(path, "/api/v1/status"))
+        return http_status_json(s);
+    if (!strcmp(method, "GET") && !strcmp(path, "/api/v1/users"))
+        return http_users_json(s);
+    if (!strcmp(method, "GET") && !strcmp(path, "/api/v1/accounts"))
+        return http_accounts_json(s);
+    if (!strcmp(method, "GET") && !strcmp(path, "/api/v1/conferences"))
+        return http_conferences_json(s);
+    if (!strcmp(method, "GET") && !strcmp(path, "/api/v1/settings"))
+        return http_settings_json(s);
+    if (!strcmp(method, "GET") && !strcmp(path, "/api/v1/search-index/status")) {
+        json_object *root = http_status_json(s);
+        json_object *index = NULL;
+        if (root && json_object_object_get_ex(root, "searchIndex", &index))
+            json_object_get(index);
+        if (root) json_object_put(root);
+        return index ? index : http_error_object("internal_error", "Could not read index status");
+    }
+
+    if (!strcmp(method, "PATCH") && !strcmp(path, "/api/v1/settings")) {
+        if (http_patch_settings(s, body)) {
+            *status = 400;
+            return http_error_object("invalid_settings", "Settings payload is invalid or could not be saved");
+        }
+        return http_settings_json(s);
+    }
+
+    if (!strcmp(method, "POST") && !strcmp(path, "/api/v1/search-index/rebuild")) {
+        if (!s->file_index.ready) {
+            *status = 503;
+            return http_error_object("index_unavailable", "Search index database is unavailable");
+        }
+        pthread_mutex_lock(&s->mutex);
+        int running = s->file_index_thread_running;
+        pthread_mutex_unlock(&s->mutex);
+        if (!running) repair_file_search_index(s);
+        *status = 202;
+        json_object *o = json_object_new_object();
+        json_object_object_add(o, "accepted", json_object_new_boolean(1));
+        json_object_object_add(o, "alreadyRunning", json_object_new_boolean(running));
+        return o;
+    }
+
+    if (!strcmp(method, "POST") && !strcmp(path, "/api/v1/broadcast")) {
+        const char *message = NULL;
+        if (!body || http_json_string(body, "message", &message) <= 0 || http_broadcast(s, message)) {
+            *status = 400;
+            return http_error_object("invalid_broadcast", "A non-empty message up to 509 UTF-8 bytes is required");
+        }
+        json_object *o = json_object_new_object();
+        json_object_object_add(o, "ok", json_object_new_boolean(1));
+        return o;
+    }
+
+    if (!strcmp(method, "POST") && !strcmp(path, "/api/v1/accounts")) {
+        char login[256];
+        int rc = http_account_upsert(s, NULL, body, login);
+        if (rc) {
+            *status = rc == 1 ? 404 : 400;
+            return http_error_object("account_save_failed", "Account payload is invalid or conflicts with existing data");
+        }
+        *status = 201;
+        pthread_mutex_lock(&s->state.mutex);
+        int idx = cr_state_find_account(&s->state, login);
+        json_object *o = idx >= 0 ? http_account_json(&s->state.accounts[idx]) : NULL;
+        pthread_mutex_unlock(&s->state.mutex);
+        return o ? o : http_error_object("internal_error", "Account was saved but could not be read back");
+    }
+
+    if (!strncmp(path, "/api/v1/accounts/", 17)) {
+        char login[256];
+        if (http_url_decode_component(path + 17, login, sizeof(login))) {
+            *status = 400;
+            return http_error_object("invalid_login", "Malformed account login in URL");
+        }
+        if (!strcmp(method, "PATCH")) {
+            char new_login[256];
+            int rc = http_account_upsert(s, login, body, new_login);
+            if (rc) {
+                *status = rc == 1 ? 404 : 400;
+                return http_error_object("account_save_failed", rc == 1 ? "Account not found" : "Account payload is invalid");
+            }
+            pthread_mutex_lock(&s->state.mutex);
+            int idx = cr_state_find_account(&s->state, new_login);
+            json_object *o = idx >= 0 ? http_account_json(&s->state.accounts[idx]) : NULL;
+            pthread_mutex_unlock(&s->state.mutex);
+            return o ? o : http_error_object("internal_error", "Account was saved but could not be read back");
+        }
+        if (!strcmp(method, "DELETE")) {
+            if (cr_state_account_delete(&s->state, login)) {
+                *status = 404;
+                return http_error_object("account_delete_failed", "Account not found or cannot be deleted");
+            }
+            refresh_connected_account_state(s);
+            log_msg("Account deleted through HTTP API: %s", login);
+            *status = 204;
+            return NULL;
+        }
+        *status = 405;
+        return http_error_object("method_not_allowed", "Use PATCH or DELETE for an account resource");
+    }
+
+    if (!strcmp(method, "POST") && !strcmp(path, "/api/v1/conferences")) {
+        uint32_t cid = 0;
+        int rc = http_create_conference(s, body, &cid);
+        if (rc) {
+            *status = rc == 1 ? 409 : 400;
+            return http_error_object("conference_create_failed",
+                                     rc == 1 ? "A conference with that name already exists" : "Invalid conference payload");
+        }
+        *status = 201;
+        json_object *o = json_object_new_object();
+        json_object_object_add(o, "id", json_object_new_int64(cid));
+        return o;
+    }
+
+    if (!strncmp(path, "/api/v1/conferences/", 20)) {
+        if (strcmp(method, "DELETE")) {
+            *status = 405;
+            return http_error_object("method_not_allowed", "Only DELETE is supported for this conference resource");
+        }
+        char *end = NULL;
+        errno = 0;
+        unsigned long raw = strtoul(path + 20, &end, 10);
+        if (errno || !end || *end || raw > UINT32_MAX || raw == 0) {
+            *status = 400;
+            return http_error_object("invalid_conference_id", "Conference ID must be a positive integer");
+        }
+        int rc = http_delete_conference(s, (uint32_t)raw);
+        if (rc) {
+            *status = 404;
+            return http_error_object("conference_delete_failed", "Conference not found or Public cannot be deleted");
+        }
+        *status = 204;
+        return NULL;
+    }
+
+    *status = 404;
+    return http_error_object("not_found", "Unknown API endpoint");
+}
+
+static int http_parse_content_length(const char *headers, size_t *out) {
+    char value[64];
+    int r = http_header_value(headers, "Content-Length", value, sizeof(value));
+    if (r == 1) { *out = 0; return 0; }
+    if (r) return -1;
+    char *end = NULL;
+    errno = 0;
+    unsigned long long n = strtoull(value, &end, 10);
+    if (errno || !end || *end || n > HTTP_ADMIN_MAX_BODY) return -1;
+    *out = (size_t)n;
+    return 0;
+}
+
+static void http_handle_connection(cr_server *s, int fd) {
+    struct timeval timeout = {.tv_sec = 5, .tv_usec = 0};
+    (void)setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    (void)setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+
+    size_t cap = HTTP_ADMIN_MAX_HEADER + HTTP_ADMIN_MAX_BODY + 8;
+    char *request = malloc(cap);
+    if (!request) return;
+    size_t used = 0, header_len = 0, content_len = 0;
+    char *header_end = NULL;
+
+    while (used < HTTP_ADMIN_MAX_HEADER) {
+        ssize_t n = recv(fd, request + used, HTTP_ADMIN_MAX_HEADER - used, 0);
+        if (n > 0) {
+            used += (size_t)n;
+            request[used] = 0;
+            header_end = strstr(request, "\r\n\r\n");
+            if (header_end) break;
+            continue;
+        }
+        if (n < 0 && errno == EINTR) continue;
+        free(request);
+        return;
+    }
+    if (!header_end) {
+        json_object *e = http_error_object("header_too_large", "HTTP header is too large or incomplete");
+        (void)http_send_json(fd, 413, e);
+        if (e) json_object_put(e);
+        free(request);
+        return;
+    }
+    header_len = (size_t)(header_end - request) + 4;
+    /* Keep the first CRLF so the final header line remains visible to the parser. */
+    header_end[2] = 0;
+
+    char method[16] = "", path[2048] = "", version[16] = "";
+    if (sscanf(request, "%15s %2047s %15s", method, path, version) != 3 ||
+        strncmp(version, "HTTP/1.", 7) || http_parse_content_length(request, &content_len)) {
+        json_object *e = http_error_object("bad_request", "Malformed HTTP request");
+        (void)http_send_json(fd, 400, e);
+        if (e) json_object_put(e);
+        free(request);
+        return;
+    }
+
+    char auth[512] = "";
+    if (http_header_value(request, "Authorization", auth, sizeof(auth)) ||
+        strncmp(auth, "Bearer ", 7) || !http_token_matches(s, auth + 7)) {
+        json_object *e = http_error_object("unauthorized", "Valid Bearer token required");
+        (void)http_send_json(fd, 401, e);
+        if (e) json_object_put(e);
+        free(request);
+        return;
+    }
+
+    size_t body_have = used > header_len ? used - header_len : 0;
+    while (body_have < content_len) {
+        ssize_t n = recv(fd, request + header_len + body_have, content_len - body_have, 0);
+        if (n > 0) {
+            body_have += (size_t)n;
+            continue;
+        }
+        if (n < 0 && errno == EINTR) continue;
+        json_object *e = http_error_object("bad_request", "Request body ended early");
+        (void)http_send_json(fd, 400, e);
+        if (e) json_object_put(e);
+        free(request);
+        return;
+    }
+
+    json_object *body = NULL;
+    if (content_len) {
+        struct json_tokener *tok = json_tokener_new();
+        if (!tok) {
+            free(request);
+            return;
+        }
+        body = json_tokener_parse_ex(tok, request + header_len, (int)content_len);
+        enum json_tokener_error err = json_tokener_get_error(tok);
+        json_tokener_free(tok);
+        if (err != json_tokener_success || !body) {
+            json_object *e = http_error_object("invalid_json", "Request body must contain valid JSON");
+            (void)http_send_json(fd, 400, e);
+            if (e) json_object_put(e);
+            free(request);
+            return;
+        }
+    }
+
+    char *query = strchr(path, '?');
+    if (query) *query = 0;
+    int status = 200;
+    json_object *response = http_dispatch(s, method, path, body, &status);
+    if (!response && status != 204) {
+        status = 500;
+        response = http_error_object("internal_error", "Could not build response");
+    }
+    (void)http_send_json(fd, status, response);
+    if (response) json_object_put(response);
+    if (body) json_object_put(body);
+    free(request);
+}
+
+static int make_http_admin_listener(const char *bind_address, uint16_t port) {
+    struct in_addr address;
+    if (!bind_address || inet_pton(AF_INET, bind_address, &address) != 1) return -1;
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) return -1;
+    int yes = 1;
+    (void)setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
+#ifdef SO_NOSIGPIPE
+    (void)setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &yes, sizeof(yes));
+#endif
+    struct sockaddr_in a;
+    memset(&a, 0, sizeof(a));
+    a.sin_family = AF_INET;
+    a.sin_port = htons(port);
+    a.sin_addr = address;
+    if (bind(fd, (struct sockaddr *)&a, sizeof(a)) || listen(fd, 16)) {
+        close(fd);
+        return -1;
+    }
+    return fd;
+}
+
+static void *http_admin_thread_main(void *opaque) {
+    cr_server *s = opaque;
+    while (!s->stop) {
+        struct pollfd pfd = {.fd = s->http_admin_listener_fd, .events = POLLIN};
+        int ready = poll(&pfd, 1, 250);
+        if (ready < 0) {
+            if (errno == EINTR) continue;
+            if (s->stop) break;
+            log_msg("HTTP admin poll failed: %s", strerror(errno));
+            continue;
+        }
+        if (ready <= 0) continue;
+        if (!(pfd.revents & POLLIN)) {
+            if (pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) break;
+            continue;
+        }
+        struct sockaddr_in peer;
+        socklen_t peer_len = sizeof(peer);
+        int fd = accept(s->http_admin_listener_fd, (struct sockaddr *)&peer, &peer_len);
+        if (fd < 0) {
+            if (errno == EINTR) continue;
+            if (s->stop || errno == EBADF || errno == EINVAL) break;
+            continue;
+        }
+        configure_accepted_socket(fd);
+        http_handle_connection(s, fd);
+        shutdown(fd, SHUT_RDWR);
+        close(fd);
+    }
+    return NULL;
+}
+
 static int provision_personal_homes(cr_server*s){for(size_t i=0;i<s->state.account_count;i++){cr_account*a=&s->state.accounts[i];if(a->personal==CR_PERSONAL_NONE)continue;if(!safe_component(a->login))return-1;char home[PATH_MAX];if(join_path_component(home,sizeof(home),s->state.personal_home_root,a->login))return-1;if(mkdir(home,0755)&&errno!=EEXIST)return-1;}return 0;}
 
 int cr_server_init(cr_server **out, const cr_server_config *config) {
@@ -4974,11 +5929,20 @@ int cr_server_init(cr_server **out, const cr_server_config *config) {
         return -1;
     }
     s->listener_fd = s->transfer_listener_fd = -1;
+    s->http_admin_listener_fd = -1;
     s->bot_fd = -1;
     s->next_user_id = 0x1000;
     s->next_channel_id = 2;
     s->next_transfer_id = 1;
     snprintf(s->config_path,sizeof(s->config_path),"%s",config->config_path);
+    s->http_admin_enabled = config->http_admin_enabled;
+    snprintf(s->http_admin_bind, sizeof(s->http_admin_bind), "%s",
+             config->http_admin_bind[0] ? config->http_admin_bind : "127.0.0.1");
+    s->http_admin_port = config->http_admin_port ? config->http_admin_port : 6780;
+    if (s->http_admin_enabled && http_hash_token(config->http_admin_token, s->http_admin_token_hash)) {
+        free(s);
+        return -1;
+    }
     const char*home=getenv("HOME");struct passwd*pw=NULL;if(!home||!*home){pw=getpwuid(getuid());home=pw&&pw->pw_dir?pw->pw_dir:"";}
     char daemon_dir[PATH_MAX];
     if(!home||!*home||snprintf(s->bot_config_path,sizeof(s->bot_config_path),"%s/etc/carracho-bot.json",config->instance_root)>=(int)sizeof(s->bot_config_path)||
@@ -5080,13 +6044,36 @@ int cr_server_init(cr_server **out, const cr_server_config *config) {
 uint16_t cr_server_port(cr_server*s){return s?s->port:0;}
 uint16_t cr_server_transfer_port(cr_server*s){return s?s->transfer_port:0;}
 void cr_server_signal_stop(cr_server *s) { if (s) s->stop = 1; }
-void cr_server_request_stop(cr_server*s){if(!s)return;s->stop=1;if(s->listener_fd>=0)shutdown(s->listener_fd,SHUT_RDWR);if(s->transfer_listener_fd>=0)shutdown(s->transfer_listener_fd,SHUT_RDWR);pthread_mutex_lock(&s->mutex);for(size_t i=0;i<s->allocated_session_count;i++){cr_session*x=s->sessions[i];if(x&&!x->closed&&!x->local_only&&x->fd>=0)shutdown(x->fd,SHUT_RDWR);}for(size_t i=0;i<CR_SERVER_MAX_TRANSFER_CONNECTIONS;i++)if(s->transfer_fds[i]>=0)shutdown(s->transfer_fds[i],SHUT_RDWR);pthread_mutex_unlock(&s->mutex);}
+void cr_server_request_stop(cr_server*s){if(!s)return;s->stop=1;if(s->listener_fd>=0)shutdown(s->listener_fd,SHUT_RDWR);if(s->transfer_listener_fd>=0)shutdown(s->transfer_listener_fd,SHUT_RDWR);if(s->http_admin_listener_fd>=0)shutdown(s->http_admin_listener_fd,SHUT_RDWR);pthread_mutex_lock(&s->mutex);for(size_t i=0;i<s->allocated_session_count;i++){cr_session*x=s->sessions[i];if(x&&!x->closed&&!x->local_only&&x->fd>=0)shutdown(x->fd,SHUT_RDWR);}for(size_t i=0;i<CR_SERVER_MAX_TRANSFER_CONNECTIONS;i++)if(s->transfer_fds[i]>=0)shutdown(s->transfer_fds[i],SHUT_RDWR);pthread_mutex_unlock(&s->mutex);}
 int cr_server_run(cr_server *s) {
-    if (pthread_create(&s->bot_thread, NULL, bot_thread_main, s) != 0) return -1;
+    if (s->http_admin_enabled) {
+        s->http_admin_listener_fd = make_http_admin_listener(s->http_admin_bind, s->http_admin_port);
+        if (s->http_admin_listener_fd < 0) {
+            log_msg("Could not bind HTTP administration API to %s:%u",
+                    s->http_admin_bind, s->http_admin_port);
+            return -1;
+        }
+        if (pthread_create(&s->http_admin_thread, NULL, http_admin_thread_main, s) != 0) {
+            close(s->http_admin_listener_fd);
+            s->http_admin_listener_fd = -1;
+            return -1;
+        }
+        s->http_admin_thread_started = 1;
+        log_msg("HTTP administration API listening on http://%s:%u/api/v1/",
+                s->http_admin_bind, s->http_admin_port);
+    }
+    if (pthread_create(&s->bot_thread, NULL, bot_thread_main, s) != 0) {
+        cr_server_request_stop(s);
+        if (s->http_admin_thread_started) {
+            pthread_join(s->http_admin_thread, NULL);
+            s->http_admin_thread_started = 0;
+        }
+        return -1;
+    }
     s->bot_thread_started=1;
-    if (pthread_create(&s->bot_rss_thread, NULL, bot_rss_thread_main, s) != 0) {s->stop=1;pthread_join(s->bot_thread,NULL);s->bot_thread_started=0;return -1;}
+    if (pthread_create(&s->bot_rss_thread, NULL, bot_rss_thread_main, s) != 0) {cr_server_request_stop(s);pthread_join(s->bot_thread,NULL);s->bot_thread_started=0;if(s->http_admin_thread_started){pthread_join(s->http_admin_thread,NULL);s->http_admin_thread_started=0;}return -1;}
     s->bot_rss_thread_started=1;
-    if (pthread_create(&s->transfer_thread, NULL, transfer_accept_main, s) != 0) {s->stop=1;pthread_join(s->bot_rss_thread,NULL);s->bot_rss_thread_started=0;pthread_join(s->bot_thread,NULL);s->bot_thread_started=0;return -1;}
+    if (pthread_create(&s->transfer_thread, NULL, transfer_accept_main, s) != 0) {cr_server_request_stop(s);pthread_join(s->bot_rss_thread,NULL);s->bot_rss_thread_started=0;pthread_join(s->bot_thread,NULL);s->bot_thread_started=0;if(s->http_admin_thread_started){pthread_join(s->http_admin_thread,NULL);s->http_admin_thread_started=0;}return -1;}
     log_msg("Carracho C server ready: control=%u transfer=%u state=%s", s->port, s->transfer_port, s->state.path);
     if(s->search_index_rebuild_interval_hours)
         log_msg("Automatic full search-index rebuild interval: %u hour(s)",s->search_index_rebuild_interval_hours);
@@ -5170,6 +6157,7 @@ int cr_server_run(cr_server *s) {
 
     cr_server_request_stop(s);
     pthread_join(s->transfer_thread, NULL);
+    if(s->http_admin_thread_started){pthread_join(s->http_admin_thread,NULL);s->http_admin_thread_started=0;}
     if(s->bot_thread_started){pthread_join(s->bot_thread,NULL);s->bot_thread_started=0;}
     if(s->bot_rss_thread_started){pthread_join(s->bot_rss_thread,NULL);s->bot_rss_thread_started=0;}
     pthread_mutex_lock(&s->mutex);
@@ -5182,12 +6170,14 @@ int cr_server_run(cr_server *s) {
 void cr_server_destroy(cr_server *s) {
     if (!s) return;
     cr_server_request_stop(s);
+    if(s->http_admin_thread_started){pthread_join(s->http_admin_thread,NULL);s->http_admin_thread_started=0;}
     if(s->bot_thread_started){pthread_join(s->bot_thread,NULL);s->bot_thread_started=0;}
     if(s->bot_rss_thread_started){pthread_join(s->bot_rss_thread,NULL);s->bot_rss_thread_started=0;}
     disconnect_local_bot(s);bot_fifo_stop(s);
     join_all_sessions(s);
     if (s->listener_fd >= 0) close(s->listener_fd);
     if (s->transfer_listener_fd >= 0) close(s->transfer_listener_fd);
+    if (s->http_admin_listener_fd >= 0) close(s->http_admin_listener_fd);
     if (s->file_index_thread_started) {
         pthread_join(s->file_index_thread,NULL);
         s->file_index_thread_started=0;
