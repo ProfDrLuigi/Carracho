@@ -536,32 +536,6 @@ extension ViewController {
         }
     }
 
-    private func nativeNewFolderToolbarImage() -> NSImage {
-        let size = NSSize(width: 26, height: 26)
-        let image = NSImage(size: size)
-        image.lockFocus()
-
-        if let folder = NSImage(named: NSImage.folderName) {
-            folder.draw(in: NSRect(x: 1, y: 3, width: 23, height: 20),
-                        from: .zero, operation: .sourceOver, fraction: 1)
-        }
-
-        let badgeRect = NSRect(x: 16, y: 1, width: 9, height: 9)
-        NSColor.controlAccentColor.setFill()
-        NSBezierPath(ovalIn: badgeRect).fill()
-        NSColor.white.setStroke()
-        let plus = NSBezierPath()
-        plus.lineWidth = 1.5
-        plus.move(to: NSPoint(x: badgeRect.midX, y: badgeRect.minY + 2))
-        plus.line(to: NSPoint(x: badgeRect.midX, y: badgeRect.maxY - 2))
-        plus.move(to: NSPoint(x: badgeRect.minX + 2, y: badgeRect.midY))
-        plus.line(to: NSPoint(x: badgeRect.maxX - 2, y: badgeRect.midY))
-        plus.stroke()
-
-        image.unlockFocus()
-        image.isTemplate = false
-        return image
-    }
 
     func makeFilesCard() -> NSView {
         let surface = CarrachoBackgroundView()
@@ -570,18 +544,18 @@ extension ViewController {
         // Keep navigation icon-only, but present file actions like the Transfer Monitor: compact
         // inline buttons with a small icon and a readable label. This avoids the oversized blue
         // glyph strip while preserving the native AppKit artwork requested for Files.
-        styleMacFilesToolbarButton(fileBackButton, image: NSImage(named: NSImage.goLeftTemplateName), help: L("Back"), iconOnly: true)
-        styleMacFilesToolbarButton(fileForwardButton, image: NSImage(named: NSImage.goRightTemplateName), help: L("Forward"), iconOnly: true)
-        styleMacFilesToolbarButton(fileParentButton, image: NSImage(named: NSImage.touchBarGoUpTemplateName), help: L("Go to Parent Folder"), iconOnly: true)
-        styleMacFilesToolbarButton(fileRefreshButton, image: NSImage(named: NSImage.refreshTemplateName), help: L("Refresh"), iconOnly: true)
-        styleMacFilesToolbarButton(fileNewFolderButton, title: L("New Folder"), image: nativeNewFolderToolbarImage(), help: L("Create New Folder"), templateTint: nil)
-        styleMacFilesToolbarButton(fileUploadButton, title: L("Upload"), image: NSImage(named: NSImage.touchBarShareTemplateName), help: L("Upload File or Folder"))
-        styleMacFilesToolbarButton(fileInfoButton, title: L("Get Info"), image: NSImage(named: NSImage.infoName), help: L("Information"), templateTint: nil)
-        styleMacFilesToolbarButton(fileQuickViewButton, title: L("Quick View"), image: NSImage(named: NSImage.quickLookTemplateName), help: L("Quick View"))
-        styleMacFilesToolbarButton(fileDownloadButton, title: L("Download"), image: NSImage(named: NSImage.touchBarDownloadTemplateName), help: L("Download Selected"))
-        styleMacFilesToolbarButton(fileDeleteButton, title: L("Delete"), image: NSImage(named: NSImage.trashEmptyName), help: L("Move to Server Trash"), templateTint: nil)
+        styleMacFilesToolbarButton(fileBackButton, image: NSImage(named: NSImage.Name("Arrow Left")), help: L("Back"), templateTint: nil, iconOnly: true)
+        styleMacFilesToolbarButton(fileForwardButton, image: NSImage(named: NSImage.Name("Arrow Right")), help: L("Forward"), templateTint: nil, iconOnly: true)
+        styleMacFilesToolbarButton(fileParentButton, image: NSImage(named: NSImage.Name("Arrow Up")), help: L("Go to Parent Folder"), templateTint: nil, iconOnly: true)
+        styleMacFilesToolbarButton(fileRefreshButton, image: NSImage(named: NSImage.Name("Refresh")), help: L("Refresh"), templateTint: nil, iconOnly: true)
+        styleMacFilesToolbarButton(fileNewFolderButton, title: L("New Folder"), image: NSImage(named: NSImage.Name("Add Folder")), help: L("Create New Folder"), templateTint: nil)
+        styleMacFilesToolbarButton(fileUploadButton, title: L("Upload"), image: NSImage(named: NSImage.Name("Upload")), help: L("Upload File or Folder"), templateTint: nil)
+        styleMacFilesToolbarButton(fileInfoButton, title: L("Get Info"), image: NSImage(named: NSImage.Name("Get Info")), help: L("Information"), templateTint: nil)
+        styleMacFilesToolbarButton(fileQuickViewButton, title: L("Quick View"), image: NSImage(named: NSImage.Name("Quickview")), help: L("Quick View"), templateTint: nil)
+        styleMacFilesToolbarButton(fileDownloadButton, title: L("Download"), image: NSImage(named: NSImage.Name("Download")), help: L("Download Selected"), templateTint: nil)
+        styleMacFilesToolbarButton(fileDeleteButton, title: L("Delete"), image: NSImage(named: NSImage.Name("Trash")), help: L("Move to Server Trash"), templateTint: nil)
 
-        let breadcrumbIcon = NSImageView(image: nativeMacOSFolderImage())
+        let breadcrumbIcon = NSImageView(image: NSImage(named: NSImage.Name("Folder")) ?? nativeMacOSFolderImage())
         breadcrumbIcon.imageScaling = .scaleProportionallyDown
         breadcrumbIcon.translatesAutoresizingMaskIntoConstraints = false
         breadcrumbIcon.widthAnchor.constraint(equalToConstant: 18).isActive = true
@@ -591,6 +565,9 @@ extension ViewController {
         breadcrumbs.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
         fileSearchField.translatesAutoresizingMaskIntoConstraints = false
+        if let searchCell = fileSearchField.cell as? NSSearchFieldCell {
+            searchCell.searchButtonCell?.image = sizedAssetImage(named: "Search", size: 14)
+        }
         let searchWidth = fileSearchField.widthAnchor.constraint(equalToConstant: 180)
         searchWidth.priority = .defaultHigh
         searchWidth.isActive = true
