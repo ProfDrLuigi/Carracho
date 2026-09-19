@@ -441,10 +441,24 @@ location / {
 }
 ```
 
-### Optional: Additional HTTP Basic Auth
+### Authentication for Public Access
 
-In addition to the Carracho admin authentication, nginx can add a second layer
-of protection:
+The WebAdmin itself currently has **no browser login**.
+
+The bearer token in `CARRACHO_HTTP_ADMIN_TOKEN` protects the internal HTTP
+Admin API on port `6780`. The WebAdmin helper on port `6781` already knows
+that token and injects it into its own `/proxy/*` requests. The browser never
+has to enter or send the bearer token directly.
+
+As a consequence, anyone who can reach the WebAdmin on port `6781` can use
+the administration interface unless another access-control layer is placed in
+front of it.
+
+For localhost-only access or an SSH tunnel this may be acceptable. For a
+public nginx reverse proxy, **HTTP Basic Auth or another nginx authentication
+mechanism should be treated as required**, not optional.
+
+A simple Basic Auth setup is:
 
 ```bash
 sudo apt install apache2-utils
