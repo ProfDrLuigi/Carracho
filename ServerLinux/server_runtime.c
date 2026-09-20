@@ -2164,7 +2164,7 @@ static void *bot_thread_main(void*opaque){
 
 static int handle_server_info(cr_session*s,const cr_packet*p){
     uint8_t a[1024],b[1024],c[1024],d[CR_MAX_IDENTITY_TEXT+1],uptime[4],max_total[2],active_total[2],max_user[2],active_user[2];
-    const uint8_t version[]="Carracho Server 1.0";
+    const uint8_t version[]="Carracho Server 1.0.4";
     size_t an=0,bn=0,cn=0,dn=0;uint16_t limit_total=0,limit_user=0;
     pthread_mutex_lock(&s->server->state.mutex);
     int fail=cr_utf8_to_macroman(s->server->state.identity.name,a,sizeof(a),&an)||

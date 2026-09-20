@@ -996,7 +996,7 @@ final class LegacyServerRuntime {
         stateLock.unlock()
         return [
             "serverName": state.identity.name,
-            "software": "Carracho Server 1.0",
+            "software": "Carracho Server 1.0.4",
             "uptimeSeconds": NSNumber(value: max(0, Int64(Date().timeIntervalSince(start ?? Date())))),
             "usersOnline": userCount,
             "maxConnections": Int(state.advanced.maxConnections),

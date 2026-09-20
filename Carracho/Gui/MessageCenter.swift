@@ -15,19 +15,27 @@ extension ViewController {
 
         privateMessageMarkReadButton.target = self
         privateMessageMarkReadButton.action = #selector(markAllPrivateMessagesRead(_:))
-        privateMessageMarkReadButton.controlSize = .small
+        privateMessageMarkReadButton.controlSize = .regular
         privateMessageMarkReadButton.bezelStyle = .inline
-        privateMessageMarkReadButton.image = sizedAssetImage(named: "Mark All Read", size: 16)
+        privateMessageMarkReadButton.font = .systemFont(ofSize: 13, weight: .medium)
+        privateMessageMarkReadButton.image = sizedAssetImage(named: "Mark All Read", size: 18)
         privateMessageMarkReadButton.imagePosition = .imageLeading
         privateMessageMarkReadButton.imageScaling = .scaleNone
         privateMessageMarkReadButton.contentTintColor = nil
+        privateMessageMarkReadButton.heightAnchor.constraint(equalToConstant: 30).isActive = true
         privateMessageNewButton.target = self
         privateMessageNewButton.action = #selector(showNewPrivateMessageMenu(_:))
-        privateMessageNewButton.controlSize = .small
+        privateMessageNewButton.controlSize = .regular
         privateMessageNewButton.bezelStyle = .rounded
         privateMessageNewButton.image = symbolImage("plus", fallback: NSImage.addTemplateName)
+        privateMessageNewButton.image?.size = NSSize(width: 18, height: 18)
         privateMessageNewButton.imagePosition = .imageLeading
+        privateMessageNewButton.imageScaling = .scaleNone
+        privateMessageNewButton.font = .systemFont(ofSize: 13, weight: .medium)
+        privateMessageNewButton.heightAnchor.constraint(equalToConstant: 30).isActive = true
         configureContentFontSizePopup(messageCenterFontSizePopup, selectedSize: messageCenterFontSize, help: L("Message Center font size"))
+        messageCenterFontSizePopup.controlSize = .regular
+        messageCenterFontSizePopup.font = .systemFont(ofSize: 13)
 
         let topBar = CarrachoBackgroundView()
         topBar.fillColor = CarrachoTheme.elevatedCard

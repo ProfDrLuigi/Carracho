@@ -1606,16 +1606,18 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         transferFilterControl.selectedSegment = TransferMonitorFilter.all.rawValue
         transferFilterControl.target = self
         transferFilterControl.action = #selector(transferFilterChanged(_:))
-        transferFilterControl.controlSize = .small
+        transferFilterControl.controlSize = .regular
+        transferFilterControl.font = .systemFont(ofSize: 13, weight: .medium)
         transferFilterControl.setAccessibilityLabel(L("Transfer status filter"))
 
         transferSearchField.placeholderString = L("Filter transfers")
         transferSearchField.target = self
         transferSearchField.action = #selector(transferSearchChanged(_:))
         transferSearchField.sendsSearchStringImmediately = true
+        transferSearchField.font = .systemFont(ofSize: 13)
         transferSearchField.setAccessibilityLabel(L("Filter transfers"))
         if let searchCell = transferSearchField.cell as? NSSearchFieldCell {
-            searchCell.searchButtonCell?.image = sizedAssetImage(named: "Filter", size: 14)
+            searchCell.searchButtonCell?.image = sizedAssetImage(named: "Filter", size: 16)
         }
 
         transferRefreshButton.target = self
@@ -1636,17 +1638,18 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         transferDeletePartialButton.target = self
         transferDeletePartialButton.action = #selector(deleteSelectedTransferPartialData(_:))
         for button in [transferPauseButton, transferResumeButton, transferAbortButton, transferRemoveButton, transferDeletePartialButton] {
-            button.controlSize = .small
+            button.controlSize = .regular
             button.bezelStyle = .inline
-            button.font = .systemFont(ofSize: 11.5, weight: .medium)
+            button.font = .systemFont(ofSize: 13, weight: .medium)
+            button.heightAnchor.constraint(equalToConstant: 30).isActive = true
             button.setContentHuggingPriority(.required, for: .horizontal)
             button.setContentCompressionResistancePriority(.required, for: .horizontal)
         }
-        transferPauseButton.image = sizedAssetImage(named: "Pause", size: 16)
-        transferResumeButton.image = sizedAssetImage(named: "Resume", size: 16)
-        transferAbortButton.image = sizedAssetImage(named: "Abort", size: 16)
-        transferRemoveButton.image = sizedAssetImage(named: "Remove", size: 16)
-        transferDeletePartialButton.image = sizedAssetImage(named: "Delete Partial", size: 16)
+        transferPauseButton.image = sizedAssetImage(named: "Pause", size: 18)
+        transferResumeButton.image = sizedAssetImage(named: "Resume", size: 18)
+        transferAbortButton.image = sizedAssetImage(named: "Abort", size: 18)
+        transferRemoveButton.image = sizedAssetImage(named: "Remove", size: 18)
+        transferDeletePartialButton.image = sizedAssetImage(named: "Delete Partial", size: 18)
         for button in [transferPauseButton, transferResumeButton, transferAbortButton, transferRemoveButton, transferDeletePartialButton] {
             button.imagePosition = .imageLeading
             button.imageScaling = .scaleNone
@@ -1994,8 +1997,11 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         newsPostButton.target = self
         newsPostButton.action = #selector(showArticleEditor(_:))
         newsPostButton.image = symbolImage("plus", fallback: NSImage.addTemplateName)
+        newsPostButton.image?.size = NSSize(width: 18, height: 18)
         newsPostButton.imagePosition = .imageLeading
-        newsPostButton.font = .systemFont(ofSize: 12.5, weight: .semibold)
+        newsPostButton.imageScaling = .scaleNone
+        newsPostButton.font = .systemFont(ofSize: 13, weight: .semibold)
+        newsPostButton.heightAnchor.constraint(equalToConstant: 30).isActive = true
         CarrachoTheme.applyPrimaryButtonStyle(newsPostButton)
         newsPostButton.toolTip = L("Create a topic in the selected category")
         newsPostButton.setAccessibilityLabel(L("New News topic"))
@@ -2019,8 +2025,8 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         styleAssetIconButton(newsRefreshButton,
                              asset: "Refresh",
                              help: L("Refresh News"),
-                             imageSize: 16,
-                             buttonSize: 28)
+                             imageSize: 18,
+                             buttonSize: 30)
         newsRefreshButton.target = self
         newsRefreshButton.action = #selector(refreshCurrentNews(_:))
 
@@ -3267,36 +3273,27 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         button.contentTintColor = CarrachoTheme.secondaryText
         button.imagePosition = .imageLeading
         button.image = sidebarSectionHeaderImage(title: title, collapsed: collapsed)
+        if title == "TRACKERS", let trackers = sizedAssetImage(named: "Trackers", size: 16) {
+            let attachment = NSTextAttachment()
+            attachment.attachmentCell = NSTextAttachmentCell(imageCell: trackers)
+            let label = NSMutableAttributedString(attachment: attachment)
+            label.append(NSAttributedString(
+                string: " " + L(title),
+                attributes: [
+                    .font: NSFont.systemFont(ofSize: 10, weight: .bold),
+                    .foregroundColor: CarrachoTheme.secondaryText,
+                ]
+            ))
+            button.attributedTitle = label
+        }
         button.toolTip = collapsed ? LF("Expand %@", L(title).capitalized) : LF("Collapse %@", L(title).capitalized)
         button.heightAnchor.constraint(equalToConstant: 22).isActive = true
         return button
     }
 
     func sidebarSectionHeaderImage(title: String, collapsed: Bool) -> NSImage? {
-        let disclosure = symbolImage(collapsed ? "chevron.right" : "chevron.down",
-                                     fallback: NSImage.rightFacingTriangleTemplateName)
-        guard title == "TRACKERS",
-              let disclosure,
-              let trackers = NSImage(named: NSImage.Name("Trackers")) else {
-            return disclosure
-        }
-
-        let chevronSize = NSSize(width: 10, height: 10)
-        let chevron = NSImage(size: chevronSize)
-        chevron.lockFocus()
-        disclosure.draw(in: NSRect(origin: .zero, size: chevronSize))
-        CarrachoTheme.secondaryText.setFill()
-        NSRect(origin: .zero, size: chevronSize).fill(using: .sourceIn)
-        chevron.unlockFocus()
-        chevron.isTemplate = false
-
-        let canvas = NSImage(size: NSSize(width: 30, height: 18))
-        canvas.lockFocus()
-        chevron.draw(in: NSRect(x: 0, y: 4, width: 10, height: 10))
-        trackers.draw(in: NSRect(x: 14, y: 1, width: 16, height: 16))
-        canvas.unlockFocus()
-        canvas.isTemplate = false
-        return canvas
+        symbolImage(collapsed ? "chevron.right" : "chevron.down",
+                    fallback: NSImage.rightFacingTriangleTemplateName)
     }
 
     func collapsibleSidebarNavigationButton(title: String, collapsed: Bool, action: Selector) -> NSButton {

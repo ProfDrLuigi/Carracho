@@ -504,7 +504,7 @@ extension ViewController {
             // dominating the whole toolbar. Native AppKit artwork is deliberately kept modest here.
             let maximumDimension = max(displayImage.size.width, displayImage.size.height)
             if maximumDimension > 0 {
-                let target: CGFloat = iconOnly ? 16 : 14
+                let target: CGFloat = iconOnly ? 20 : 18
                 let scale = min(1, target / maximumDimension)
                 displayImage.size = NSSize(width: displayImage.size.width * scale,
                                            height: displayImage.size.height * scale)
@@ -518,7 +518,7 @@ extension ViewController {
         button.imageHugsTitle = true
         button.controlSize = .small
         button.bezelStyle = .inline
-        button.font = .systemFont(ofSize: 11.5, weight: .medium)
+        button.font = .systemFont(ofSize: 13, weight: .medium)
         button.focusRingType = .none
         button.contentTintColor = templateTint
         button.toolTip = help
@@ -528,11 +528,11 @@ extension ViewController {
         button.translatesAutoresizingMaskIntoConstraints = false
         if iconOnly {
             NSLayoutConstraint.activate([
-                button.widthAnchor.constraint(equalToConstant: 30),
-                button.heightAnchor.constraint(equalToConstant: 26),
+                button.widthAnchor.constraint(equalToConstant: 34),
+                button.heightAnchor.constraint(equalToConstant: 30),
             ])
         } else {
-            button.heightAnchor.constraint(equalToConstant: 26).isActive = true
+            button.heightAnchor.constraint(equalToConstant: 30).isActive = true
         }
     }
 
@@ -558,17 +558,19 @@ extension ViewController {
         let breadcrumbIcon = NSImageView(image: NSImage(named: NSImage.Name("Folder")) ?? nativeMacOSFolderImage())
         breadcrumbIcon.imageScaling = .scaleProportionallyDown
         breadcrumbIcon.translatesAutoresizingMaskIntoConstraints = false
-        breadcrumbIcon.widthAnchor.constraint(equalToConstant: 18).isActive = true
-        breadcrumbIcon.heightAnchor.constraint(equalToConstant: 18).isActive = true
+        breadcrumbIcon.widthAnchor.constraint(equalToConstant: 20).isActive = true
+        breadcrumbIcon.heightAnchor.constraint(equalToConstant: 20).isActive = true
         let breadcrumbs = horizontalStack([breadcrumbIcon, fileBreadcrumbStack], spacing: 5)
         breadcrumbs.setContentHuggingPriority(.defaultLow, for: .horizontal)
         breadcrumbs.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
         fileSearchField.translatesAutoresizingMaskIntoConstraints = false
         if let searchCell = fileSearchField.cell as? NSSearchFieldCell {
-            searchCell.searchButtonCell?.image = sizedAssetImage(named: "Search", size: 14)
+            searchCell.searchButtonCell?.image = sizedAssetImage(named: "Search", size: 16)
         }
-        let searchWidth = fileSearchField.widthAnchor.constraint(equalToConstant: 180)
+        fileSearchField.font = .systemFont(ofSize: 13)
+        filesFontSizePopup.font = .systemFont(ofSize: 13)
+        let searchWidth = fileSearchField.widthAnchor.constraint(equalToConstant: 190)
         searchWidth.priority = .defaultHigh
         searchWidth.isActive = true
         let searchMinimum = fileSearchField.widthAnchor.constraint(greaterThanOrEqualToConstant: 110)
@@ -642,7 +644,7 @@ extension ViewController {
             toolbar.leadingAnchor.constraint(equalTo: surface.leadingAnchor, constant: 10),
             toolbar.trailingAnchor.constraint(equalTo: surface.trailingAnchor, constant: -10),
             toolbar.topAnchor.constraint(equalTo: surface.topAnchor, constant: 4),
-            toolbar.heightAnchor.constraint(equalToConstant: 34),
+            toolbar.heightAnchor.constraint(equalToConstant: 40),
 
             toolbarDivider.leadingAnchor.constraint(equalTo: surface.leadingAnchor),
             toolbarDivider.trailingAnchor.constraint(equalTo: surface.trailingAnchor),

@@ -15,16 +15,19 @@ extension ViewController {
         let pageIdentity = pageTitle
 
         let flatNews = NSButton(title: L("Classic News"), target: self, action: #selector(showFlatNewsManager(_:)))
-        flatNews.controlSize = .small
+        flatNews.controlSize = .regular
         flatNews.bezelStyle = .inline
-        flatNews.image = sizedAssetImage(named: "Classic News", size: 16)
+        flatNews.font = .systemFont(ofSize: 13, weight: .medium)
+        flatNews.image = sizedAssetImage(named: "Classic News", size: 18)
         flatNews.imagePosition = .imageTrailing
         flatNews.imageScaling = .scaleNone
         flatNews.contentTintColor = nil
+        flatNews.heightAnchor.constraint(equalToConstant: 30).isActive = true
         flatNews.toolTip = L("Open the historical Flat News view")
         flatNews.setAccessibilityLabel(L("Open Classic Flat News"))
-        newsFontSizePopup.controlSize = .small
-        newsPostButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 112).isActive = true
+        newsFontSizePopup.controlSize = .regular
+        newsFontSizePopup.font = .systemFont(ofSize: 13)
+        newsPostButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 120).isActive = true
         let topBar = CarrachoBackgroundView()
         topBar.fillColor = CarrachoTheme.elevatedCard
         let topStack = horizontalStack([
