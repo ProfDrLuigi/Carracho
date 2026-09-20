@@ -135,6 +135,9 @@ enum LegacyCommand {
     static let userUpdate: UInt32 = 0x00000018
     /// Classic Advanced → Rebuild Index command. File-search queries themselves use transfer operation 9.
     static let rebuildSearchIndex: UInt32 = 0x00000040
+    /// Modern extension used by the native administration UI to observe background index rebuilds.
+    static let searchIndexStatusRequest: UInt32 = 0x00000041
+    static let searchIndexStatusReply: UInt32 = 0x00000042
     static let channelJoin: UInt32 = 0x00000080
     static let channelLeave: UInt32 = 0x00000081
     static let channelChat: UInt32 = 0x00000082
@@ -540,4 +543,17 @@ enum LegacyChannelField {
     static let userID: UInt32 = 7
     static let userMode: UInt32 = 8
     static let password: UInt32 = 9
+}
+
+
+enum LegacySearchIndexStatusField {
+    static let ready: UInt32 = 1
+    static let rebuilding: UInt32 = 2
+    static let entries: UInt32 = 3
+}
+
+struct LegacySearchIndexStatus: Equatable {
+    var ready: Bool
+    var rebuilding: Bool
+    var entries: UInt64?
 }

@@ -12,7 +12,7 @@
 #include <sys/stat.h>
 #include <time.h>
 
-#define CR_FILE_INDEX_SCHEMA 2
+#define CR_FILE_INDEX_SCHEMA 3
 #define CR_FILE_INDEX_MAX_RESULTS 100000u
 #define CR_MAC_EPOCH_OFFSET 2082844800ULL
 
@@ -56,10 +56,46 @@ static int is_inside_dropbox(cr_file_metadata_store *m,const uint8_t *path,size_
     return 0;
 }
 
+static int backfill_bigrams(sqlite3 *db){
+    sqlite3_stmt *read=NULL,*insert=NULL;
+    int rc=-1,step=SQLITE_ERROR;
+    if(exec_sql(db,"BEGIN IMMEDIATE"))return-1;
+    if(sqlite3_prepare_v2(db,"SELECT id,name_search FROM entries",-1,&read,NULL)!=SQLITE_OK)goto done;
+    if(sqlite3_prepare_v2(db,"INSERT OR IGNORE INTO trigrams(term,entry_id) VALUES(?,?)",-1,&insert,NULL)!=SQLITE_OK)goto done;
+    while((step=sqlite3_step(read))==SQLITE_ROW){
+        sqlite3_int64 id=sqlite3_column_int64(read,0);
+        const char*name=(const char*)sqlite3_column_text(read,1);
+        int n=sqlite3_column_bytes(read,1);
+        if(!name||n<2)continue;
+        for(int i=0;i+1<n;i++){
+            sqlite3_reset(insert);
+            sqlite3_clear_bindings(insert);
+            sqlite3_bind_text(insert,1,name+i,2,SQLITE_TRANSIENT);
+            sqlite3_bind_int64(insert,2,id);
+            if(sqlite3_step(insert)!=SQLITE_DONE)goto done;
+        }
+    }
+    if(step!=SQLITE_DONE)goto done;
+    if(exec_sql(db,"PRAGMA user_version=3")||exec_sql(db,"COMMIT"))goto done;
+    rc=0;
+done:
+    sqlite3_finalize(insert);
+    sqlite3_finalize(read);
+    if(rc)(void)exec_sql(db,"ROLLBACK");
+    return rc;
+}
+
 static int create_schema(sqlite3 *db){
     if(exec_sql(db,"PRAGMA foreign_keys=ON")||exec_sql(db,"PRAGMA journal_mode=WAL")||exec_sql(db,"PRAGMA synchronous=NORMAL"))return-1;
     sqlite3_int64 version=pragma_int64(db,"PRAGMA user_version");
-    if(version!=CR_FILE_INDEX_SCHEMA){
+    if(version==2){
+        /*
+         * v2 already has the compact (term,entry_id) posting table. Preserve
+         * the filesystem index and only backfill 2-byte terms so two-character
+         * queries (for example "7z") avoid a full entries-table scan.
+         */
+        if(backfill_bigrams(db))return-1;
+    }else if(version!=CR_FILE_INDEX_SCHEMA){
         /*
          * v1 stored the full hex-encoded path in every trigram row and then
          * duplicated the same (term,path_key) B-tree in a second index. This
@@ -201,20 +237,22 @@ static int insert_entry_locked(cr_file_search_index *idx, const uint8_t *path,
   st = NULL;
 
   size_t fn = strlen(fold);
-  if (fn >= 3) {
+  if (fn >= 2) {
     if (sqlite3_prepare_v2(
             idx->db,
             "INSERT OR IGNORE INTO trigrams(term,entry_id) VALUES(?,?)", -1,
             &st, NULL) != SQLITE_OK)
       goto done;
-    for (size_t i = 0; i + 2 < fn; i++) {
-      char gram[4] = {fold[i], fold[i + 1], fold[i + 2], 0};
-      sqlite3_reset(st);
-      sqlite3_clear_bindings(st);
-      sqlite3_bind_text(st, 1, gram, 3, SQLITE_TRANSIENT);
-      sqlite3_bind_int64(st, 2, entry_id);
-      if (sqlite3_step(st) != SQLITE_DONE)
-        goto done;
+    for (size_t width = 2; width <= 3; width++) {
+      if (fn < width) continue;
+      for (size_t i = 0; i + width <= fn; i++) {
+        sqlite3_reset(st);
+        sqlite3_clear_bindings(st);
+        sqlite3_bind_text(st, 1, fold + i, (int)width, SQLITE_TRANSIENT);
+        sqlite3_bind_int64(st, 2, entry_id);
+        if (sqlite3_step(st) != SQLITE_DONE)
+          goto done;
+      }
     }
   }
   rc = 0;
@@ -551,19 +589,29 @@ int cr_file_search_index_search(cr_file_search_index *idx, const char *query,
   char *fold = ascii_fold(query);
   if (!fold)
     return -1;
-  size_t qn = strlen(fold), grams = qn >= 3 ? qn - 2 : 0;
-  size_t cap = 512 + grams * 96;
+  size_t qn = strlen(fold), gram_width = qn >= 3 ? 3 : (qn == 2 ? 2 : 0);
+  size_t grams = gram_width ? qn - gram_width + 1 : 0;
+  size_t cap = 640 + grams * 112;
   char *sql = malloc(cap);
   if (!sql) {
     free(fold);
     return -1;
   }
-  strcpy(sql, "SELECT e.path,e.name,e.is_folder,e.size,e.timestamp FROM "
-              "entries e WHERE instr(e.name_search,?)>0");
   if (grams) {
-    for (size_t i = 0; i < grams; i++)
+    /*
+     * Lead with the first posting list so SQLite starts from indexed candidates.
+     * The previous entries-first + correlated EXISTS shape was often planned as
+     * a full path-ordered entries scan merely to satisfy ORDER BY e.path.
+     */
+    strcpy(sql, "SELECT e.path,e.name,e.is_folder,e.size,e.timestamp FROM "
+                "trigrams t0 JOIN entries e ON e.id=t0.entry_id "
+                "WHERE t0.term=? AND instr(e.name_search,?)>0");
+    for (size_t i = 1; i < grams; i++)
       strcat(sql, " AND EXISTS(SELECT 1 FROM trigrams t WHERE "
                   "t.entry_id=e.id AND t.term=?)");
+  } else {
+    strcpy(sql, "SELECT e.path,e.name,e.is_folder,e.size,e.timestamp FROM "
+                "entries e WHERE instr(e.name_search,?)>0");
   }
   strcat(sql, " ORDER BY e.path LIMIT ?");
   pthread_mutex_lock(&idx->mutex);
@@ -572,9 +620,14 @@ int cr_file_search_index_search(cr_file_search_index *idx, const char *query,
   if (sqlite3_prepare_v2(idx->db, sql, -1, &st, NULL) != SQLITE_OK)
     goto done;
   int bi = 1;
-  sqlite3_bind_text(st, bi++, fold, -1, SQLITE_TRANSIENT);
-  for (size_t i = 0; i < grams; i++) {
-    sqlite3_bind_text(st, bi++, fold + i, 3, SQLITE_TRANSIENT);
+  if (grams) {
+    sqlite3_bind_text(st, bi++, fold, (int)gram_width, SQLITE_TRANSIENT);
+    sqlite3_bind_text(st, bi++, fold, -1, SQLITE_TRANSIENT);
+    for (size_t i = 1; i < grams; i++) {
+      sqlite3_bind_text(st, bi++, fold + i, (int)gram_width, SQLITE_TRANSIENT);
+    }
+  } else {
+    sqlite3_bind_text(st, bi++, fold, -1, SQLITE_TRANSIENT);
   }
   sqlite3_bind_int(st, bi, (int)CR_FILE_INDEX_MAX_RESULTS + 1);
   size_t count = 0;

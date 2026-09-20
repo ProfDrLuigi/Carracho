@@ -949,7 +949,11 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
     let advancedResetButton = NSButton(title: L("Reset"), target: nil, action: nil)
     let advancedSaveStatusLabel = NSTextField(labelWithString: L("No unsaved changes"))
     let advancedRebuildIndexButton = NSButton(title: L("Rebuild Search Index"), target: nil, action: nil)
+    let advancedSearchIndexStatusLabel = NSTextField(labelWithString: L("Checking…"))
+    let advancedSearchIndexStatusSpinner = NSProgressIndicator()
     let advancedEmptyTrashButton = NSButton(title: L("Empty Trash…"), target: nil, action: nil)
+    var advancedSearchIndexStatusTimer: Timer?
+    var advancedSearchIndexStatusRequestInFlight = false
     var advancedTrashOperationInProgress = false
     var advancedSearchIndexRebuildInProgress = false
     var advancedHasUnsavedChanges = false
@@ -1243,6 +1247,8 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
     var transferBarPreviousCompletedBytes: UInt64?
     var transferBarPreviousSampleDate: Date?
     var transferBarRateBytesPerSecond: UInt64 = 0
+    var transferProgressUIRefreshWorkItem: DispatchWorkItem?
+    var transferProgressUIRefreshDate = Date.distantPast
     var transferMonitorRefreshTimer: Timer?
     var transferMonitorRequestInFlight = false
     var transferMonitorPersistenceWorkItem: DispatchWorkItem?
@@ -1337,6 +1343,8 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
     deinit {
         NotificationCenter.default.removeObserver(self)
         transferMonitorPersistenceWorkItem?.cancel()
+        transferProgressUIRefreshWorkItem?.cancel()
+        advancedSearchIndexStatusTimer?.invalidate()
         autoReconnectWorkItem?.cancel()
         transferMonitorRefreshTimer?.invalidate()
         newsBadgeRefreshTimer?.invalidate()
@@ -1572,6 +1580,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         fileEmptyStateRetryButton.bezelStyle = .rounded
         fileEmptyStateLabel.alignment = .center
         fileEmptyStateLabel.maximumNumberOfLines = 3
+        fileEmptyStateLabel.lineBreakMode = .byWordWrapping
         fileEmptyStateLabel.textColor = CarrachoTheme.secondaryText
         fileLoadingIndicator.style = .spinning
         fileLoadingIndicator.controlSize = .small
@@ -1831,27 +1840,28 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         channelTopicEditButton.target = self
         channelTopicEditButton.action = #selector(editChannelSettings(_:))
         channelTopicEditButton.bezelStyle = .inline
-        channelTopicEditButton.controlSize = .small
-        channelTopicEditButton.contentTintColor = CarrachoTheme.selection
+        channelTopicEditButton.controlSize = .regular
+        channelTopicEditButton.contentTintColor = nil
         channelTopicEditButton.toolTip = L("Edit the room topic")
         channelTopicEditButton.setAccessibilityLabel(L("Edit room topic"))
 
         channelHeaderSettingsButton.target = self
         channelHeaderSettingsButton.action = #selector(editChannelSettings(_:))
         channelHeaderSettingsButton.title = ""
-        channelHeaderSettingsButton.image = symbolImage("gearshape", fallback: NSImage.actionTemplateName)
+        channelHeaderSettingsButton.image = sizedAssetImage(named: "Carracho Settings", size: 18)
         channelHeaderSettingsButton.imagePosition = .imageOnly
-        channelHeaderSettingsButton.controlSize = .small
+        channelHeaderSettingsButton.imageScaling = .scaleNone
+        channelHeaderSettingsButton.controlSize = .regular
         channelHeaderSettingsButton.bezelStyle = .inline
         channelHeaderSettingsButton.focusRingType = .none
-        channelHeaderSettingsButton.contentTintColor = CarrachoTheme.secondaryText
+        channelHeaderSettingsButton.contentTintColor = nil
         channelHeaderSettingsButton.toolTip = L("Room Settings…")
         channelHeaderSettingsButton.setAccessibilityLabel(L("Room Settings…"))
         channelHeaderSettingsButton.isHidden = true
         channelHeaderSettingsButton.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
-            channelHeaderSettingsButton.widthAnchor.constraint(equalToConstant: 30),
-            channelHeaderSettingsButton.heightAnchor.constraint(equalToConstant: 26),
+            channelHeaderSettingsButton.widthAnchor.constraint(equalToConstant: 34),
+            channelHeaderSettingsButton.heightAnchor.constraint(equalToConstant: 30),
         ])
         channelRoomSwitchButton.target = self
         channelRoomSwitchButton.action = #selector(showChannelRoomSwitchMenu(_:))
@@ -3647,6 +3657,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         }
         reloadTrackerStack()
         updateTransferMonitorPolling()
+        updateAdvancedSearchIndexStatusPolling()
     }
 
     var usesRemoteTrackerAdministration: Bool { client.isConnected }
@@ -3913,6 +3924,9 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         stopChannelCatalogPolling()
         transferMonitorRefreshTimer?.invalidate()
         transferMonitorRefreshTimer = nil
+        transferProgressUIRefreshWorkItem?.cancel()
+        transferProgressUIRefreshWorkItem = nil
+        transferProgressUIRefreshDate = .distantPast
         transferMonitorRequestInFlight = false
         activeAvatarIdentity = nil
         lastLoginResult = nil
@@ -4007,6 +4021,12 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         remoteEventLogLoading = false
         advancedTrashOperationInProgress = false
         advancedSearchIndexRebuildInProgress = false
+        advancedSearchIndexStatusRequestInFlight = false
+        advancedSearchIndexStatusTimer?.invalidate()
+        advancedSearchIndexStatusTimer = nil
+        advancedSearchIndexStatusSpinner.stopAnimation(nil)
+        advancedSearchIndexStatusSpinner.isHidden = true
+        advancedSearchIndexStatusLabel.stringValue = L("Unavailable")
         serverLogTextView.string = ""
         eventLogRawText = ""
         eventLogTextView.string = ""
@@ -5739,6 +5759,12 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         remoteEventLogLoading = false
         advancedTrashOperationInProgress = false
         advancedSearchIndexRebuildInProgress = false
+        advancedSearchIndexStatusRequestInFlight = false
+        advancedSearchIndexStatusTimer?.invalidate()
+        advancedSearchIndexStatusTimer = nil
+        advancedSearchIndexStatusSpinner.stopAnimation(nil)
+        advancedSearchIndexStatusSpinner.isHidden = true
+        advancedSearchIndexStatusLabel.stringValue = L("Unavailable")
         serverLogTextView.string = ""
         eventLogRawText = ""
         eventLogTextView.string = ""

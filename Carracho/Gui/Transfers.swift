@@ -1067,13 +1067,36 @@ extension ViewController {
         return id
     }
 
+    /// Transfer callbacks can arrive many times per second. Keep the model current, but redraw
+    /// rate/ETA/progress at most once per second so the transfer UI remains visually stable.
+    func scheduleTransferProgressUIRefresh(now: Date = Date()) {
+        let interval: TimeInterval = 1.0
+        let elapsed = now.timeIntervalSince(transferProgressUIRefreshDate)
+        if elapsed >= interval {
+            transferProgressUIRefreshWorkItem?.cancel()
+            transferProgressUIRefreshWorkItem = nil
+            transferProgressUIRefreshDate = now
+            refreshTransferMonitorUI()
+            return
+        }
+        guard transferProgressUIRefreshWorkItem == nil else { return }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.transferProgressUIRefreshWorkItem = nil
+            self.transferProgressUIRefreshDate = Date()
+            self.refreshTransferMonitorUI()
+        }
+        transferProgressUIRefreshWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + max(0.01, interval - elapsed), execute: work)
+    }
+
     func updateClientTransfer(id: UUID, generation: UInt64, progress: LegacyFileTransferProgress) {
         guard var item = transferMonitorItems[id], item.active,
               item.attemptGeneration == generation else { return }
         let now = Date()
         if let previousDate = item.lastProgressSampleDate {
             let elapsed = now.timeIntervalSince(previousDate)
-            if elapsed >= 0.20, progress.completedBytes >= item.lastProgressBytes {
+            if elapsed >= 1.0, progress.completedBytes >= item.lastProgressBytes {
                 item.rateBytesPerSecond = UInt64(Double(progress.completedBytes - item.lastProgressBytes) / elapsed)
                 item.lastProgressSampleDate = now
                 item.lastProgressBytes = progress.completedBytes
@@ -1088,7 +1111,7 @@ extension ViewController {
         if progress.resumedBytes > 0 { item.resumed = true }
         item.state = item.resumed ? "Transferring · Resumed" : "Transferring"
         transferMonitorItems[id] = item
-        refreshTransferMonitorUI()
+        scheduleTransferProgressUIRefresh(now: now)
     }
 
     func setClientTransferWaiting(id: UUID, state: String) {
@@ -1632,7 +1655,7 @@ extension ViewController {
         } else if let previousBytes = transferBarPreviousCompletedBytes,
                   let previousDate = transferBarPreviousSampleDate {
             let elapsed = now.timeIntervalSince(previousDate)
-            if elapsed >= 0.25 {
+            if elapsed >= 1.0 {
                 if completed >= previousBytes {
                     transferBarRateBytesPerSecond = UInt64(Double(completed - previousBytes) / elapsed)
                 } else {
@@ -2134,20 +2157,24 @@ extension ViewController {
                 currentBytes[.legacy(kind: item.kind, userID: item.userID, path: item.path)] = item.bytesTransferred
             }
         }
-        var rates: [TransferMonitorRowKey: UInt64] = [:]
         if let previousDate = transferRemotePreviousSampleDate {
             let elapsed = now.timeIntervalSince(previousDate)
-            if elapsed >= 0.20 {
+            if elapsed >= 1.0 {
+                var rates: [TransferMonitorRowKey: UInt64] = [:]
                 for (key, bytes) in currentBytes {
                     if let previous = transferRemotePreviousBytesByKey[key], bytes >= previous {
                         rates[key] = UInt64(Double(bytes - previous) / elapsed)
                     }
                 }
+                transferRemoteRatesByKey = rates
+                transferRemotePreviousBytesByKey = currentBytes
+                transferRemotePreviousSampleDate = now
             }
+        } else {
+            transferRemoteRatesByKey = [:]
+            transferRemotePreviousBytesByKey = currentBytes
+            transferRemotePreviousSampleDate = now
         }
-        transferRemoteRatesByKey = rates
-        transferRemotePreviousBytesByKey = currentBytes
-        transferRemotePreviousSampleDate = now
 
         remoteTransferSnapshot = snapshot.transfers
         remoteManagedTransferSnapshot = snapshot.managedTransfers

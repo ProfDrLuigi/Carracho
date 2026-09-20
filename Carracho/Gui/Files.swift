@@ -614,7 +614,9 @@ extension ViewController {
             tableScrollView.bottomAnchor.constraint(equalTo: listHost.bottomAnchor),
             emptyState.centerXAnchor.constraint(equalTo: listHost.centerXAnchor),
             emptyState.centerYAnchor.constraint(equalTo: listHost.centerYAnchor),
-            emptyState.widthAnchor.constraint(lessThanOrEqualTo: listHost.widthAnchor, multiplier: 0.72),
+            emptyState.widthAnchor.constraint(equalTo: listHost.widthAnchor, multiplier: 0.72),
+            emptyState.widthAnchor.constraint(lessThanOrEqualToConstant: 420),
+            fileEmptyStateLabel.widthAnchor.constraint(equalTo: emptyState.widthAnchor),
         ])
 
         fileStatusLabel.font = .systemFont(ofSize: 11)

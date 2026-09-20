@@ -162,12 +162,28 @@ extension ViewController {
         advancedRebuildIndexButton.action = #selector(rebuildSearchIndex(_:))
         advancedRebuildIndexButton.image = symbolImage("magnifyingglass", fallback: NSImage.actionTemplateName)
         advancedRebuildIndexButton.imagePosition = .imageLeading
+
+        advancedSearchIndexStatusSpinner.style = .spinning
+        advancedSearchIndexStatusSpinner.controlSize = .small
+        advancedSearchIndexStatusSpinner.isIndeterminate = true
+        advancedSearchIndexStatusSpinner.isDisplayedWhenStopped = false
+        advancedSearchIndexStatusSpinner.isHidden = true
+        advancedSearchIndexStatusLabel.font = .systemFont(ofSize: 11.5, weight: .medium)
+        advancedSearchIndexStatusLabel.textColor = CarrachoTheme.secondaryText
+        advancedSearchIndexStatusLabel.setContentHuggingPriority(.required, for: .horizontal)
+        let indexStatus = horizontalStack([advancedSearchIndexStatusSpinner, advancedSearchIndexStatusLabel], spacing: 6)
+
         advancedEmptyTrashButton.target = self
         advancedEmptyTrashButton.action = #selector(emptyLocalServerTrash(_:))
         advancedEmptyTrashButton.image = symbolImage("trash", fallback: NSImage.trashEmptyName)
         advancedEmptyTrashButton.imagePosition = .imageLeading
         advancedEmptyTrashButton.contentTintColor = .systemRed
-        let maintenanceIndexRow = horizontalStack([NSTextField(labelWithString: L("Search index")), NSView(), advancedRebuildIndexButton], spacing: 10)
+        let maintenanceIndexRow = horizontalStack([
+            NSTextField(labelWithString: L("Search index")),
+            NSView(),
+            indexStatus,
+            advancedRebuildIndexButton,
+        ], spacing: 10)
         let maintenanceIntervalRow = advancedFormRow("Automatic rebuild",
                                                      control: adminSearchIndexRebuildIntervalField,
                                                      note: L("hours · 0 = off"))
@@ -823,6 +839,97 @@ extension ViewController {
         }
     }
 
+    func applyAdvancedSearchIndexStatus(_ status: LegacySearchIndexStatus) {
+        advancedSearchIndexRebuildInProgress = status.rebuilding
+        if status.rebuilding {
+            advancedSearchIndexStatusSpinner.isHidden = false
+            advancedSearchIndexStatusSpinner.startAnimation(nil)
+            advancedSearchIndexStatusLabel.stringValue = L("Indexing…")
+            advancedSearchIndexStatusLabel.textColor = .systemOrange
+        } else {
+            advancedSearchIndexStatusSpinner.stopAnimation(nil)
+            advancedSearchIndexStatusSpinner.isHidden = true
+            if status.ready {
+                if let entries = status.entries {
+                    let count = NumberFormatter.localizedString(from: NSNumber(value: entries), number: .decimal)
+                    advancedSearchIndexStatusLabel.stringValue = LF("Ready · %@ items", count)
+                } else {
+                    advancedSearchIndexStatusLabel.stringValue = L("Ready")
+                }
+                advancedSearchIndexStatusLabel.textColor = .systemGreen
+            } else {
+                advancedSearchIndexStatusLabel.stringValue = L("Not built")
+                advancedSearchIndexStatusLabel.textColor = CarrachoTheme.secondaryText
+            }
+        }
+        updateAdvancedSaveUI()
+    }
+
+    func refreshAdvancedSearchIndexStatus() {
+        guard currentWorkspace == .advanced else { return }
+
+        if client.isConnected {
+            guard remotePermissionEnabled(LegacyAccountPermissionBit.editAdvancedSettings) else {
+                advancedSearchIndexStatusLabel.stringValue = L("Unavailable")
+                advancedSearchIndexStatusLabel.textColor = CarrachoTheme.secondaryText
+                advancedSearchIndexStatusSpinner.stopAnimation(nil)
+                advancedSearchIndexStatusSpinner.isHidden = true
+                advancedSearchIndexRebuildInProgress = false
+                updateAdvancedSaveUI()
+                return
+            }
+            guard !advancedSearchIndexStatusRequestInFlight else { return }
+            advancedSearchIndexStatusRequestInFlight = true
+            let target = client
+            target.requestSearchIndexStatus { [weak self, weak target] result in
+                guard let self, let target, self.client === target else { return }
+                self.advancedSearchIndexStatusRequestInFlight = false
+                switch result {
+                case let .success(status):
+                    self.applyAdvancedSearchIndexStatus(status)
+                case .failure:
+                    // Older servers do not know the status extension. Stop polling rather than
+                    // hammering them with one unsupported command every second.
+                    self.advancedSearchIndexStatusTimer?.invalidate()
+                    self.advancedSearchIndexStatusTimer = nil
+                    self.advancedSearchIndexStatusSpinner.stopAnimation(nil)
+                    self.advancedSearchIndexStatusSpinner.isHidden = true
+                    self.advancedSearchIndexStatusLabel.stringValue = L("Status unavailable")
+                    self.advancedSearchIndexStatusLabel.textColor = CarrachoTheme.secondaryText
+                    self.advancedSearchIndexRebuildInProgress = false
+                    self.updateAdvancedSaveUI()
+                }
+            }
+            return
+        }
+
+        if let runtime = localServerRuntime {
+            applyAdvancedSearchIndexStatus(runtime.searchIndexStatusSnapshot())
+        } else {
+            advancedSearchIndexStatusSpinner.stopAnimation(nil)
+            advancedSearchIndexStatusSpinner.isHidden = true
+            advancedSearchIndexStatusLabel.stringValue = L("Unavailable")
+            advancedSearchIndexStatusLabel.textColor = CarrachoTheme.secondaryText
+            advancedSearchIndexRebuildInProgress = false
+            updateAdvancedSaveUI()
+        }
+    }
+
+    func updateAdvancedSearchIndexStatusPolling() {
+        advancedSearchIndexStatusTimer?.invalidate()
+        advancedSearchIndexStatusTimer = nil
+        advancedSearchIndexStatusRequestInFlight = false
+        guard currentWorkspace == .advanced else { return }
+
+        advancedSearchIndexStatusLabel.stringValue = L("Checking…")
+        advancedSearchIndexStatusLabel.textColor = CarrachoTheme.secondaryText
+        refreshAdvancedSearchIndexStatus()
+        advancedSearchIndexStatusTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            guard let self, self.currentWorkspace == .advanced else { return }
+            self.refreshAdvancedSearchIndexStatus()
+        }
+    }
+
     @objc func rebuildSearchIndex(_ sender: Any?) {
         if client.isConnected {
             guard remotePermissionEnabled(LegacyAccountPermissionBit.editAdvancedSettings) else {
@@ -835,12 +942,13 @@ extension ViewController {
             let target = client
             target.rebuildServerSearchIndex { [weak self, weak target] result in
                 guard let self, let target, self.client === target else { return }
-                self.advancedSearchIndexRebuildInProgress = false
-                self.updateAdvancedSaveUI()
                 switch result {
                 case .success:
                     self.showAdminSaved(L("Search-index rebuild queued on the connected server."))
+                    self.refreshAdvancedSearchIndexStatus()
                 case let .failure(error):
+                    self.advancedSearchIndexRebuildInProgress = false
+                    self.updateAdvancedSaveUI()
                     self.showAdminError(error)
                 }
             }
@@ -850,10 +958,16 @@ extension ViewController {
         guard let runtime = localServerRuntime else {
             showAdminError(ServerStateError.invalidValue(L("Server runtime is unavailable."))); return
         }
-        do {
-            let count = try runtime.rebuildSearchIndex()
-            showAdminSaved(LF("Search inventory rebuilt: %@ searchable item(s).", String(count)))
-        } catch { showAdminError(error) }
+        guard !advancedSearchIndexRebuildInProgress else { return }
+        advancedSearchIndexRebuildInProgress = true
+        advancedSearchIndexStatusSpinner.isHidden = false
+        advancedSearchIndexStatusSpinner.startAnimation(nil)
+        advancedSearchIndexStatusLabel.stringValue = L("Indexing…")
+        advancedSearchIndexStatusLabel.textColor = .systemOrange
+        updateAdvancedSaveUI()
+        runtime.rebuildSearchIndexInBackground(reason: "local administration request")
+        showAdminSaved(L("Search-index rebuild queued."))
+        refreshAdvancedSearchIndexStatus()
     }
 
     @objc func saveAdvancedSettings(_ sender: Any?) {

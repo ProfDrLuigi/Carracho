@@ -82,10 +82,22 @@ struct LegacyFileSearchResult: Equatable {
 enum LegacyFileSearchTransfer {
     /// Classic result frame: signal=1, count=1, reserved=0, then one result record.
     static func resultFrame(_ result: LegacyFileSearchResult) throws -> Data {
+        try resultFrame(CollectionOfOne(result))
+    }
+
+    /// The wire format has always carried a result count even though the historical server
+    /// normally emitted one record per frame. Modern sessions use this to amortize AEAD and
+    /// socket overhead for very large result sets while Classic sessions may keep count=1.
+    static func resultFrame<C: Collection>(_ results: C) throws -> Data where C.Element == LegacyFileSearchResult {
+        guard !results.isEmpty, results.count <= Int(UInt32.max) else {
+            throw LegacyProtocolError.invalidLength("file-search result frame count is invalid")
+        }
         var data = Data([1])
-        data.append(LegacyWire.uint32BE(1))
-        data.append(LegacyWire.uint32BE(0))
-        data.append(try result.encodedClassicRecord())
+        data.append(LegacyWire.uint32BE(UInt32(results.count)))
+        for result in results {
+            data.append(LegacyWire.uint32BE(0))
+            data.append(try result.encodedClassicRecord())
+        }
         return data
     }
 

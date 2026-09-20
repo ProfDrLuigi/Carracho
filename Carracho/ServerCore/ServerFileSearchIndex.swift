@@ -27,7 +27,7 @@ struct ServerFileSearchIndexEntry: Equatable {
 /// plus ServerFileMetadataStore; this database may be deleted at any time and is
 /// rebuilt on the next server start.
 final class ServerFileSearchIndex {
-    static let schemaVersion = 2
+    static let schemaVersion = 3
     static let maximumResults = 100_000
     private static let sqliteTransient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
     private static let macEpochOffset: TimeInterval = 2_082_844_800
@@ -191,7 +191,7 @@ final class ServerFileSearchIndex {
                 throw ServerFileSearchIndexError.invalidName
             }
             let needle = Self.fold(raw)
-            let grams = Self.trigrams(needle)
+            let grams = Self.searchTerms(needle)
             let db = try openDatabase(); defer { sqlite3_close(db) }
             try createSchema(db)
 
@@ -400,7 +400,7 @@ final class ServerFileSearchIndex {
         }
         sqlite3_finalize(delete)
 
-        let grams = Self.trigrams(nameSearch)
+        let grams = Self.indexTerms(nameSearch)
         if !grams.isEmpty {
             var gramStatement: OpaquePointer?
             try prepare(db, "INSERT OR IGNORE INTO trigrams(term,entry_id) VALUES(?,?)", &gramStatement)
@@ -452,11 +452,14 @@ final class ServerFileSearchIndex {
         try execute(db, "PRAGMA synchronous=NORMAL")
 
         let existingVersion = try pragmaInteger(db, "user_version")
-        if existingVersion != Self.schemaVersion {
-            // The search database is a disposable cache. Schema v1 repeated a hex-encoded
-            // full path in every trigram row and also maintained a redundant identical index,
-            // which could inflate large trees into multi-gigabyte databases. Recreate instead
-            // of carrying that storage layout forward.
+        if existingVersion == 2 {
+            // v2 already has the compact (term, entry_id) table. Keep the expensive filesystem
+            // index intact and only add 2-character terms so short searches such as "7z" no
+            // longer fall back to a full entries-table scan.
+            try migrateV2ToV3(db)
+        } else if existingVersion != Self.schemaVersion {
+            // Older layouts are disposable caches. Schema v1 repeated a hex-encoded full path
+            // in every trigram row and also maintained a redundant identical index.
             try execute(db, "PRAGMA wal_checkpoint(TRUNCATE)")
             try execute(db, "BEGIN IMMEDIATE")
             do {
@@ -501,6 +504,40 @@ final class ServerFileSearchIndex {
             ) WITHOUT ROWID
             """)
         try execute(db, "PRAGMA user_version=\(Self.schemaVersion)")
+    }
+
+    private func migrateV2ToV3(_ db: OpaquePointer?) throws {
+        try execute(db, "BEGIN IMMEDIATE")
+        do {
+            var read: OpaquePointer?
+            try prepare(db, "SELECT id,name_search FROM entries", &read)
+            defer { sqlite3_finalize(read) }
+
+            var insert: OpaquePointer?
+            try prepare(db, "INSERT OR IGNORE INTO trigrams(term,entry_id) VALUES(?,?)", &insert)
+            defer { sqlite3_finalize(insert) }
+
+            while true {
+                let rc = sqlite3_step(read)
+                if rc == SQLITE_DONE { break }
+                guard rc == SQLITE_ROW else { throw sqliteError(db) }
+                let entryID = sqlite3_column_int64(read, 0)
+                guard let raw = sqlite3_column_text(read, 1) else { continue }
+                let name = String(cString: raw)
+                for gram in Self.bigrams(name) {
+                    sqlite3_reset(insert)
+                    sqlite3_clear_bindings(insert)
+                    try bindText(insert, 1, gram)
+                    try bindInt64(insert, 2, entryID)
+                    guard sqlite3_step(insert) == SQLITE_DONE else { throw sqliteError(db) }
+                }
+            }
+            try execute(db, "PRAGMA user_version=3")
+            try execute(db, "COMMIT")
+        } catch {
+            try? execute(db, "ROLLBACK")
+            throw error
+        }
     }
 
     private func metadataDate(_ db: OpaquePointer?, key: String) throws -> Date? {
@@ -588,14 +625,35 @@ final class ServerFileSearchIndex {
         value.lowercased(with: Locale(identifier: "en_US_POSIX"))
     }
 
-    private static func trigrams(_ value: String) -> [String] {
+    private static func grams(_ value: String, width: Int) -> [String] {
         let characters = Array(value)
-        guard characters.count >= 3 else { return [] }
+        guard width > 0, characters.count >= width else { return [] }
         var unique = Set<String>()
-        for index in 0...(characters.count - 3) {
-            unique.insert(String(characters[index...index + 2]))
+        for index in 0...(characters.count - width) {
+            unique.insert(String(characters[index...index + width - 1]))
         }
         return unique.sorted()
+    }
+
+    private static func bigrams(_ value: String) -> [String] {
+        grams(value, width: 2)
+    }
+
+    private static func trigrams(_ value: String) -> [String] {
+        grams(value, width: 3)
+    }
+
+    /// Index both 2- and 3-character terms. Queries >=3 chars continue using trigrams because
+    /// they are more selective; exactly 2 chars use the new bigram postings.
+    private static func indexTerms(_ value: String) -> [String] {
+        Array(Set(bigrams(value) + trigrams(value))).sorted()
+    }
+
+    private static func searchTerms(_ value: String) -> [String] {
+        let characters = Array(value)
+        if characters.count >= 3 { return trigrams(value) }
+        if characters.count == 2 { return bigrams(value) }
+        return []
     }
 
 }

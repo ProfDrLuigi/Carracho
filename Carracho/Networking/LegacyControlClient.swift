@@ -1231,6 +1231,43 @@ final class LegacyControlClient {
         sendTaskCompleteRequest(command: LegacyCommand.rebuildSearchIndex, fields: [], completion: completion)
     }
 
+    func requestSearchIndexStatus(completion: @escaping (Result<LegacySearchIndexStatus, Error>) -> Void) {
+        sendRequest(command: LegacyCommand.searchIndexStatusRequest, fields: []) { result in
+            do {
+                let packet = try result.get()
+                guard packet.command == LegacyCommand.searchIndexStatusReply else {
+                    throw LegacyControlClientError.unexpectedCommand(expected: LegacyCommand.searchIndexStatusReply,
+                                                                      actual: packet.command)
+                }
+
+                func boolean(_ type: UInt32) throws -> Bool {
+                    guard let field = packet.firstField(type: type) else {
+                        throw LegacyControlClientError.missingField(type)
+                    }
+                    guard field.value.count == 1 else {
+                        throw LegacyControlClientError.protocolFailure("Search-index status boolean has invalid length.")
+                    }
+                    return field.value[0] != 0
+                }
+
+                var entries: UInt64?
+                if let field = packet.firstField(type: LegacySearchIndexStatusField.entries) {
+                    var cursor = LegacyByteCursor(field.value)
+                    entries = try cursor.readUInt64BE()
+                    try cursor.requireEnd()
+                }
+
+                completion(.success(LegacySearchIndexStatus(
+                    ready: try boolean(LegacySearchIndexStatusField.ready),
+                    rebuilding: try boolean(LegacySearchIndexStatusField.rebuilding),
+                    entries: entries
+                )))
+            } catch {
+                completion(.failure(error))
+            }
+        }
+    }
+
     /// Changes the password of the account authenticated on this control session.
     /// The command never names an account on the wire; the server derives it from
     /// the authenticated session so it cannot be used to modify somebody else.

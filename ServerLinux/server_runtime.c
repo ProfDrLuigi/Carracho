@@ -89,6 +89,8 @@
 #define CMD_MOVE_FILE 0x00000014u
 #define CMD_EMPTY_TRASH 0x00000015u
 #define CMD_REBUILD_SEARCH_INDEX 0x00000040u
+#define CMD_SEARCH_INDEX_STATUS_REQUEST 0x00000041u
+#define CMD_SEARCH_INDEX_STATUS_REPLY 0x00000042u
 #define CMD_CHANNEL_JOIN 0x00000080u
 #define CMD_CHANNEL_LEAVE 0x00000081u
 #define CMD_CHANNEL_CHAT 0x00000082u
@@ -2587,6 +2589,28 @@ static int handle_set_file_label(cr_session*s,const cr_packet*p){
 
 static int handle_move_file(cr_session*s,const cr_packet*p){const cr_tlv*src=cr_packet_field(p,1),*dst=cr_packet_field(p,2);if(!src||!src->length||!dst||!dst->length||(src->length==dst->length&&!memcmp(src->value,dst->value,src->length)))return send_error(s,p->transaction_id,1);if(!account_perm(s,PERM_VIEW_DROPBOXES)&&path_is_inside_dropbox(s->server,s,src->value,src->length))return send_error(s,p->transaction_id,1);char source[PATH_MAX],dest[PATH_MAX];int folder=0;if(resolve_legacy_path_ex(s->server,s,src->value,src->length,source,sizeof(source),1)||resource_kind(source,&folder,NULL,NULL)||!can_move(s,folder))return send_error(s,p->transaction_id,1);if(folder&&dst->length>src->length&&!memcmp(dst->value,src->value,src->length)&&dst->value[src->length]==1)return send_error(s,p->transaction_id,1);const uint8_t*leaf=NULL;size_t ll=0;if(legacy_leaf(dst->value,dst->length,&leaf,&ll)||validate_legacy_leaf(leaf,ll,0x200)||resolve_legacy_path_ex(s->server,s,dst->value,dst->length,dest,sizeof(dest),0))return send_error(s,p->transaction_id,1);size_t parent_len=legacy_parent_length(dst->value,dst->length);char parent[PATH_MAX];int parent_folder=0;if(resolve_legacy_path_ex(s->server,s,dst->value,parent_len,parent,sizeof(parent),1)||resource_kind(parent,&parent_folder,NULL,NULL)||!parent_folder||rename(source,dest))return send_error(s,p->transaction_id,1);if(cr_file_metadata_move(session_metadata_store(s->server,s),src->value,src->length,dst->value,dst->length,folder)){rename(dest,source);return send_error(s,p->transaction_id,1);}if(file_search_index_incremental_available(s->server)&&!session_uses_legacy_files_root(s->server,s)&&!s->files_root_path[0]&&cr_file_search_index_move_subtree(&s->server->file_index,src->value,src->length,dst->value,dst->length,dest,&s->server->metadata,&s->server->search_index_exclusions)){log_msg("File-search index move failed");invalidate_file_search_index(s->server,"incremental move failure");}return send_task_complete(s,p->transaction_id);}
 static int handle_empty_trash(cr_session*s,const cr_packet*p){if(!account_perm(s,PERM_EMPTY_TRASH))return send_error(s,p->transaction_id,1);DIR*d=opendir(s->server->trash_root);if(!d){if(errno==ENOENT){if(mkdir(s->server->trash_root,0755))return send_error(s,p->transaction_id,1);}else return send_error(s,p->transaction_id,1);}else{struct dirent*de;int fail=0;while((de=readdir(d))){if(de->d_name[0]=='.'&&(!de->d_name[1]||(de->d_name[1]=='.'&&!de->d_name[2])))continue;char child[PATH_MAX];if(join_path_component(child,sizeof(child),s->server->trash_root,de->d_name)||recursive_remove_path(child)){fail=1;break;}}closedir(d);if(fail)return send_error(s,p->transaction_id,1);}return send_task_complete(s,p->transaction_id);}
+static int handle_search_index_status(cr_session*s,const cr_packet*p){
+    if(!account_perm(s,PERM_EDIT_ADVANCED))return send_error(s,p->transaction_id,1);
+    int rebuilding=0;
+    pthread_mutex_lock(&s->server->mutex);
+    rebuilding=s->server->file_index_thread_running;
+    pthread_mutex_unlock(&s->server->mutex);
+    int ready=atomic_load(&s->server->file_index_ready);
+    uint8_t ready_wire=(uint8_t)(ready?1:0),rebuilding_wire=(uint8_t)(rebuilding?1:0),entries_wire[8];
+    cr_tlv_out fields[3];
+    size_t n=0;
+    fields[n++]=(cr_tlv_out){1,&ready_wire,1};
+    fields[n++]=(cr_tlv_out){2,&rebuilding_wire,1};
+    if(ready&&!rebuilding){
+        uint64_t count=0;
+        if(cr_file_search_index_entry_count(&s->server->file_index,&count)==0){
+            cr_write_be64(entries_wire,count);
+            fields[n++]=(cr_tlv_out){3,entries_wire,8};
+        }
+    }
+    return session_send(s,CMD_SEARCH_INDEX_STATUS_REPLY,p->transaction_id,fields,n);
+}
+
 static int handle_rebuild_search_index(cr_session*s,const cr_packet*p){
     if(!account_perm(s,PERM_EDIT_ADVANCED)||!s->server->file_index.ready)return send_error(s,p->transaction_id,1);
     repair_file_search_index(s->server);
@@ -4078,7 +4102,7 @@ case CMD_CREATE_FOLDER:return handle_create_folder(s,p);case CMD_DELETE_FILE:ret
 case CMD_FLAT_NEWS_POST:return handle_flat_news_post(s,p);case CMD_FLAT_NEWS_LIST:return handle_flat_news_list(s,p);case CMD_FLAT_NEWS_DELETE:return handle_flat_news_delete(s,p);case CMD_FLAT_NEWS_CLEAR:return handle_flat_news_clear(s,p);
 case CMD_TRANSFER_INFO:return handle_transfer_info(s,p);
 case CMD_REQUEST_SERVER_SETTINGS:return handle_server_settings_request(s,p);case CMD_SET_SERVER_SETTINGS:return handle_server_settings_update(s,p);
-case CMD_SERVER_LOG_REQUEST:return handle_server_log_request(s,p);case CMD_SERVER_LOG_CLEAR:return handle_server_log_clear(s,p);case CMD_EVENT_LOG_REQUEST:return handle_event_log_request(s,p);case CMD_EVENT_LOG_CLEAR:return handle_event_log_clear(s,p);case CMD_REBUILD_SEARCH_INDEX:return handle_rebuild_search_index(s,p);
+case CMD_SERVER_LOG_REQUEST:return handle_server_log_request(s,p);case CMD_SERVER_LOG_CLEAR:return handle_server_log_clear(s,p);case CMD_EVENT_LOG_REQUEST:return handle_event_log_request(s,p);case CMD_EVENT_LOG_CLEAR:return handle_event_log_clear(s,p);case CMD_REBUILD_SEARCH_INDEX:return handle_rebuild_search_index(s,p);case CMD_SEARCH_INDEX_STATUS_REQUEST:return handle_search_index_status(s,p);
 case CMD_ACCOUNT_LIST:return handle_account_list(s,p);case CMD_GET_ACCOUNT:return handle_get_account(s,p);case CMD_ACCOUNT_SAVE:return handle_account_save(s,p);case CMD_ACCOUNT_DELETE:return handle_account_delete(s,p);case CMD_CHANGE_OWN_PASSWORD:return handle_change_own_password(s,p);case CMD_BOT_STATUS_REQUEST:return handle_bot_status(s,p);case CMD_BOT_SET_ENABLED:return handle_bot_set_enabled(s,p);case CMD_BOT_SET_GREETING:return handle_bot_set_greeting(s,p);case CMD_BOT_SET_COMMAND_RULES:return handle_bot_set_command_rules(s,p);case CMD_BOT_SET_RSS_FEEDS:return handle_bot_set_rss_feeds(s,p);case CMD_BOT_TEST_RSS_FEED:return handle_bot_test_rss_feed(s,p);
 case CMD_ADMIN_NEWSGROUP_LIST:return handle_admin_newsgroup_list(s,p);case CMD_NEWSGROUP_CREATE:return handle_newsgroup_admin_mutation(s,p,0);case CMD_NEWSGROUP_MODIFY:return handle_newsgroup_admin_mutation(s,p,1);case CMD_NEWSGROUP_DELETE:return handle_newsgroup_admin_mutation(s,p,2);
 case CMD_ARTICLE_READ:return handle_article_read(s,p);case CMD_FORUM_THREAD_LIST:return handle_forum_thread_list(s,p);case CMD_FORUM_THREAD_ENTRIES:return handle_forum_thread_entries(s,p);case CMD_FORUM_ARTICLE_REACTIONS:return handle_forum_article_reactions(s,p);case CMD_FORUM_ARTICLE_REACTION_SET:return handle_forum_article_reaction_set(s,p);case CMD_FORUM_ARTICLE_DELETE:return handle_forum_article_delete(s,p);case CMD_ARTICLE_DELETE:return handle_article_delete(s,p);
@@ -4206,13 +4230,58 @@ static void send_async_error_to_user(cr_server*s,uint32_t user_id,uint16_t code)
 static void broadcast_banner_changed(cr_server*s){pthread_mutex_lock(&s->mutex);for(size_t i=0;i<s->allocated_session_count;i++){cr_session*x=s->sessions[i];if(session_ready_for_async(x))session_send(x,CMD_BANNER_CHANGED,0,NULL,0);}pthread_mutex_unlock(&s->mutex);}
 
 static int ascii_case_contains(const char *haystack,const char *needle){if(!*needle)return 1;size_t nl=strlen(needle);for(const char*h=haystack;*h;h++){size_t i=0;while(i<nl&&h[i]&&tolower((unsigned char)h[i])==tolower((unsigned char)needle[i]))i++;if(i==nl)return 1;}return 0;}
+static int append_search_result_record(cr_buffer*b,const uint8_t*name,size_t name_len,uint32_t creator,uint32_t file_type,uint32_t size,uint32_t timestamp,const uint8_t*path,size_t path_len){
+    return !b||!name_len||name_len>255||path_len>4096||
+           cr_buffer_append_u32(b,0)||
+           cr_buffer_append_u8(b,(uint8_t)name_len)||
+           cr_buffer_append(b,name,name_len)||
+           cr_buffer_append_u32(b,creator)||
+           cr_buffer_append_u32(b,file_type)||
+           cr_buffer_append_u32(b,size)||
+           cr_buffer_append_u32(b,timestamp)||
+           cr_buffer_append_u16(b,(uint16_t)path_len)||
+           cr_buffer_append(b,path,path_len)?-1:0;
+}
 static int send_search_result(cr_transfer_stream*stream,const uint8_t*name,size_t name_len,uint32_t creator,uint32_t file_type,uint32_t size,uint32_t timestamp,const uint8_t*path,size_t path_len){
     cr_buffer b;cr_buffer_init(&b);int rc=-1;
-    if(name_len&&name_len<=255&&path_len<=4096&&cr_buffer_append_u8(&b,1)==0&&cr_buffer_append_u32(&b,1)==0&&cr_buffer_append_u32(&b,0)==0&&cr_buffer_append_u8(&b,(uint8_t)name_len)==0&&cr_buffer_append(&b,name,name_len)==0&&cr_buffer_append_u32(&b,creator)==0&&cr_buffer_append_u32(&b,file_type)==0&&cr_buffer_append_u32(&b,size)==0&&cr_buffer_append_u32(&b,timestamp)==0&&cr_buffer_append_u16(&b,(uint16_t)path_len)==0&&cr_buffer_append(&b,path,path_len)==0&&cr_transfer_send(stream,b.data,b.len)==0)rc=0;
+    if(cr_buffer_append_u8(&b,1)==0&&cr_buffer_append_u32(&b,1)==0&&
+       append_search_result_record(&b,name,name_len,creator,file_type,size,timestamp,path,path_len)==0&&
+       cr_transfer_send(stream,b.data,b.len)==0)rc=0;
     cr_buffer_free(&b);return rc;
 }
-typedef struct cr_index_send_context { cr_transfer_stream *stream; } cr_index_send_context;
-static int send_indexed_search_result(void *context,const cr_file_search_index_result *r){cr_index_send_context*c=context;return send_search_result(c->stream,r->name,r->name_len,r->is_folder?CREATOR_FOLDER:0,r->is_folder?FILETYPE_FOLDER:0,r->size,r->timestamp,r->path,r->path_len);}
+typedef struct cr_index_send_context {
+    cr_transfer_stream *stream;
+    cr_buffer batch;
+    uint32_t batch_count;
+    size_t emitted;
+    int batched;
+    int failed;
+} cr_index_send_context;
+static void index_send_context_init(cr_index_send_context*c,cr_transfer_stream*stream){
+    memset(c,0,sizeof(*c));c->stream=stream;c->batched=stream&&stream->mode==CR_TRANSFER_STREAM_AEAD;cr_buffer_init(&c->batch);
+}
+static void index_send_context_free(cr_index_send_context*c){if(c)cr_buffer_free(&c->batch);}
+static int flush_index_search_batch(cr_index_send_context*c){
+    if(!c||c->failed)return-1;
+    if(!c->batched||!c->batch_count)return 0;
+    if(c->batch.len<5){c->failed=1;return-1;}
+    cr_write_be32(c->batch.data+1,c->batch_count);
+    if(cr_transfer_send(c->stream,c->batch.data,c->batch.len)){c->failed=1;return-1;}
+    c->emitted+=c->batch_count;c->batch.len=0;c->batch_count=0;return 0;
+}
+static int send_indexed_search_result(void *context,const cr_file_search_index_result *r){
+    cr_index_send_context*c=context;
+    if(!c||!r)return-1;
+    if(!c->batched){
+        if(send_search_result(c->stream,r->name,r->name_len,r->is_folder?CREATOR_FOLDER:0,r->is_folder?FILETYPE_FOLDER:0,r->size,r->timestamp,r->path,r->path_len)){c->failed=1;return-1;}
+        c->emitted++;return 0;
+    }
+    if(!c->batch_count&&(cr_buffer_append_u8(&c->batch,1)||cr_buffer_append_u32(&c->batch,0))){c->failed=1;return-1;}
+    if(append_search_result_record(&c->batch,r->name,r->name_len,r->is_folder?CREATOR_FOLDER:0,r->is_folder?FILETYPE_FOLDER:0,r->size,r->timestamp,r->path,r->path_len)){c->failed=1;return-1;}
+    c->batch_count++;
+    if(c->batch_count>=256||c->batch.len>=1024u*1024u)return flush_index_search_batch(c);
+    return 0;
+}
 static int search_index_glob_matches(const char*pattern,const char*name){const char*star=NULL,*retry=NULL;while(*name){if(*pattern=='*'){star=pattern++;retry=name;continue;}if(*pattern=='?'||*pattern==*name){pattern++;name++;continue;}if(star){pattern=star+1;name=++retry;continue;}return 0;}while(*pattern=='*')pattern++;return *pattern=='\0';}
 static int search_index_excludes_name(const cr_server*s,const char*name){
     for(size_t i=0;i<s->search_index_exclusions.count;i++)if(search_index_glob_matches(s->search_index_exclusions.patterns[i],name))return 1;
@@ -4369,10 +4438,17 @@ static int serve_file_search(cr_server *s, cr_transfer_stream *stream,
   int search_rc = -1;
   int scoped_root = session->files_root_path[0] || session_uses_legacy_files_root(s,session);
   if (s->file_index_ready && !scoped_root) {
-    cr_index_send_context ctx = {stream};
+    cr_index_send_context ctx;
+    index_send_context_init(&ctx,stream);
     search_rc = cr_file_search_index_search(
         &s->file_index, query, &s->search_index_exclusions,
         send_indexed_search_result, &ctx, &results);
+    if(!search_rc&&flush_index_search_batch(&ctx))search_rc=-1;
+    if(ctx.failed||((ctx.emitted||ctx.batch_count)&&search_rc)){
+      index_send_context_free(&ctx);
+      return -1;
+    }
+    index_send_context_free(&ctx);
     if (search_rc)
       log_msg("Indexed file search failed; using filesystem fallback");
   }

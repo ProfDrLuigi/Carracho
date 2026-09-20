@@ -275,15 +275,15 @@ extension ViewController {
         let surface = CarrachoBackgroundView()
         surface.fillColor = CarrachoTheme.card
 
-        channelTitleLabel.font = .systemFont(ofSize: 14, weight: .semibold)
+        channelTitleLabel.font = .systemFont(ofSize: 16, weight: .semibold)
         channelTitleLabel.lineBreakMode = .byTruncatingTail
         channelTitleLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
         channelTitleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         chatRoomStateLabel.textColor = CarrachoTheme.secondaryText
-        chatRoomStateLabel.font = .systemFont(ofSize: 9.5, weight: .medium)
+        chatRoomStateLabel.font = .systemFont(ofSize: 11.5, weight: .medium)
         chatRoomStateLabel.lineBreakMode = .byTruncatingTail
         chatUsersLabel.textColor = CarrachoTheme.secondaryText
-        chatUsersLabel.font = .systemFont(ofSize: 10.5)
+        chatUsersLabel.font = .systemFont(ofSize: 13)
         chatUsersLabel.setContentHuggingPriority(.required, for: .horizontal)
 
         let titleStack = verticalStack([channelTitleLabel, chatRoomStateLabel], spacing: 0)
@@ -296,27 +296,37 @@ extension ViewController {
         titleStack.setContentHuggingPriority(.defaultLow, for: .horizontal)
         titleStack.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
         channelTitleLabel.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
-        let usersIcon = symbolView("person.2.fill", size: 13, tint: CarrachoTheme.secondaryText)
+        let usersIcon = NSImageView(image: sizedAssetImage(named: "Accounts", size: 18) ?? NSImage())
+        usersIcon.imageScaling = .scaleNone
+        usersIcon.translatesAutoresizingMaskIntoConstraints = false
+        usersIcon.widthAnchor.constraint(equalToConstant: 22).isActive = true
+        usersIcon.heightAnchor.constraint(equalToConstant: 22).isActive = true
+
+        channelChatFontSizePopup.controlSize = .regular
+        channelChatFontSizePopup.font = .systemFont(ofSize: 13)
         channelChatFontSizePopup.setContentHuggingPriority(.required, for: .horizontal)
         channelChatFontSizePopup.setContentCompressionResistancePriority(.required, for: .horizontal)
+        channelChatFontSizePopup.heightAnchor.constraint(equalToConstant: 30).isActive = true
         let header = horizontalStack([
             titleStack, channelRoomSwitchButton, NSView(), usersIcon, chatUsersLabel,
             channelChatFontSizePopup, channelHeaderSettingsButton, channelClearButton,
         ], spacing: 6)
 
         chatTopicLabel.textColor = CarrachoTheme.secondaryText
-        chatTopicLabel.font = .systemFont(ofSize: 10.5)
+        chatTopicLabel.font = .systemFont(ofSize: 13)
         chatTopicLabel.lineBreakMode = .byTruncatingTail
         chatTopicLabel.maximumNumberOfLines = 1
         chatTopicLabel.isSelectable = true
         chatTopicLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         channelTopicEditButton.title = ""
-        channelTopicEditButton.image = symbolImage("pencil", fallback: NSImage.actionTemplateName)
+        channelTopicEditButton.image = sizedAssetImage(named: "Edit", size: 18)
         channelTopicEditButton.imagePosition = .imageOnly
+        channelTopicEditButton.imageScaling = .scaleNone
         channelTopicEditButton.isBordered = false
+        channelTopicEditButton.contentTintColor = nil
         channelTopicEditButton.translatesAutoresizingMaskIntoConstraints = false
-        channelTopicEditButton.widthAnchor.constraint(equalToConstant: 24).isActive = true
-        channelTopicEditButton.heightAnchor.constraint(equalToConstant: 22).isActive = true
+        channelTopicEditButton.widthAnchor.constraint(equalToConstant: 34).isActive = true
+        channelTopicEditButton.heightAnchor.constraint(equalToConstant: 30).isActive = true
         let topicRow = horizontalStack([chatTopicLabel, channelTopicEditButton, NSView()], spacing: 5)
 
         let headerDivider = CarrachoDividerView()
@@ -389,8 +399,8 @@ extension ViewController {
             stack.trailingAnchor.constraint(equalTo: surface.trailingAnchor, constant: -10),
             stack.topAnchor.constraint(equalTo: surface.topAnchor, constant: 6),
             stack.bottomAnchor.constraint(equalTo: surface.bottomAnchor, constant: -7),
-            header.heightAnchor.constraint(greaterThanOrEqualToConstant: 28),
-            topicRow.heightAnchor.constraint(greaterThanOrEqualToConstant: 20),
+            header.heightAnchor.constraint(greaterThanOrEqualToConstant: 34),
+            topicRow.heightAnchor.constraint(greaterThanOrEqualToConstant: 30),
         ])
         updateChannelComposerHeight()
         return surface

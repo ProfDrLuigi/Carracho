@@ -2019,6 +2019,8 @@ final class LegacyServerRuntime {
             try handleEventLogClear(packet: packet, session: session)
         case LegacyCommand.rebuildSearchIndex:
             try handleRemoteSearchIndexRebuild(packet: packet, session: session)
+        case LegacyCommand.searchIndexStatusRequest:
+            try handleSearchIndexStatusRequest(packet: packet, session: session)
 
         case LegacyCommand.transferInfo:
             try handleTransferInfo(packet: packet, session: session)
@@ -3245,6 +3247,40 @@ final class LegacyServerRuntime {
             try FileManager.default.removeItem(at: child)
         }
         log("Server Trash emptied")
+    }
+
+    func searchIndexStatusSnapshot() -> LegacySearchIndexStatus {
+        fileSearchIndexStateLock.lock()
+        let rebuilding = fileSearchIndexRebuildWorkerActive
+        let index = fileSearchIndex
+        fileSearchIndexStateLock.unlock()
+
+        let entries: UInt64?
+        if let index, !rebuilding, let count = try? index.entryCount() {
+            entries = UInt64(max(0, count))
+        } else {
+            entries = nil
+        }
+        return LegacySearchIndexStatus(ready: index != nil, rebuilding: rebuilding, entries: entries)
+    }
+
+    private func handleSearchIndexStatusRequest(packet: LegacyPacket, session: LegacyServerSession) throws {
+        guard session.account?.permissions.contains(.editAdvancedSettings) == true else {
+            try session.sendAuthenticated(Self.errorPacket(transactionID: packet.transactionID, code: 1))
+            return
+        }
+        let status = searchIndexStatusSnapshot()
+        var fields = [
+            LegacyTLV(type: LegacySearchIndexStatusField.ready, value: Data([status.ready ? 1 : 0])),
+            LegacyTLV(type: LegacySearchIndexStatusField.rebuilding, value: Data([status.rebuilding ? 1 : 0])),
+        ]
+        if let entries = status.entries {
+            fields.append(LegacyTLV(type: LegacySearchIndexStatusField.entries,
+                                    value: LegacyWire.uint64BE(entries)))
+        }
+        try session.sendAuthenticated(LegacyPacket(command: LegacyCommand.searchIndexStatusReply,
+                                                    transactionID: packet.transactionID,
+                                                    fields: fields))
     }
 
     private func handleRemoteSearchIndexRebuild(packet: LegacyPacket, session: LegacyServerSession) throws {
@@ -5896,8 +5932,22 @@ extension LegacyServerRuntime {
         // ReceiveQuery() in Server 1.0b13 writes a UInt32 zero before search results begin.
         try stream.sendPayload(LegacyWire.uint32BE(0))
         let results = try fileSearchResults(containing: query.text, account: access.account, legacyTransport: access.legacyTransport)
-        for result in results {
-            try stream.sendPayload(try LegacyFileSearchTransfer.resultFrame(result))
+        if access.legacyTransport {
+            // Preserve the historical one-result-per-frame shape for Classic clients.
+            for result in results {
+                try stream.sendPayload(try LegacyFileSearchTransfer.resultFrame(result))
+            }
+        } else {
+            // Modern AEAD transfer framing is comparatively expensive per payload. The classic
+            // search record format already carries a count, so batch records without changing
+            // the logical protocol seen by the client.
+            let batchSize = 256
+            var start = results.startIndex
+            while start < results.endIndex {
+                let end = min(start + batchSize, results.endIndex)
+                try stream.sendPayload(try LegacyFileSearchTransfer.resultFrame(results[start..<end]))
+                start = end
+            }
         }
         try stream.sendPayload(LegacyFileSearchTransfer.doneFrame)
         log("File search for user \(access.userID): \(LegacyPath.displayString(query.text)) — \(results.count) result(s)")

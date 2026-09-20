@@ -26,7 +26,7 @@ enum LegacyFileSearchClientError: Error, LocalizedError {
 /// One-shot client for transfer operation 9. Modern sessions use authenticated
 /// AES-256-GCM framing; explicit Classic sessions preserve the historical plain stream.
 final class LegacyFileSearchClient {
-    private static let timeout: TimeInterval = 30
+    private static let inactivityTimeout: TimeInterval = 30
     private static let maximumResults = 100_000
     private static let maximumPathLength = LegacyPath.maximumWireLength
 
@@ -52,6 +52,11 @@ final class LegacyFileSearchClient {
         do { query = try LegacyFileSearchQuery(text: text).encoded() }
         catch { completion(.failure(error)); return }
 
+        // Search responses can legitimately contain tens of thousands of records. Parsing all
+        // transfer frames on the main queue makes scrolling/UI input hitch for the entire search.
+        // Keep every socket read and record decode on one serial worker queue; only publish the
+        // final immutable result array back to AppKit on the main queue.
+        let queue = DispatchQueue(label: "com.carracho.file-search", qos: .userInitiated)
         let connection = NWConnection(host: host, port: port, using: .tcp)
         let stream: AuthenticatedTransferStream
         do { stream = try AuthenticatedTransferStream(connection: connection, session: session, operation: LegacyTransferOperation.fileSearch, legacyMode: .plain) }
@@ -59,6 +64,7 @@ final class LegacyFileSearchClient {
         var finished = false
         var timeoutWorkItem: DispatchWorkItem?
         var results: [LegacyFileSearchResult] = []
+        results.reserveCapacity(512)
 
         func finish(_ result: Result<[LegacyFileSearchResult], Error>) {
             guard !finished else { return }
@@ -66,12 +72,15 @@ final class LegacyFileSearchClient {
             timeoutWorkItem?.cancel()
             timeoutWorkItem = nil
             connection.cancel()
-            completion(result)
+            DispatchQueue.main.async { completion(result) }
         }
 
-        let timeout = DispatchWorkItem { finish(.failure(LegacyFileSearchClientError.timedOut)) }
-        timeoutWorkItem = timeout
-        DispatchQueue.main.asyncAfter(deadline: .now() + Self.timeout, execute: timeout)
+        func armInactivityTimeout() {
+            timeoutWorkItem?.cancel()
+            let timeout = DispatchWorkItem { finish(.failure(LegacyFileSearchClientError.timedOut)) }
+            timeoutWorkItem = timeout
+            queue.asyncAfter(deadline: .now() + Self.inactivityTimeout, execute: timeout)
+        }
 
         func readRecord(_ remaining: UInt32, then: @escaping () -> Void) {
             guard remaining > 0 else { then(); return }
@@ -101,6 +110,7 @@ final class LegacyFileSearchClient {
                                     results.append(LegacyFileSearchResult(name: name, creator: creator, fileType: fileType,
                                                                          size: size, timestamp: timestamp, path: path))
                                     guard results.count <= Self.maximumResults else { throw LegacyFileSearchClientError.tooManyResults }
+                                    armInactivityTimeout()
                                     readRecord(remaining - 1, then: then)
                                 } catch { finish(.failure(error)) }
                             }
@@ -116,6 +126,7 @@ final class LegacyFileSearchClient {
                     guard let signal = try signalResult.get().first else {
                         throw LegacyFileSearchClientError.invalidResponse("missing signal byte")
                     }
+                    armInactivityTimeout()
                     if signal == 0 { readFrame(); return } // classic keepalive
                     guard signal == 1 else { throw LegacyFileSearchClientError.invalidResponse("unknown signal \(signal)") }
                     stream.readPayload(4) { countResult in
@@ -137,6 +148,7 @@ final class LegacyFileSearchClient {
             guard !finished else { return }
             switch state {
             case .ready:
+                armInactivityTimeout()
                 stream.sendHello { helloResult in
                     guard case .success = helloResult else {
                         if case let .failure(error) = helloResult { finish(.failure(error)) }
@@ -153,6 +165,7 @@ final class LegacyFileSearchClient {
                                 guard try cursor.readUInt32BE() == 0 else {
                                     throw LegacyFileSearchClientError.invalidResponse("query acknowledgement is nonzero")
                                 }
+                                armInactivityTimeout()
                                 readFrame()
                             } catch { finish(.failure(error)) }
                         }
@@ -163,7 +176,7 @@ final class LegacyFileSearchClient {
             default: break
             }
         }
-        connection.start(queue: .main)
+        connection.start(queue: queue)
     }
 
     private static func receiveExactly(connection: NWConnection, count: Int,
