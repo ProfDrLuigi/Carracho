@@ -3504,28 +3504,27 @@ static int append_search_index_exclusions(cr_buffer*b,const cr_search_index_excl
     if(!b||!x||x->count>CR_MAX_SEARCH_INDEX_EXCLUSIONS||cr_buffer_append_u16(b,(uint16_t)x->count))return-1;
     for(size_t i=0;i<x->count;i++){uint8_t raw[512];size_t n=0;if(cr_utf8_to_macroman(x->patterns[i],raw,sizeof(raw),&n)||!n||n>255||cr_buffer_append_string16(b,raw,n))return-1;}return 0;
 }
+static int write_json_config_with_fallback(const char*path,json_object*root,int flags);
+
 static int persist_legacy_files_root_config(cr_server*s,const char*path){
-    if(!s||!path||!s->config_path[0])return-1;
+    if(!s||!path||!s->config_path[0]){errno=EINVAL;return-1;}
     json_object*root=json_object_from_file(s->config_path);
-    if(!root||!json_object_is_type(root,json_type_object)){if(root)json_object_put(root);return-1;}
+    if(!root||!json_object_is_type(root,json_type_object)){if(root)json_object_put(root);if(errno==0)errno=EINVAL;return-1;}
     json_object_object_add(root,"legacyFilesRoot",json_object_new_string(path));
-    char tmp[PATH_MAX];int n=snprintf(tmp,sizeof(tmp),"%s.tmp",s->config_path);int rc=-1;
-    if(n>0&&(size_t)n<sizeof(tmp)&&json_object_to_file_ext(tmp,root,JSON_C_TO_STRING_PRETTY)==0&&rename(tmp,s->config_path)==0)rc=0;else unlink(tmp);
-    json_object_put(root);return rc;
+    int rc=write_json_config_with_fallback(s->config_path,root,JSON_C_TO_STRING_PRETTY);
+    json_object_put(root);
+    return rc;
 }
 
 static int persist_search_index_exclusions_config(cr_server*s,const cr_search_index_exclusions*x){
-    if(!s||!x||!s->config_path[0])return-1;
+    if(!s||!x||!s->config_path[0]){errno=EINVAL;return-1;}
     json_object*root=json_object_from_file(s->config_path);
-    if(!root||!json_object_is_type(root,json_type_object)){if(root)json_object_put(root);return-1;}
+    if(!root||!json_object_is_type(root,json_type_object)){if(root)json_object_put(root);if(errno==0)errno=EINVAL;return-1;}
     json_object*array=json_object_new_array();
-    if(!array){json_object_put(root);return-1;}
+    if(!array){json_object_put(root);errno=ENOMEM;return-1;}
     for(size_t i=0;i<x->count;i++)json_object_array_add(array,json_object_new_string(x->patterns[i]));
     json_object_object_add(root,"searchIndexExclusions",array);
-    char tmp[PATH_MAX];
-    int n=snprintf(tmp,sizeof(tmp),"%s.tmp",s->config_path);
-    int rc=-1;
-    if(n>0&&(size_t)n<sizeof(tmp)&&json_object_to_file_ext(tmp,root,JSON_C_TO_STRING_PRETTY)==0&&rename(tmp,s->config_path)==0)rc=0;else unlink(tmp);
+    int rc=write_json_config_with_fallback(s->config_path,root,JSON_C_TO_STRING_PRETTY);
     json_object_put(root);
     return rc;
 }
@@ -3892,14 +3891,20 @@ static int handle_server_settings_update(cr_session *s, const cr_packet *p) {
     }
 
     if (exclusions_changed && persist_search_index_exclusions_config(s->server, &exclusions)) {
-        log_msg("Could not persist search-index exclusions to %s", s->server->config_path);
+        int saved_errno=errno;
+        log_msg("Could not persist search-index exclusions to %s: %s",
+                s->server->config_path,
+                saved_errno?strerror(saved_errno):"unknown write error");
         rc = send_error(s, p->transaction_id, 1);
         goto done;
     }
 
     if (legacy_root_changed) {
         if ((legacy_root[0] && ensure_directory_tree(legacy_root)) || persist_legacy_files_root_config(s->server,legacy_root)) {
-            log_msg("Could not apply/persist legacy Files root '%s'",legacy_root);
+            int saved_errno=errno;
+            log_msg("Could not apply/persist legacy Files root '%s': %s",
+                    legacy_root,
+                    saved_errno?strerror(saved_errno):"unknown write error");
             rc=send_error(s,p->transaction_id,1);goto done;
         }
     }
@@ -5436,7 +5441,7 @@ static json_object *http_status_json(cr_server *s) {
     time_t now = time(NULL);
     int64_t uptime = now > s->started_at ? (int64_t)(now - s->started_at) : 0;
     json_object_object_add(root, "serverName", json_object_new_string(server_name));
-    json_object_object_add(root, "software", json_object_new_string("Carracho Server 1.0"));
+    json_object_object_add(root, "software", json_object_new_string("Carracho Server 1.0.5"));
     json_object_object_add(root, "uptimeSeconds", json_object_new_int64(uptime));
     json_object_object_add(root, "usersOnline", json_object_new_int64((int64_t)online));
     json_object_object_add(root, "maxConnections", json_object_new_int(max_connections));

@@ -24,6 +24,22 @@
 </head>
     <body>
         
+
+        <p><span class="header" lang="en">New in 1.0.5</span></p>
+        <ul>
+            <span class="newstext">
+                <li>Upgraded the persistent file-search index to schema version 3 with two-character terms in addition to trigrams, making short searches such as 7z use the SQLite index instead of falling back to a full entries-table scan.</li>
+                <li>Existing version-2 search databases are migrated in place by backfilling the new two-character terms, avoiding an unnecessary full filesystem rescan.</li>
+                <li>Improved indexed search planning on the native Linux server so SQLite starts from matching term postings and only evaluates candidate entries instead of scanning the complete path-ordered file table.</li>
+                <li>Modern authenticated file-search transfers can now batch up to 256 results per frame, greatly reducing socket and AEAD framing overhead for very large result sets while preserving the historical one-result framing used by Classic clients.</li>
+                <li>Added a native Search Index status protocol that reports whether an index is ready or rebuilding and, when available, how many searchable entries it contains. The macOS and Linux servers expose the same status to the administration client.</li>
+                <li>Added GET /api/v1/log?limit=200 to the HTTP Administration API so WebAdmin can read recent persistent server-log entries even when Server-Sent Events are unavailable.</li>
+                <li>Improved native Linux configuration persistence. Bot and server settings now fall back to rewriting an existing configuration file when an atomic rename is not permitted by the deployment directory, preventing otherwise valid administration changes from failing.</li>
+                <li>Improved Linux deployment ownership handling by resolving the actual carracho.service runtime account and ensuring live server and Bot configuration files remain writable by the running service.</li>
+                <li>Administrators can now disconnect the local Server Bot through the normal user-disconnect path; the Bot is disabled cleanly instead of returning the generic server error previously seen by administration clients.</li>
+                <li>User Info replies now carry an explicit Legacy-transport marker on both macOS and Linux, allowing modern clients to identify Classic sessions reliably even when operating-system, CPU, and client-version metadata are absent.</li>
+        </ul></span>
+
         <p><span class="header" lang="en">New in 1.0.4</span></p>
         <ul>
             <span class="newstext">

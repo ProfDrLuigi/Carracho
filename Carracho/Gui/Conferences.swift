@@ -908,8 +908,8 @@ extension ViewController {
         guard let member else {
             channelToggleOperatorButton.state = .off
             channelToggleSpeakButton.state = .off
-            channelToggleOperatorButton.image = sizedAssetImage(named: "Toggle Operator Mode Off", size: 16)
-            channelToggleSpeakButton.image = sizedAssetImage(named: "Toggle Speak Permission Off", size: 16)
+            channelToggleOperatorButton.image = sizedAssetImage(named: "Toggle Operator Mode Off", size: 20)
+            channelToggleSpeakButton.image = sizedAssetImage(named: "Toggle Speak Permission Off", size: 20)
             channelToggleOperatorButton.contentTintColor = nil
             channelToggleSpeakButton.contentTintColor = nil
             channelToggleOperatorButton.toolTip = L("Toggle Operator Mode")

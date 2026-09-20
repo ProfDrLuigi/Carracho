@@ -300,6 +300,26 @@ extension ViewController {
         return page
     }
 
+    func resetRemoteAdvancedStateForSessionChange() {
+        advancedHasUnsavedChanges = false
+        advancedBandwidthDirty = false
+        advancedSaveInProgress = false
+        advancedSaveStatusOverride = nil
+        advancedSaveStatusColor = nil
+        advancedRemoteCoreLoaded = false
+        advancedRemoteLegacyRootLoaded = false
+        advancedRemoteExclusionsLoaded = false
+        advancedRemoteBansLoaded = false
+        remoteAdvancedAuthenticationMode = nil
+
+        // Do not allow values from the previous connection to remain actionable while the
+        // next server is still loading its own administration state.
+        adminLegacyFilesRootField.stringValue = ""
+        adminSearchIndexExclusionsView.string = ""
+        adminIPRulesView.string = ""
+        updateAdvancedSaveUI()
+    }
+
     func markAdvancedDirty(bandwidth: Bool = false) {
         guard !advancedSaveInProgress else { return }
         advancedHasUnsavedChanges = true
@@ -330,19 +350,24 @@ extension ViewController {
             : serverBackend != nil
         let remoteReady = !client.isConnected || (
             advancedRemoteCoreLoaded && advancedRemoteLegacyRootLoaded &&
-            advancedRemoteExclusionsLoaded && advancedRemoteBansLoaded &&
-            remoteTransferUploadLimitBytesPerSecond != nil
+            advancedRemoteExclusionsLoaded && advancedRemoteBansLoaded
         )
         let editorEnabled = canEdit && !advancedSaveInProgress
 
         for field in [adminMaxConnectionsField, adminMaxConnectionsPerIPField,
                       adminMaxTransfersField, adminMaxTransfersPerUserField,
                       adminMaxFolderDepthField, adminLegacyFilesRootField,
-                      adminSearchIndexRebuildIntervalField, transferBandwidthField] {
+                      adminSearchIndexRebuildIntervalField] {
             field.isEnabled = editorEnabled
         }
         adminAuthenticationModePopup.isEnabled = editorEnabled
-        transferBandwidthUnitPopup.isEnabled = editorEnabled
+        let bandwidthEditable = editorEnabled && (
+            !client.isConnected ||
+            remoteTransferUploadLimitBytesPerSecond != nil ||
+            (currentWorkspace == .advanced && isRemoteAdministrator)
+        )
+        transferBandwidthField.isEnabled = bandwidthEditable
+        transferBandwidthUnitPopup.isEnabled = bandwidthEditable
         adminSearchIndexExclusionsView.isEditable = editorEnabled
         adminSearchIndexExclusionsView.isSelectable = true
         adminIPRulesView.isEditable = editorEnabled && client.isConnected
@@ -422,7 +447,12 @@ extension ViewController {
             let exclusions = try parseSearchIndexExclusions(adminSearchIndexExclusionsView.string)
             let rebuildIntervalHours = try parseUInt32(adminSearchIndexRebuildIntervalField,
                                                        name: L("Search-index rebuild interval"))
-            let bandwidth = try transferBandwidthBytesPerSecond()
+            let bandwidth: UInt64?
+            if client.isConnected {
+                bandwidth = advancedBandwidthDirty ? try transferBandwidthBytesPerSecond() : nil
+            } else {
+                bandwidth = try transferBandwidthBytesPerSecond()
+            }
             let bans = client.isConnected ? try parseBannedIPv4Addresses(adminIPRulesView.string) : []
 
             let previousMode: ServerAuthenticationMode
@@ -432,7 +462,6 @@ extension ViewController {
                 }
                 guard advancedRemoteCoreLoaded, advancedRemoteLegacyRootLoaded,
                       advancedRemoteExclusionsLoaded, advancedRemoteBansLoaded,
-                      remoteTransferUploadLimitBytesPerSecond != nil,
                       let loadedMode = remoteAdvancedAuthenticationMode else {
                     throw ServerStateError.invalidValue(L("Advanced settings are still loading from the connected server. Please try again in a moment."))
                 }
@@ -468,7 +497,7 @@ extension ViewController {
                                                   legacyRoot: legacyRoot,
                                                   exclusions: exclusions,
                                                   rebuildIntervalHours: rebuildIntervalHours,
-                                                  bandwidth: bandwidth)
+                                                  bandwidth: bandwidth ?? 0)
                 }
             }
 
@@ -616,7 +645,7 @@ extension ViewController {
                                            maxTransfers: UInt16, maxTransfersPerUser: UInt16,
                                            maxFolderDepth: UInt16, authenticationMode: ServerAuthenticationMode,
                                            legacyRoot: String, exclusions: [String],
-                                           rebuildIntervalHours: UInt32, bandwidth: UInt64,
+                                           rebuildIntervalHours: UInt32, bandwidth: UInt64?,
                                            bans: [ServerIPRestriction]) {
         let exclusionsData: Data
         do {
@@ -672,15 +701,17 @@ extension ViewController {
             group.leave()
         }
 
-        group.enter()
-        client.setTransferUploadBandwidthLimit(bytesPerSecond: bandwidth) { result in
-            switch result {
-            case let .success(snapshot):
-                lock.lock(); bandwidthSnapshot = snapshot; lock.unlock()
-                record(L("upload limit"))
-            case let .failure(error): record(L("upload limit"), error: error)
+        if let bandwidth {
+            group.enter()
+            client.setTransferUploadBandwidthLimit(bytesPerSecond: bandwidth) { result in
+                switch result {
+                case let .success(snapshot):
+                    lock.lock(); bandwidthSnapshot = snapshot; lock.unlock()
+                    record(L("upload limit"))
+                case let .failure(error): record(L("upload limit"), error: error)
+                }
+                group.leave()
             }
-            group.leave()
         }
 
         group.enter()
@@ -794,8 +825,10 @@ extension ViewController {
             LegacyServerSettingField.maxFolderDownloadDepth,
             LegacyServerSettingField.searchIndexRebuildIntervalHours,
         ]
-        client.requestServerSettings(fields: fields) { [weak self] result in
-            guard let self else { return }
+        let requestClient = client
+        requestClient.requestServerSettings(fields: fields) { [weak self, weak requestClient] result in
+            guard let self, let requestClient,
+                  self.client === requestClient, requestClient.isConnected else { return }
             do {
                 let values = try result.get()
                 guard let auth = values[LegacyServerSettingField.authenticationMode],
@@ -1145,8 +1178,10 @@ extension ViewController {
                 return
             }
             adminLegacyFilesRootStatusLabel.stringValue = L("Loading Classic / Legacy File Root…")
-            client.requestServerSettings(fields: [LegacyServerSettingField.legacyFilesRoot]) { [weak self] result in
-                guard let self else { return }
+            let requestClient = client
+            requestClient.requestServerSettings(fields: [LegacyServerSettingField.legacyFilesRoot]) { [weak self, weak requestClient] result in
+                guard let self, let requestClient,
+                      self.client === requestClient, requestClient.isConnected else { return }
                 do {
                     let values = try result.get()
                     guard let data = values[LegacyServerSettingField.legacyFilesRoot],
@@ -1262,8 +1297,10 @@ extension ViewController {
                 return
             }
             adminSearchIndexExclusionsStatusLabel.stringValue = L("Loading exclusions…")
-            client.requestServerSettings(fields: [LegacyServerSettingField.searchIndexExclusions]) { [weak self] result in
-                guard let self else { return }
+            let requestClient = client
+            requestClient.requestServerSettings(fields: [LegacyServerSettingField.searchIndexExclusions]) { [weak self, weak requestClient] result in
+                guard let self, let requestClient,
+                      self.client === requestClient, requestClient.isConnected else { return }
                 do {
                     let values = try result.get()
                     guard let data = values[LegacyServerSettingField.searchIndexExclusions] else {
@@ -1355,8 +1392,10 @@ extension ViewController {
             return
         }
         adminBanStatusLabel.stringValue = L("Loading ban rules…")
-        client.requestServerSettings(fields: [LegacyServerSettingField.allowDenyIPList]) { [weak self] result in
-            guard let self else { return }
+        let requestClient = client
+        requestClient.requestServerSettings(fields: [LegacyServerSettingField.allowDenyIPList]) { [weak self, weak requestClient] result in
+            guard let self, let requestClient,
+                  self.client === requestClient, requestClient.isConnected else { return }
             do {
                 let values = try result.get()
                 guard let data = values[LegacyServerSettingField.allowDenyIPList] else {

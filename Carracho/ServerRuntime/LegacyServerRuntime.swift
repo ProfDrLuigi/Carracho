@@ -1854,7 +1854,7 @@ final class LegacyServerRuntime {
             let ownActiveTransfers = session.userID.map { activeFileTransfersByUser[$0, default: 0] } ?? 0
             stateLock.unlock()
             let ticks = began.map { UInt64(max(0, Date().timeIntervalSince($0)) * 60) } ?? 0
-            let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0"
+            let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.5"
             try session.sendAuthenticated(LegacyPacket(command: LegacyCommand.serverInfo,
                                                         transactionID: packet.transactionID,
                                                         fields: [

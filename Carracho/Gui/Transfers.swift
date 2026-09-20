@@ -1991,8 +1991,10 @@ extension ViewController {
         }
         guard !transferMonitorRequestInFlight else { return }
         transferMonitorRequestInFlight = true
-        client.requestTransferMonitor { [weak self] result in
-            guard let self else { return }
+        let requestClient = client
+        requestClient.requestTransferMonitor { [weak self, weak requestClient] result in
+            guard let self, let requestClient,
+                  self.client === requestClient, requestClient.isConnected else { return }
             self.transferMonitorRequestInFlight = false
             switch result {
             case let .success(snapshot):
@@ -2219,8 +2221,12 @@ extension ViewController {
                     setTransferBandwidthControlsEnabled(true)
                     transferBandwidthValueLabel.stringValue = Self.transferBandwidthDisplay(limit)
                 } else {
-                    setTransferBandwidthControlsEnabled(false)
-                    transferBandwidthValueLabel.stringValue = L("Unavailable")
+                    let editableFallback = currentWorkspace == .advanced
+                        && remotePermissionEnabled(LegacyAccountPermissionBit.editAdvancedSettings)
+                    setTransferBandwidthControlsEnabled(editableFallback)
+                    transferBandwidthValueLabel.stringValue = editableFallback
+                        ? L("Current value unavailable · enter a value to change")
+                        : L("Unavailable")
                 }
             } else {
                 setTransferBandwidthControlsEnabled(false)

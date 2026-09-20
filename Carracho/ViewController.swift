@@ -2574,7 +2574,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
             navigation.bottomAnchor.constraint(equalTo: scrollContent.bottomAnchor),
             scrollContent.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
         ])
-        let version = infoLabel(L("Carracho 1.0"))
+        let version = infoLabel(L("Carracho 1.0.5"))
         version.font = .systemFont(ofSize: 10)
         appearancePopup.removeAllItems()
         appearancePopup.addItems(withTitles: [L("System Appearance"), L("Light"), L("Dark")])
@@ -5610,7 +5610,14 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         }
         renderSession()
         if currentWorkspace == .accounts { reloadRemoteAccounts() }
-        if currentWorkspace == .advanced { reloadBanManagement() }
+        if currentWorkspace == .advanced {
+            reloadAdvancedSettings()
+            reloadTransferBandwidthAdministration()
+            reloadLegacyFilesRoot()
+            reloadSearchIndexExclusions()
+            reloadBanManagement()
+            refreshAdvancedSearchIndexStatus()
+        }
         client.requestServerInfo { [weak self] infoResult in
             guard let self else { return }
             switch infoResult {
@@ -5698,6 +5705,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         fileSearchField.stringValue = ""
         fileTransferLabel.stringValue = ""
         clearRemoteTransferMonitorState()
+        resetRemoteAdvancedStateForSessionChange()
         lastChannels = []
         lastNewsgroups = []
         newsClient = nil
