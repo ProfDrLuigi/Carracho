@@ -17,8 +17,10 @@ extension ViewController {
         let flatNews = NSButton(title: L("Classic News"), target: self, action: #selector(showFlatNewsManager(_:)))
         flatNews.controlSize = .small
         flatNews.bezelStyle = .inline
-        flatNews.image = symbolImage("arrow.up.right.square", fallback: NSImage.followLinkFreestandingTemplateName)
+        flatNews.image = sizedAssetImage(named: "Classic News", size: 16)
         flatNews.imagePosition = .imageTrailing
+        flatNews.imageScaling = .scaleNone
+        flatNews.contentTintColor = nil
         flatNews.toolTip = L("Open the historical Flat News view")
         flatNews.setAccessibilityLabel(L("Open Classic Flat News"))
         newsFontSizePopup.controlSize = .small

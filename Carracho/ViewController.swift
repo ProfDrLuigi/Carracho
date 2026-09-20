@@ -2016,7 +2016,11 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         styleIconButton(newsThreadActionsButton, symbol: "ellipsis", help: L("Topic actions"))
         newsThreadActionsButton.target = self
         newsThreadActionsButton.action = #selector(showNewsThreadActions(_:))
-        styleIconButton(newsRefreshButton, symbol: "arrow.clockwise", help: L("Refresh News"))
+        styleAssetIconButton(newsRefreshButton,
+                             asset: "Refresh",
+                             help: L("Refresh News"),
+                             imageSize: 16,
+                             buttonSize: 28)
         newsRefreshButton.target = self
         newsRefreshButton.action = #selector(refreshCurrentNews(_:))
 

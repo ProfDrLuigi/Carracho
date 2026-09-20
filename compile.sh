@@ -13,6 +13,27 @@ HTTP_ENV="$LIVE_ETC/carracho-server.env"
 SYSTEMD_DROPIN_DIR="/etc/systemd/system/carracho.service.d"
 SYSTEMD_DROPIN="$SYSTEMD_DROPIN_DIR/webadmin.conf"
 
+resolve_service_identity() {
+    local user=""
+    if systemctl cat carracho.service >/dev/null 2>&1; then
+        user="$(systemctl show -p User --value carracho.service 2>/dev/null || true)"
+        [ -n "$user" ] || user="root"
+    elif id pi >/dev/null 2>&1; then
+        user="pi"
+    else
+        user="root"
+    fi
+
+    if ! id "$user" >/dev/null 2>&1; then
+        echo "error: Runtime user '$user' from carracho.service does not exist" >&2
+        return 1
+    fi
+
+    local group
+    group="$(id -gn "$user")"
+    printf '%s:%s\n' "$user" "$group"
+}
+
 merge_json_config() {
     local defaults="$1"
     local live="$2"
@@ -206,7 +227,19 @@ PY
 echo "==> Deploying to /opt/carracho"
 cp -rf .build/linux/* /opt/carracho
 rm -rf .build
-chown pi:pi -R /opt/carracho
+
+SERVICE_IDENTITY="$(resolve_service_identity)"
+SERVICE_USER="${SERVICE_IDENTITY%%:*}"
+SERVICE_GROUP="${SERVICE_IDENTITY#*:}"
+echo "==> Runtime identity: $SERVICE_USER:$SERVICE_GROUP"
+chown "$SERVICE_USER:$SERVICE_GROUP" -R /opt/carracho
+install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0755 "$LIVE_ETC"
+for config in "$LIVE_ETC/carracho-server.json" "$LIVE_ETC/carracho-bot.json"; do
+    if [ -f "$config" ]; then
+        chown "$SERVICE_USER:$SERVICE_GROUP" "$config"
+        chmod u+rw "$config"
+    fi
+done
 
 echo "==> Configuring WebAdmin token/systemd"
 ensure_http_admin_token

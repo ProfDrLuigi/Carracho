@@ -1475,6 +1475,35 @@ static int bot_load_configuration(cr_server*s,cr_bot_configuration*out){
     json_object_put(root);return 0;
 }
 
+static int bot_write_config_json(cr_server*s,json_object*root){
+    if(!s||!root||!s->bot_config_path[0]){errno=EINVAL;return-1;}
+    char tmp[PATH_MAX];
+    int n=snprintf(tmp,sizeof(tmp),"%s.tmp.%ld",s->bot_config_path,(long)getpid());
+    int saved_errno=0;
+    if(n>0&&(size_t)n<sizeof(tmp)&&json_object_to_file_ext(tmp,root,JSON_C_TO_STRING_PRETTY)==0){
+        (void)chmod(tmp,0600);
+        if(rename(tmp,s->bot_config_path)==0)return 0;
+        saved_errno=errno;
+        unlink(tmp);
+    }else{
+        saved_errno=errno?errno:EIO;
+        if(n>0&&(size_t)n<sizeof(tmp))unlink(tmp);
+    }
+
+    if(access(s->bot_config_path,F_OK)==0&&
+       json_object_to_file_ext(s->bot_config_path,root,JSON_C_TO_STRING_PRETTY)==0){
+        (void)chmod(s->bot_config_path,0600);
+        log_msg("Warning: atomic Bot config replace unavailable for %s; rewrote existing file in place",
+                s->bot_config_path);
+        return 0;
+    }
+
+    if(errno==0)errno=saved_errno?saved_errno:EIO;
+    log_msg("Could not persist Bot configuration to %s: %s",
+            s->bot_config_path,strerror(errno));
+    return-1;
+}
+
 static int bot_store_enabled(cr_server*s,int enabled){
     if(!s||!s->bot_config_path[0])return-1;
     json_object*root=NULL;
@@ -1482,11 +1511,7 @@ static int bot_store_enabled(cr_server*s,int enabled){
     else if(errno==ENOENT)root=json_object_new_object();
     if(!root||!json_object_is_type(root,json_type_object)){if(root)json_object_put(root);return-1;}
     json_object_object_add(root,"enabled",json_object_new_boolean(enabled?1:0));
-    char tmp[PATH_MAX];int n=snprintf(tmp,sizeof(tmp),"%s.tmp.%ld",s->bot_config_path,(long)getpid());int rc=-1;
-    if(n>0&&(size_t)n<sizeof(tmp)&&json_object_to_file_ext(tmp,root,JSON_C_TO_STRING_PRETTY)==0){
-        (void)chmod(tmp,0600);
-        if(rename(tmp,s->bot_config_path)==0)rc=0;else unlink(tmp);
-    }
+    int rc=bot_write_config_json(s,root);
     json_object_put(root);return rc;
 }
 
@@ -1499,11 +1524,7 @@ static int bot_store_greeting(cr_server*s,int enabled,const uint8_t*template,siz
     if(!root||!json_object_is_type(root,json_type_object)){if(root)json_object_put(root);return-1;}
     json_object_object_add(root,"greetNewUsers",json_object_new_boolean(enabled?1:0));
     json_object_object_add(root,"greetingTemplate",json_object_new_string_len((const char*)template,(int)template_len));
-    char tmp[PATH_MAX];int n=snprintf(tmp,sizeof(tmp),"%s.tmp.%ld",s->bot_config_path,(long)getpid());int rc=-1;
-    if(n>0&&(size_t)n<sizeof(tmp)&&json_object_to_file_ext(tmp,root,JSON_C_TO_STRING_PRETTY)==0){
-        (void)chmod(tmp,0600);
-        if(rename(tmp,s->bot_config_path)==0)rc=0;else unlink(tmp);
-    }
+    int rc=bot_write_config_json(s,root);
     json_object_put(root);return rc;
 }
 
@@ -1658,14 +1679,7 @@ static int bot_store_command_rules(cr_server*s,const uint8_t*data,size_t len){
     }
     json_object_object_add(root,"commandRules",array);
 
-    char tmp[PATH_MAX];
-    int n=snprintf(tmp,sizeof(tmp),"%s.tmp.%ld",s->bot_config_path,(long)getpid());
-    int rc=-1;
-    if(n>0&&(size_t)n<sizeof(tmp)&&json_object_to_file_ext(tmp,root,JSON_C_TO_STRING_PRETTY)==0){
-        (void)chmod(tmp,0600);
-        if(rename(tmp,s->bot_config_path)==0) rc=0;
-        else unlink(tmp);
-    }
+    int rc=bot_write_config_json(s,root);
     json_object_put(root);
     return rc;
 }
@@ -3491,10 +3505,39 @@ static int persist_search_index_exclusions_config(cr_server*s,const cr_search_in
     return rc;
 }
 
+static int write_json_config_with_fallback(const char*path,json_object*root,int flags){
+    if(!path||!*path||!root){errno=EINVAL;return-1;}
+    char tmp[PATH_MAX];
+    int n=snprintf(tmp,sizeof(tmp),"%s.tmp.%ld",path,(long)getpid());
+    int saved_errno=0;
+    if(n>0&&(size_t)n<sizeof(tmp)){
+        if(json_object_to_file_ext(tmp,root,flags)==0){
+            if(rename(tmp,path)==0)return 0;
+            saved_errno=errno;
+            unlink(tmp);
+        }else{
+            saved_errno=errno;
+            unlink(tmp);
+        }
+    }else saved_errno=ENAMETOOLONG;
+
+    /* Some deployments keep /opt/carracho/etc non-writable to the service account
+       while the existing JSON file itself is writable. Atomic rename needs directory
+       write permission; a direct rewrite does not. Preserve the atomic path whenever
+       possible, but do not reject otherwise valid administration updates solely for
+       that directory-layout mismatch. */
+    if(access(path,F_OK)==0&&json_object_to_file_ext(path,root,flags)==0){
+        log_msg("Warning: atomic config replace unavailable for %s; rewrote existing file in place",path);
+        return 0;
+    }
+    if(errno==0)errno=saved_errno?saved_errno:EIO;
+    return-1;
+}
+
 static int persist_startup_configuration_config(cr_server*s){
-    if(!s||!s->config_path[0])return-1;
+    if(!s||!s->config_path[0]){errno=EINVAL;return-1;}
     json_object*root=json_object_from_file(s->config_path);
-    if(!root||!json_object_is_type(root,json_type_object)){if(root)json_object_put(root);return-1;}
+    if(!root||!json_object_is_type(root,json_type_object)){if(root)json_object_put(root);if(errno==0)errno=EINVAL;return-1;}
 
     pthread_mutex_lock(&s->state.mutex);
     json_object_object_add(root,"serverName",json_object_new_string(s->state.identity.name));
@@ -3527,9 +3570,29 @@ static int persist_startup_configuration_config(cr_server*s){
     }
     pthread_mutex_unlock(&s->state.mutex);
 
-    char tmp[PATH_MAX];int n=snprintf(tmp,sizeof(tmp),"%s.tmp",s->config_path);int rc=-1;
-    if(n>0&&(size_t)n<sizeof(tmp)&&json_object_to_file_ext(tmp,root,JSON_C_TO_STRING_PRETTY)==0&&rename(tmp,s->config_path)==0)rc=0;else unlink(tmp);
+    int rc=write_json_config_with_fallback(s->config_path,root,JSON_C_TO_STRING_PRETTY);
     json_object_put(root);return rc;
+}
+
+static int setting_requires_startup_config_mirror(uint32_t field){
+    switch(field){
+        case 0x05: /* server name */
+        case 0x08: /* description */
+        case 0x09: /* control port */
+        case 0x0c: /* news expiration */
+        case 0x20: /* max simultaneous transfers */
+        case 0x21: /* max transfers per user */
+        case 0x22: /* max connections */
+        case 0x23: /* max connections per IP */
+        case 0x35: /* max folder depth */
+        case SETTING_LEGACY_FILES_ROOT:
+        case SETTING_AUTHENTICATION_MODE:
+        case SETTING_SEARCH_INDEX_REBUILD_INTERVAL:
+        case SETTING_SEARCH_INDEX_EXCLUSIONS:
+            return 1;
+        default:
+            return 0;
+    }
 }
 
 static const char*tracker_bandwidth_title(uint8_t code){
@@ -3757,7 +3820,7 @@ static void refresh_connected_account_state(cr_server*server){
 
 static int handle_server_settings_update(cr_session *s, const cr_packet *p) {
     int tracker_changed = 0, exclusions_changed = 0, groups_changed = 0, legacy_root_changed = 0;
-    int rebuild_interval_changed = 0;
+    int rebuild_interval_changed = 0, startup_config_changed = 0;
     uint32_t rebuild_interval_hours = 0;
     int rc = -1;
     cr_search_index_exclusions exclusions;
@@ -3776,6 +3839,8 @@ static int handle_server_settings_update(cr_session *s, const cr_packet *p) {
         }
         if (field->type == 0x30 || field->type == 0x32 || field->type == 0x33)
             tracker_changed = 1;
+        if (setting_requires_startup_config_mirror(field->type))
+            startup_config_changed = 1;
         if (field->type == SETTING_SEARCH_INDEX_EXCLUSIONS) {
             if (decode_search_index_exclusions_field(field, &exclusions)) {
                 rc = send_error(s, p->transaction_id, 1);
@@ -3823,8 +3888,11 @@ static int handle_server_settings_update(cr_session *s, const cr_packet *p) {
         goto done;
     }
 
-    if (persist_startup_configuration_config(s->server)) {
-        log_msg("Could not persist startup configuration mirror to %s", s->server->config_path);
+    if (startup_config_changed && persist_startup_configuration_config(s->server)) {
+        int saved_errno=errno;
+        log_msg("Could not persist startup configuration mirror to %s: %s",
+                s->server->config_path,
+                saved_errno?strerror(saved_errno):"unknown write error");
         rc = send_error(s, p->transaction_id, 1);
         goto done;
     }
