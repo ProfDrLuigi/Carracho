@@ -16,15 +16,35 @@ Connections between the new Carracho client and a modern Carracho server use a n
 
 The modern transport protects far more than login traffic: chat/control packets, file transfers, News transfers, file search, banners and other modern transfer operations all use authenticated encrypted framing. The client also shows the negotiated cipher in the server information panel, so a modern connection can be identified as `AES-256-GCM` rather than the historical transport.
 
-See [Security and modern encryption](#security-and-modern-encryption) below for the protocol details.
+See the collapsible **Security and modern encryption** section below for the protocol details.
 
-## The new Carracho client
+
+## At a glance
+
+
+| Component | Implementation | Purpose |
+| --- | --- | --- |
+| **Carracho** | Swift / AppKit | Native macOS client |
+| **Carracho Server** | Swift | Native macOS server |
+| **Carracho Server for Linux** | C | Headless server for Linux deployments |
+| **Carracho Tracker** | C | Standalone server-directory service |
+| **Classic compatibility** | Shared protocol layer | Connects modern Carracho with original/Legacy peers where supported |
+
+The modern client combines chat, files, News, private messages, trackers and server administration in one application. Longer feature and implementation notes are grouped below so the README stays useful as an overview instead of becoming a 500-line wall of text.
+
+
+<details open>
+<summary><strong>The new Carracho client</strong></summary>
+
 
 The new client is designed around one main window with a persistent sidebar. Servers, trackers and workspaces stay visible while the active content changes, so the application behaves more like a modern communication client than a collection of separate utility windows.
 
 <img width="2032" height="1281" alt="image" src="https://github.com/user-attachments/assets/1e3d2341-d638-48ac-b913-2e05d1698cf8" />
 
-### Server bookmarks and connections
+
+<details>
+<summary><strong>Server bookmarks and connections</strong></summary>
+
 
 Servers are stored as bookmarks in the sidebar. A bookmark contains the server address, port, account, optional nickname/status overrides and connection behaviour.
 
@@ -44,11 +64,21 @@ On a fresh installation a ready-to-use bookmark for `carracho.istation.pw` is cr
 
 <img width="473" height="542" alt="image" src="https://github.com/user-attachments/assets/af177fb6-a6c3-442f-8fcc-989339e69766" />
 
-### Overview
+
+</details>
+
+<details>
+<summary><strong>Overview</strong></summary>
+
 
 The Overview workspace is the landing page for the selected server. It keeps the important connection and server state close at hand and acts as the starting point for the rest of the client.
 
-### Chat rooms
+
+</details>
+
+<details>
+<summary><strong>Chat rooms</strong></summary>
+
 
 The **Chat Rooms** workspace provides persistent room navigation and live conversation inside the main window.
 
@@ -67,7 +97,12 @@ Features that require a modern server are hidden when the connected server does 
 
 <img width="2032" height="1281" alt="image" src="https://github.com/user-attachments/assets/b2fe30a2-ed90-4196-96d8-865fba9ab7dd" />
 
-### Files
+
+</details>
+
+<details>
+<summary><strong>Files</strong></summary>
+
 
 The **Files** workspace is a complete browser for the server's published file hierarchy.
 
@@ -89,7 +124,12 @@ Modern and Classic clients can also be given **separate file roots** when desire
 
 <img width="2032" height="1281" alt="image" src="https://github.com/user-attachments/assets/d739dc00-0d82-4484-b45c-aa0e9c160861" />
 
-### Transfer Monitor
+
+</details>
+
+<details>
+<summary><strong>Transfer Monitor</strong></summary>
+
 
 All transfers are collected in a dedicated **Transfers** workspace instead of disappearing into background windows.
 
@@ -105,7 +145,12 @@ The monitor distinguishes between the current Mac's transfers and, when the acco
 
 <img width="2032" height="1281" alt="image" src="https://github.com/user-attachments/assets/df8ce88b-bbef-4993-9468-2fb84558304d" />
 
-### News
+
+</details>
+
+<details>
+<summary><strong>News</strong></summary>
+
 
 The modern **News** workspace turns Carracho news into a forum-style discussion system rather than a flat stream.
 
@@ -127,7 +172,12 @@ A separate **Classic News** view keeps the traditional flat-news stream availabl
 
 <img width="2032" height="1281" alt="image" src="https://github.com/user-attachments/assets/8d22338e-01d3-4641-935e-a3cd708e6381" />
 
-### Message Center
+
+</details>
+
+<details>
+<summary><strong>Message Center</strong></summary>
+
 
 Private communication lives in the **Message Center** rather than transient pop-up windows.
 
@@ -145,7 +195,12 @@ Offline messages on the modern server are stored in SQLite with authenticated en
 
 <img width="2032" height="1281" alt="image" src="https://github.com/user-attachments/assets/4cd4c78e-08d5-46e7-aa8d-bf5fcaecba78" />
 
-### Users and presence
+
+</details>
+
+<details>
+<summary><strong>Users and presence</strong></summary>
+
 
 The client presents connected users as people rather than protocol records. Depending on server capabilities it can display and update:
 
@@ -159,7 +214,12 @@ The client presents connected users as people rather than protocol records. Depe
 
 Accounts with the appropriate rights can also disconnect or ban users and send broadcasts.
 
-### Tracker browser
+
+</details>
+
+<details>
+<summary><strong>Tracker browser</strong></summary>
+
 
 Trackers provide a decentralized server directory, and the new client gives them a proper browser in the sidebar.
 
@@ -169,7 +229,12 @@ A fresh client starts with `carracho.istation.pw` as its initial tracker. As wit
 
 <img width="1636" height="980" alt="image" src="https://github.com/user-attachments/assets/33c42b60-9306-4258-ac8d-d5ae97373dc1" />
 
-### Administration
+
+</details>
+
+<details>
+<summary><strong>Administration</strong></summary>
+
 
 Administration is integrated into the same client. Pages appear according to the permissions of the connected account, instead of forcing administrators into a separate tool.
 
@@ -190,7 +255,12 @@ The permission model also includes new account-level rights such as **Post News*
 
 <img width="1636" height="980" alt="image" src="https://github.com/user-attachments/assets/4df5ed2f-72f2-41ca-91ab-c70f3a2b1ff3" />
 
-### Server Bot
+
+</details>
+
+<details>
+<summary><strong>Server Bot</strong></summary>
+
 
 Modern Carracho servers include a **local server Bot** that runs as a server-owned session rather than as a normal network login. Administrators can control it from the **Bot** page in the client without editing configuration files by hand.
 
@@ -243,7 +313,12 @@ Feed state is persistent. On the first successful poll of a newly configured fee
 
 RSS fetching is deliberately restricted to HTTP/HTTPS and rejects local or reserved network destinations, unsafe redirects, oversized responses and stalled requests. This allows administrators to add external feeds without turning the Bot into an accidental internal-network fetch proxy.
 
-### Settings, appearance and notifications
+
+</details>
+
+<details>
+<summary><strong>Settings, appearance and notifications</strong></summary>
+
 
 The client has its own settings window with **General** and **Sounds** sections.
 
@@ -254,7 +329,15 @@ The application also provides system/light/dark appearance choices, English and 
 <img width="758" height="760" alt="image" src="https://github.com/user-attachments/assets/2edbb6ee-d60a-4870-9c9e-548c44ba99ed" />
 <img width="776" height="765" alt="image" src="https://github.com/user-attachments/assets/7db9d6f1-fb7d-435d-ba51-1a8cecb1eada" />
 
-## Security and modern encryption
+
+</details>
+
+</details>
+
+
+<details>
+<summary><strong>Security and modern encryption</strong></summary>
+
 
 Security is a first-class part of the new Carracho client/server protocol. When two modern Carracho peers connect, the client negotiates the modern authenticated transport automatically. It does not merely replace one cipher with another: the handshake, key separation, frame authentication and password storage model are all different from the historical transport.
 
@@ -309,7 +392,13 @@ For a modern client talking to a modern server, Carracho provides authenticated 
 
 This is **transport encryption between client and server**, not end-to-end encryption between individual users. The server necessarily processes chat, News, files and messages in order to provide the Carracho service.
 
-## Server options
+
+</details>
+
+
+<details>
+<summary><strong>Server options</strong></summary>
+
 
 The repository contains two implementations of the current Carracho server:
 
@@ -419,7 +508,13 @@ For example:
 
 The SQLite databases remain in the fixed `db/` directory beside the server installation. The published file trees are independent of the database location.
 
-## Tracker
+
+</details>
+
+
+<details>
+<summary><strong>Tracker</strong></summary>
+
 
 <img width="1032" height="804" alt="image" src="https://github.com/user-attachments/assets/a5ca73e7-2b46-4077-8bd1-22d96825d375" />
 
@@ -439,7 +534,13 @@ or start the compiled tracker directly:
 
 Server registrations expire when they are no longer refreshed.
 
-## A note about Classic Carracho compatibility
+
+</details>
+
+
+<details>
+<summary><strong>A note about Classic Carracho compatibility</strong></summary>
+
 
 Compatibility with original Carracho software is intentionally treated as a bridge, not as the definition of the new project.
 
@@ -455,7 +556,13 @@ Classic connections use the historical transport and the limits of the historica
 
 Servers can also be configured as `modernOnly`. In that mode the compatibility password material required by original clients is not retained, so Classic authentication is deliberately unavailable.
 
-## Building the macOS client
+
+</details>
+
+
+<details>
+<summary><strong>Building the macOS client</strong></summary>
+
 
 Requirements: macOS with Xcode.
 
@@ -470,7 +577,13 @@ For normal development, open `Carracho.xcodeproj` and run the shared **Carracho*
 
 The project currently targets macOS 10.15 or newer.
 
-## Repository layout
+
+</details>
+
+
+<details>
+<summary><strong>Repository layout</strong></summary>
+
 
 ```text
 Carracho/
@@ -487,7 +600,13 @@ Analysis/spec/        Protocol and server documentation
 Analysis/tests/       Swift and native integration/regression tests
 ```
 
-## Tests
+
+</details>
+
+
+<details>
+<summary><strong>Tests</strong></summary>
+
 
 Run the Swift/reference protocol suite:
 
@@ -509,7 +628,13 @@ make release-check
 
 The native C server and tracker are expected to compile cleanly with `-Wall -Wextra -Wpedantic -Werror`.
 
-## Protocol and implementation documentation
+
+</details>
+
+
+<details>
+<summary><strong>Protocol and implementation documentation</strong></summary>
+
 
 Detailed implementation notes live under `Analysis/spec/`.
 
@@ -522,3 +647,5 @@ Useful starting points are:
 - `Analysis/spec/MODERN_SERVER_STATE.md`
 
 These documents describe the wire protocol, persistence model and compatibility work in much more detail than the user-facing overview above.
+
+</details>
