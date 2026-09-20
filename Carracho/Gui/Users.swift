@@ -322,6 +322,9 @@ extension ViewController {
         if hasExtendedInfo {
             let loginTimeValue = info.loginTime.map { Self.macDateString($0) } ?? "—"
             let onlineValue = loginDate.map { liveDurationString(openedAt.timeIntervalSince($0)) } ?? "—"
+            let legacyClient = info.isLegacyTransport || listEntry.isLegacyTransport
+            let operatingSystemValue = info.operatingSystem ?? (legacyClient ? "Mac OS Classic" : "—")
+            let cpuArchitectureValue = info.cpuArchitecture ?? (legacyClient ? "PPC / 68000" : "—")
             let clientVersionValue: String
             if let version = info.clientVersion, let build = info.clientBuild {
                 clientVersionValue = "\(version) (Build \(build))"
@@ -330,7 +333,7 @@ extension ViewController {
             } else if let build = info.clientBuild {
                 clientVersionValue = "Build \(build)"
             } else {
-                clientVersionValue = "—"
+                clientVersionValue = legacyClient ? "Legacy" : "—"
             }
 
             let idleRow = valueRowWithField("Idle", idleValue)
@@ -345,8 +348,8 @@ extension ViewController {
             ], spacing: 8)
             let rightColumn = verticalStack([
                 onlineRow.row,
-                valueRow("Operating system", info.operatingSystem ?? "—", selectable: true),
-                valueRow("CPU architecture", info.cpuArchitecture ?? "—", selectable: true),
+                valueRow("Operating system", operatingSystemValue, selectable: true),
+                valueRow("CPU architecture", cpuArchitectureValue, selectable: true),
                 valueRow("Carracho client", clientVersionValue, selectable: true),
             ], spacing: 8)
             let columns = horizontalStack([leftColumn, rightColumn], spacing: 20)

@@ -17,6 +17,10 @@ extension ViewController {
         privateMessageMarkReadButton.action = #selector(markAllPrivateMessagesRead(_:))
         privateMessageMarkReadButton.controlSize = .small
         privateMessageMarkReadButton.bezelStyle = .inline
+        privateMessageMarkReadButton.image = sizedAssetImage(named: "Mark All Read", size: 16)
+        privateMessageMarkReadButton.imagePosition = .imageLeading
+        privateMessageMarkReadButton.imageScaling = .scaleNone
+        privateMessageMarkReadButton.contentTintColor = nil
         privateMessageNewButton.target = self
         privateMessageNewButton.action = #selector(showNewPrivateMessageMenu(_:))
         privateMessageNewButton.controlSize = .small
@@ -49,6 +53,9 @@ extension ViewController {
         privateMessageSearchField.target = self
         privateMessageSearchField.action = #selector(privateMessageSearchChanged(_:))
         privateMessageSearchField.sendsSearchStringImmediately = true
+        if let searchCell = privateMessageSearchField.cell as? NSSearchFieldCell {
+            searchCell.searchButtonCell?.image = sizedAssetImage(named: "Search", size: 14)
+        }
         privateMessageSearchField.translatesAutoresizingMaskIntoConstraints = false
 
         configure(table: privateMessageConversationTable, columns: [("conversation", "", 280)])
@@ -102,17 +109,20 @@ extension ViewController {
         privateMessageClearChatButton.action = #selector(clearSelectedPrivateChat(_:))
         privateMessageClearChatButton.controlSize = .small
         privateMessageClearChatButton.bezelStyle = .inline
-        privateMessageClearChatButton.image = symbolImage("eraser", fallback: NSImage.removeTemplateName)
+        privateMessageClearChatButton.image = sizedAssetImage(named: "Clear", size: 16)
         privateMessageClearChatButton.imagePosition = .imageLeading
+        privateMessageClearChatButton.imageScaling = .scaleNone
+        privateMessageClearChatButton.contentTintColor = nil
         privateMessageClearChatButton.toolTip = L("Remove all messages from this chat but keep the conversation")
         privateMessageClearChatButton.isHidden = true
         privateMessageDeleteChatButton.target = self
         privateMessageDeleteChatButton.action = #selector(deleteSelectedPrivateChat(_:))
         privateMessageDeleteChatButton.controlSize = .small
         privateMessageDeleteChatButton.bezelStyle = .inline
-        privateMessageDeleteChatButton.image = symbolImage("trash", fallback: NSImage.trashEmptyName)
+        privateMessageDeleteChatButton.image = sizedAssetImage(named: "Trash", size: 16)
         privateMessageDeleteChatButton.imagePosition = .imageLeading
-        privateMessageDeleteChatButton.contentTintColor = .systemRed
+        privateMessageDeleteChatButton.imageScaling = .scaleNone
+        privateMessageDeleteChatButton.contentTintColor = nil
         privateMessageDeleteChatButton.toolTip = L("Delete this chat from Message Center")
         privateMessageDeleteChatButton.isHidden = true
         let headerLabels = verticalStack([privateMessageHeaderNameLabel, privateMessageHeaderStatusLabel], spacing: 2)
@@ -562,9 +572,9 @@ extension ViewController {
 
     func offlineMessageCategoryCell() -> NSView {
         let avatar = NSImageView()
-        avatar.image = symbolImage("tray.full.fill", fallback: NSImage.shareTemplateName)
-        avatar.imageScaling = .scaleProportionallyDown
-        avatar.contentTintColor = CarrachoTheme.secondaryText
+        avatar.image = sizedAssetImage(named: "Inbox", size: 30)
+        avatar.imageScaling = .scaleNone
+        avatar.contentTintColor = nil
         avatar.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
             avatar.widthAnchor.constraint(equalToConstant: 36),
@@ -951,7 +961,7 @@ extension ViewController {
         if selectedOfflineMessages {
             privateMessageClearChatButton.isHidden = true
             privateMessageDeleteChatButton.isHidden = true
-            privateMessageHeaderAvatar.image = symbolImage("tray.full.fill", fallback: NSImage.shareTemplateName)
+            privateMessageHeaderAvatar.image = sizedAssetImage(named: "Inbox", size: 30)
             privateMessageHeaderNameLabel.stringValue = L("Offline Messages")
             let count = offlineMessageCenterMessages.count
             privateMessageHeaderStatusLabel.stringValue = count == 1

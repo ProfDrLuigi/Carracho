@@ -153,6 +153,7 @@ struct LegacyUserInfoReply: Equatable {
     var cpuArchitecture: String?
     var clientVersion: String?
     var clientBuild: String?
+    var isLegacyTransport: Bool
 }
 
 struct LegacyTransferSession: Equatable {
@@ -1094,7 +1095,8 @@ final class LegacyControlClient {
                     operatingSystem: clientMetadataString(LegacyClientMetadataField.operatingSystem),
                     cpuArchitecture: clientMetadataString(LegacyClientMetadataField.cpuArchitecture),
                     clientVersion: clientMetadataString(LegacyClientMetadataField.clientVersion),
-                    clientBuild: clientMetadataString(LegacyClientMetadataField.clientBuild)
+                    clientBuild: clientMetadataString(LegacyClientMetadataField.clientBuild),
+                    isLegacyTransport: packet.firstField(type: LegacyUserInfoField.legacyTransport)?.value.first == 1
                 )
                 completion(.success(reply))
             } catch { completion(.failure(error)) }

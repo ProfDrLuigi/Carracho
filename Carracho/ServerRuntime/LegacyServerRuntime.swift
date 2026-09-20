@@ -2480,6 +2480,8 @@ final class LegacyServerRuntime {
             if let color = backend.snapshot().accountColorRGB(for: account) {
                 fields.append(LegacyTLV(type: LegacyUserInfoField.groupColorRGB, value: LegacyWire.uint32BE(color)))
             }
+            fields.append(LegacyTLV(type: LegacyUserInfoField.legacyTransport,
+                                    value: Data([target.isLegacyTransport ? 1 : 0])))
             let idleSeconds = max(0, Date().timeIntervalSince(target.lastActivityAt))
             let idleTicks = UInt32(min(idleSeconds * 60, TimeInterval(UInt32.max)))
             fields.append(LegacyTLV(type: LegacyUserInfoField.idleTime, value: LegacyWire.uint32BE(idleTicks)))

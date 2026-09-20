@@ -2392,13 +2392,14 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
 
         CarrachoTheme.applySidebarButtonStyle(channelDiscoverButton, selected: false)
         channelDiscoverButton.heightAnchor.constraint(equalToConstant: 28).isActive = true
-        channelNewButton.image = symbolImage("plus", fallback: NSImage.addTemplateName)
+        channelNewButton.image = sizedAssetImage(named: "Plus", size: 20)
         channelNewButton.imagePosition = .imageLeading
+        channelNewButton.imageScaling = .scaleNone
         channelNewButton.imageHugsTitle = true
         CarrachoTheme.applySidebarButtonStyle(channelNewButton, selected: false)
         channelNewButton.alignment = .left
         channelNewButton.font = .systemFont(ofSize: 12)
-        channelNewButton.contentTintColor = CarrachoTheme.secondaryText
+        channelNewButton.contentTintColor = nil
         channelNewButton.heightAnchor.constraint(equalToConstant: 28).isActive = true
         channelNewButton.toolTip = L("Create a temporary chat room")
         channelNewButton.setAccessibilityLabel(L("Create new chat room"))
@@ -2737,7 +2738,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         headerConnectionButton.isBordered = false
         headerConnectionButton.controlSize = .small
         headerConnectionButton.font = .systemFont(ofSize: 12, weight: .medium)
-        headerConnectionButton.image = symbolImage("powerplug.fill", fallback: NSImage.actionTemplateName)
+        headerConnectionButton.image = sizedAssetImage(named: "Connect", size: 30)
         headerConnectionButton.imagePosition = .imageLeading
         headerConnectionButton.imageHugsTitle = true
         headerConnectionButton.contentTintColor = CarrachoTheme.secondaryText
@@ -3280,11 +3281,21 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
             return disclosure
         }
 
+        let chevronSize = NSSize(width: 10, height: 10)
+        let chevron = NSImage(size: chevronSize)
+        chevron.lockFocus()
+        disclosure.draw(in: NSRect(origin: .zero, size: chevronSize))
+        CarrachoTheme.secondaryText.setFill()
+        NSRect(origin: .zero, size: chevronSize).fill(using: .sourceIn)
+        chevron.unlockFocus()
+        chevron.isTemplate = false
+
         let canvas = NSImage(size: NSSize(width: 30, height: 18))
         canvas.lockFocus()
-        disclosure.draw(in: NSRect(x: 0, y: 4, width: 10, height: 10))
+        chevron.draw(in: NSRect(x: 0, y: 4, width: 10, height: 10))
         trackers.draw(in: NSRect(x: 14, y: 1, width: 16, height: 16))
         canvas.unlockFocus()
+        canvas.isTemplate = false
         return canvas
     }
 
@@ -7635,7 +7646,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         if connected {
             headerConnectionButton.image = sizedAssetImage(named: "Disconnect", size: 30)
         } else {
-            headerConnectionButton.image = symbolImage("powerplug.fill", fallback: NSImage.actionTemplateName)
+            headerConnectionButton.image = sizedAssetImage(named: "Connect", size: 30)
         }
         headerConnectionButton.toolTip = connected ? L("Disconnect from the active server") : L("Connect to a server")
         refreshAdministrativeNavigationVisibility()
