@@ -722,7 +722,11 @@ final class LegacyServerRuntime {
             }
             let method = String(requestParts[0])
             var path = String(requestParts[1])
-            if let query = path.firstIndex(of: "?") { path = String(path[..<query]) }
+            var query: String?
+            if let queryIndex = path.firstIndex(of: "?") {
+                query = String(path[path.index(after: queryIndex)...])
+                path = String(path[..<queryIndex])
+            }
 
             var headers: [String: String] = [:]
             for line in lines.dropFirst() where !line.isEmpty {
@@ -792,7 +796,7 @@ final class LegacyServerRuntime {
                 }
             }
 
-            let response = httpAdminDispatch(method: method, path: path, body: body)
+            let response = httpAdminDispatch(method: method, path: path, query: query, body: body)
             try sendHTTPAdminResponse(fd: fd, status: response.status, object: response.object)
         } catch LegacyServerRuntimeError.stopped {
             // A health probe may connect only to test the port and close without an HTTP request.
@@ -848,7 +852,7 @@ final class LegacyServerRuntime {
         if !body.isEmpty { try LegacySocket.writeAll(fd: fd, data: body) }
     }
 
-    private func httpAdminDispatch(method: String, path: String, body: Any?) -> (status: Int, object: Any?) {
+    private func httpAdminDispatch(method: String, path: String, query: String?, body: Any?) -> (status: Int, object: Any?) {
         do {
             switch (method, path) {
             case ("GET", "/api/v1/status"):
@@ -857,6 +861,12 @@ final class LegacyServerRuntime {
                 return (200, httpAdminUsersJSON())
             case ("GET", "/api/v1/transfers"):
                 return (200, httpAdminTransfersJSON())
+            case ("GET", "/api/v1/log"):
+                guard let limit = httpAdminLogLimit(query: query) else {
+                    return (400, httpAdminError(code: "invalid_limit",
+                                                message: "limit must be an integer from 1 to 1000"))
+                }
+                return (200, try httpAdminLogJSON(limit: limit))
             case ("GET", "/api/v1/accounts"):
                 return (200, httpAdminAccountsJSON())
             case ("GET", "/api/v1/conferences"):
@@ -1032,6 +1042,62 @@ final class LegacyServerRuntime {
         let components = path.split(separator: LegacyPath.separator, omittingEmptySubsequences: false)
         guard components.allSatisfy({ !$0.isEmpty }) else { return "<invalid-path>" }
         return "/" + components.map { CarrachoTextWire.string(from: Data($0)) }.joined(separator: "/")
+    }
+
+    private func httpAdminLogLimit(query: String?) -> Int? {
+        guard let query, !query.isEmpty else { return 200 }
+        var result = 200
+        for part in query.split(separator: "&", omittingEmptySubsequences: true) {
+            let pair = part.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+            guard pair.first == "limit" else { continue }
+            guard pair.count == 2, let value = Int(pair[1]), (1...1000).contains(value) else {
+                return nil
+            }
+            result = value
+        }
+        return result
+    }
+
+    private func httpAdminLogJSON(limit: Int) throws -> [[String: Any]] {
+        logFileLock.lock()
+        defer { logFileLock.unlock() }
+
+        guard FileManager.default.fileExists(atPath: logFileURL.path) else { return [] }
+        let handle = try FileHandle(forReadingFrom: logFileURL)
+        defer { try? handle.close() }
+
+        let total = handle.seekToEndOfFile()
+        var position = total
+        var chunks: [Data] = []
+        var newlineCount = 0
+        while position > 0 && newlineCount <= limit {
+            let chunkSize = min(UInt64(64 * 1024), position)
+            position -= chunkSize
+            handle.seek(toFileOffset: position)
+            let chunk = handle.readData(ofLength: Int(chunkSize))
+            if chunk.isEmpty { break }
+            newlineCount += chunk.reduce(into: 0) { count, byte in
+                if byte == 0x0a { count += 1 }
+            }
+            chunks.append(chunk)
+        }
+
+        var data = Data()
+        data.reserveCapacity(chunks.reduce(0) { $0 + $1.count })
+        for chunk in chunks.reversed() { data.append(chunk) }
+        let text = String(decoding: data, as: UTF8.self)
+        let lines = text.split(whereSeparator: \.isNewline).suffix(limit)
+        return lines.map { rawLine in
+            let line = String(rawLine)
+            if let split = line.firstIndex(of: " ") {
+                return [
+                    "time": String(line[..<split]),
+                    "type": "log",
+                    "message": String(line[line.index(after: split)...]),
+                ]
+            }
+            return ["time": "", "type": "log", "message": line]
+        }
     }
 
     private func httpAdminTransfersJSON() -> [[String: Any]] {

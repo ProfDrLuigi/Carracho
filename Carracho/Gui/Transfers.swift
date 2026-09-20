@@ -1463,32 +1463,79 @@ extension ViewController {
         // can be negative; clamping it to zero makes the first row slide underneath the header.
         let previousScrollOrigin = transferTable.enclosingScrollView?.contentView.bounds.origin ?? .zero
         let rows = transferMonitorRows
-        let visibleKeys = Set(rows.map(transferRowKey))
+        let rowKeys = rows.map(transferRowKey)
+        let visibleKeys = Set(rowKeys)
         let keysToRestore = selectedTransferKeys.intersection(visibleKeys)
+        let rowIdentityUnchanged = transferTableRowKeysSnapshot == rowKeys
+            && transferTable.numberOfRows == rows.count
+
+        var indexes = IndexSet()
+        for (index, key) in rowKeys.enumerated() where keysToRestore.contains(key) {
+            indexes.insert(index)
+        }
 
         transferTableReloadGeneration &+= 1
         let reloadGeneration = transferTableReloadGeneration
         isReloadingTransferTable = true
-        transferTable.reloadData()
-        var indexes = IndexSet()
-        for (index, row) in rows.enumerated() where keysToRestore.contains(transferRowKey(row)) {
-            indexes.insert(index)
+
+        if rowIdentityUnchanged {
+            // Progress/rate/ETA updates do not change row identity. Reload the visible model rows
+            // in place so NSTableView never tears down its selection merely because a byte counter
+            // changed.
+            if !rows.isEmpty, transferTable.numberOfColumns > 0 {
+                transferTable.reloadData(
+                    forRowIndexes: IndexSet(integersIn: 0 ..< rows.count),
+                    columnIndexes: IndexSet(integersIn: 0 ..< transferTable.numberOfColumns)
+                )
+            }
+        } else {
+            transferTable.reloadData()
         }
-        if indexes.isEmpty { transferTable.deselectAll(nil) }
-        else { transferTable.selectRowIndexes(indexes, byExtendingSelection: false) }
+
+        // A full reload may clear AppKit's numeric selection even though the logical transfer keys
+        // are unchanged. Reassert the key-based selection after either reload path.
+        if transferTable.selectedRowIndexes != indexes {
+            if indexes.isEmpty { transferTable.deselectAll(nil) }
+            else { transferTable.selectRowIndexes(indexes, byExtendingSelection: false) }
+        }
+        transferTableRowKeysSnapshot = rowKeys
         selectedTransferKeys = keysToRestore
         updatePrimaryTransferSelectionFromTable()
-        if let scroll = transferTable.enclosingScrollView {
+
+        if !rowIdentityUnchanged, let scroll = transferTable.enclosingScrollView {
             // NSClipView constrains this to its real legal range, including the negative top
             // offset used while an NSTableHeaderView is present. Do not hand-clamp to 0.
             scroll.contentView.scroll(to: previousScrollOrigin)
             scroll.reflectScrolledClipView(scroll.contentView)
         }
+
+        // Selection notifications caused by reloadData/selectRowIndexes can arrive one run-loop
+        // turn late. Keep the reload guard up long enough to ignore those synthetic notifications,
+        // then verify the logical selection once more before returning control to normal user input.
         DispatchQueue.main.async { [weak self] in
             guard let self, self.transferTableReloadGeneration == reloadGeneration else { return }
-            self.isReloadingTransferTable = false
-            self.updateTransferActionButtons()
-            self.updateTransferDetailsUI()
+            let currentRows = self.transferMonitorRows
+            let currentKeys = currentRows.map(self.transferRowKey)
+            guard currentKeys == self.transferTableRowKeysSnapshot else { return }
+
+            var expectedIndexes = IndexSet()
+            for (index, key) in currentKeys.enumerated() where self.selectedTransferKeys.contains(key) {
+                expectedIndexes.insert(index)
+            }
+            if self.transferTable.selectedRowIndexes != expectedIndexes {
+                if expectedIndexes.isEmpty { self.transferTable.deselectAll(nil) }
+                else { self.transferTable.selectRowIndexes(expectedIndexes, byExtendingSelection: false) }
+            }
+            for index in expectedIndexes {
+                self.transferTable.rowView(atRow: index, makeIfNecessary: false)?.needsDisplay = true
+            }
+
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.transferTableReloadGeneration == reloadGeneration else { return }
+                self.isReloadingTransferTable = false
+                self.updateTransferActionButtons()
+                self.updateTransferDetailsUI()
+            }
         }
 
         let items = orderedTransferMonitorItems

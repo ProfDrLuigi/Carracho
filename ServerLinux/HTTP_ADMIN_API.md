@@ -44,6 +44,7 @@ The built-in listener is plain HTTP. Keep it on loopback and put a TLS reverse p
 | GET | /api/v1/users | Connected users and client metadata |
 | GET | /api/v1/transfers | Active uploads/downloads with progress, rate and ETA |
 | POST | /api/v1/transfers/{id}/cancel | Cancel an active transfer |
+| GET | /api/v1/log?limit=200 | Most recent persistent server-log entries (1-1000, default 200) |
 | GET | /api/v1/accounts | Accounts |
 | POST | /api/v1/accounts | Create an account |
 | PATCH | /api/v1/accounts/{login} | Modify an account |
@@ -58,6 +59,31 @@ The built-in listener is plain HTTP. Keep it on loopback and put a TLS reverse p
 | POST | /api/v1/search-index/rebuild | Start a full search-index rebuild |
 
 All responses are JSON except successful DELETE requests, which return HTTP 204.
+
+## Live Log
+
+Read the most recent persistent server-log entries:
+
+~~~http
+GET /api/v1/log?limit=200
+Authorization: Bearer <token>
+~~~
+
+The response is a JSON array ordered oldest-to-newest within the requested tail:
+
+~~~json
+[
+  {
+    "time": "2026-09-20T11:48:12+0200",
+    "type": "log",
+    "message": "Connection established from 127.0.0.1"
+  }
+]
+~~~
+
+limit defaults to 200 and accepts values from 1 through 1000.
+The WebAdmin polls this endpoint when no Server-Sent Events stream is available.
+GET /api/v1/events remains optional; it is not required for live-log operation.
 
 ## Transfers
 

@@ -5083,6 +5083,124 @@ static int http_token_matches(cr_server *s, const char *token) {
     return CRYPTO_memcmp(digest, s->http_admin_token_hash, sizeof(digest)) == 0;
 }
 
+static int http_log_limit(const char *query, size_t *out) {
+    if (!out) return -1;
+    *out = 200;
+    if (!query || !*query) return 0;
+    const char *p = query;
+    while (*p) {
+        const char *end = strchr(p, '&');
+        size_t len = end ? (size_t)(end - p) : strlen(p);
+        if (len >= 6 && !strncmp(p, "limit=", 6)) {
+            size_t value_len = len - 6;
+            if (!value_len || value_len >= 32) return -1;
+            char value[32];
+            memcpy(value, p + 6, value_len);
+            value[value_len] = 0;
+            char *tail = NULL;
+            errno = 0;
+            unsigned long raw = strtoul(value, &tail, 10);
+            if (errno || !tail || *tail || raw < 1 || raw > 1000) return -1;
+            *out = (size_t)raw;
+        }
+        if (!end) break;
+        p = end + 1;
+    }
+    return 0;
+}
+
+static json_object *http_log_json(size_t limit) {
+    json_object *array = json_object_new_array();
+    if (!array) return NULL;
+
+    uint8_t *data = NULL;
+    size_t len = 0;
+    pthread_mutex_lock(&g_log_mutex);
+    FILE *file = NULL;
+    if (g_log_path[0]) file = fopen(g_log_path, "rb");
+    if (file) {
+        if (!fseeko(file, 0, SEEK_END)) {
+            off_t position = ftello(file);
+            if (position >= 0) {
+                size_t newline_count = 0;
+                while (position > 0 && newline_count <= limit) {
+                    size_t chunk = position > 65536 ? 65536 : (size_t)position;
+                    position -= (off_t)chunk;
+                    uint8_t *grown = realloc(data, len + chunk);
+                    if (!grown) {
+                        free(data);
+                        data = NULL;
+                        len = 0;
+                        break;
+                    }
+                    data = grown;
+                    memmove(data + chunk, data, len);
+                    if (fseeko(file, position, SEEK_SET) ||
+                        fread(data, 1, chunk, file) != chunk) {
+                        free(data);
+                        data = NULL;
+                        len = 0;
+                        break;
+                    }
+                    for (size_t i = 0; i < chunk; i++)
+                        if (data[i] == '\n') newline_count++;
+                    len += chunk;
+                }
+            }
+        }
+        fclose(file);
+    }
+    pthread_mutex_unlock(&g_log_mutex);
+
+    if (!data || !len) {
+        free(data);
+        return array;
+    }
+
+    size_t start = 0, count = 0;
+    for (size_t i = len; i > 0; ) {
+        i--;
+        if (data[i] != '\n') continue;
+        if (i + 1 < len) {
+            count++;
+            if (count == limit) {
+                start = i + 1;
+                break;
+            }
+        }
+    }
+
+    size_t cursor = start;
+    while (cursor < len) {
+        size_t end = cursor;
+        while (end < len && data[end] != '\n') end++;
+        size_t line_len = end - cursor;
+        if (line_len && data[cursor + line_len - 1] == '\r') line_len--;
+        if (line_len) {
+            size_t split = 0;
+            while (split < line_len && data[cursor + split] != ' ') split++;
+            json_object *entry = json_object_new_object();
+            if (!entry) { free(data); json_object_put(array); return NULL; }
+            if (split > 0 && split < line_len) {
+                json_object_object_add(entry, "time",
+                    json_object_new_string_len((const char *)data + cursor, (int)split));
+                json_object_object_add(entry, "message",
+                    json_object_new_string_len((const char *)data + cursor + split + 1,
+                                               (int)(line_len - split - 1)));
+            } else {
+                json_object_object_add(entry, "time", json_object_new_string(""));
+                json_object_object_add(entry, "message",
+                    json_object_new_string_len((const char *)data + cursor, (int)line_len));
+            }
+            json_object_object_add(entry, "type", json_object_new_string("log"));
+            json_object_array_add(array, entry);
+        }
+        cursor = end < len ? end + 1 : len;
+    }
+    free(data);
+    return array;
+}
+
 static int http_header_value(const char *headers, const char *name, char *out, size_t cap) {
     if (!headers || !name || !out || !cap) return -1;
     size_t name_len = strlen(name);
@@ -5766,7 +5884,7 @@ static int http_delete_conference(cr_server *s, uint32_t cid) {
 }
 
 static json_object *http_dispatch(cr_server *s, const char *method, const char *path,
-                                  json_object *body, int *status) {
+                                  const char *query, json_object *body, int *status) {
     *status = 200;
     if (!strcmp(method, "GET") && !strcmp(path, "/api/v1/status"))
         return http_status_json(s);
@@ -5774,6 +5892,14 @@ static json_object *http_dispatch(cr_server *s, const char *method, const char *
         return http_users_json(s);
     if (!strcmp(method, "GET") && !strcmp(path, "/api/v1/transfers"))
         return http_transfers_json(s);
+    if (!strcmp(method, "GET") && !strcmp(path, "/api/v1/log")) {
+        size_t limit = 200;
+        if (http_log_limit(query, &limit)) {
+            *status = 400;
+            return http_error_object("invalid_limit", "limit must be an integer from 1 to 1000");
+        }
+        return http_log_json(limit);
+    }
     if (!strcmp(method, "GET") && !strcmp(path, "/api/v1/accounts"))
         return http_accounts_json(s);
     if (!strcmp(method, "GET") && !strcmp(path, "/api/v1/conferences"))
@@ -6045,9 +6171,13 @@ static void http_handle_connection(cr_server *s, int fd) {
     }
 
     char *query = strchr(path, '?');
-    if (query) *query = 0;
+    const char *query_text = NULL;
+    if (query) {
+        *query = 0;
+        query_text = query + 1;
+    }
     int status = 200;
-    json_object *response = http_dispatch(s, method, path, body, &status);
+    json_object *response = http_dispatch(s, method, path, query_text, body, &status);
     if (!response && status != 204) {
         status = 500;
         response = http_error_object("internal_error", "Could not build response");

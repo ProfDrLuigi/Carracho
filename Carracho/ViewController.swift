@@ -1228,6 +1228,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
     var transferRemoteDirectoryLookupsBySource: [String: Set<Data>] = [:]
     var isReloadingTransferTable = false
     var transferTableReloadGeneration: UInt64 = 0
+    var transferTableRowKeysSnapshot: [TransferMonitorRowKey] = []
     static let downloadFolderDefaultsKey = "CarrachoDownloadFolder"
     static let generalIdentityConfiguredDefaultsKey = "CarrachoGeneralIdentityConfigured.v1"
     static let generalNicknameDefaultsKey = "CarrachoGeneralNickname.v1"
