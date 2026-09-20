@@ -170,7 +170,9 @@ static int handle_query(connection_ctx *ctx) {
 
     for (size_t i = 0; i < count; ++i) {
         const tracker_registration *r = &snapshot[i];
-        size_t payload_length = 14u + r->name_len + r->description_len;
+        /* Classic QLI records append four reserved bytes after the 32-bit flags.
+           CTT registrations do not contain this tail. */
+        size_t payload_length = 18u + r->name_len + r->description_len;
         if (payload_length > 255u) {
             free(snapshot);
             return -1;
@@ -186,6 +188,7 @@ static int handle_query(connection_ctx *ctx) {
         memcpy(record + p, r->description, r->description_len); p += r->description_len;
         write_be16(record + p, r->users); p += 2;
         write_be32(record + p, r->flags); p += 4;
+        memset(record + p, 0, 4); p += 4;
         if (write_all(ctx->fd, record, p) != 0) {
             free(snapshot);
             return -1;
@@ -217,7 +220,7 @@ static int handle_registration(connection_ctx *ctx) {
     incoming.flags = read_be32(tail + 2);
     incoming.last_seen = time(NULL);
 
-    if ((size_t)incoming.name_len + incoming.description_len > 241u) return -1;
+    if ((size_t)incoming.name_len + incoming.description_len > 237u) return -1;
 
     pthread_mutex_lock(&ctx->state->mutex);
     prune_locked(ctx->state, incoming.last_seen);

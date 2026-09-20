@@ -5,6 +5,11 @@ enum LegacyTrackerProtocol {
     static let queryMagic = Data([0x43, 0x54, 0x51, 0x01]) // CTQ\x01
     static let listQuery = Data([0x51, 0x4c, 0x49])          // QLI
     static let registrationMagic = Data([0x43, 0x54, 0x54, 0x01]) // CTT\x01
+    /// Classic Tracker list records carry four bytes after the advertisement flags.
+    /// Carracho Server 1.0b13 registrations do not carry this field; it exists only
+    /// in QLI list records.
+    static let listRecordReservedLength = 4
+    static let maxListRecordTextBytes = 237
 
     static let registeredFlag: UInt32 = 0x0080_0000
     static let privateFlag: UInt32 = 0x0040_0000
@@ -109,6 +114,7 @@ struct LegacyTrackerServerEntry: Equatable {
         data.append(try LegacyTrackerProtocol.string8(description))
         data.append(LegacyWire.uint16BE(users))
         data.append(LegacyWire.uint32BE(flags))
+        data.append(Data(repeating: 0, count: LegacyTrackerProtocol.listRecordReservedLength))
         return data
     }
 
@@ -130,6 +136,12 @@ struct LegacyTrackerServerEntry: Equatable {
         let description = try LegacyTrackerProtocol.readString8(from: &cursor)
         let users = try cursor.readUInt16BE()
         let flags = try cursor.readUInt32BE()
+        // Original Classic trackers append four reserved bytes to each QLI record.
+        // Accept the older short form too so clients remain compatible with modern
+        // trackers that were emitted before this Classic-layout fix.
+        if cursor.remaining == LegacyTrackerProtocol.listRecordReservedLength {
+            _ = try cursor.readBytes(count: LegacyTrackerProtocol.listRecordReservedLength)
+        }
         try cursor.requireEnd()
         return LegacyTrackerServerEntry(ipv4: ipv4, port: port, serverName: name,
                                         description: description, users: users, flags: flags)

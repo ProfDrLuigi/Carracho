@@ -173,6 +173,10 @@ final class LegacyTrackerRuntime {
             wire.append(try TrackerSocket.readExactly(fd: fd, count: Int(descriptionLength)))
             wire.append(try TrackerSocket.readExactly(fd: fd, count: 6)) // users + flags
             let registration = try LegacyTrackerRegistration.decode(wire)
+            guard registration.serverName.count + registration.description.count <=
+                    LegacyTrackerProtocol.maxListRecordTextBytes else {
+                throw LegacyTrackerRuntimeError.protocolFailure("tracker registration is too large for a Classic QLI record")
+            }
             guard let observedIPv4 = TrackerSocket.ipv4Data(peerIP) else {
                 throw LegacyTrackerRuntimeError.protocolFailure("registration peer has no usable IPv4 address")
             }

@@ -2166,7 +2166,7 @@ static void *bot_thread_main(void*opaque){
 
 static int handle_server_info(cr_session*s,const cr_packet*p){
     uint8_t a[1024],b[1024],c[1024],d[CR_MAX_IDENTITY_TEXT+1],uptime[4],max_total[2],active_total[2],max_user[2],active_user[2];
-    const uint8_t version[]="Carracho Server 1.0.4";
+    const uint8_t version[]="Carracho Server 1.0.5";
     size_t an=0,bn=0,cn=0,dn=0;uint16_t limit_total=0,limit_user=0;
     pthread_mutex_lock(&s->server->state.mutex);
     int fail=cr_utf8_to_macroman(s->server->state.identity.name,a,sizeof(a),&an)||
@@ -3928,9 +3928,14 @@ static int handle_server_settings_update(cr_session *s, const cr_packet *p) {
     }
 
     if (tracker_changed && persist_tracker_registration_config(s->server)) {
-        log_msg("Could not persist tracker registration mirror to %s", s->server->config_path);
-        rc = send_error(s, p->transaction_id, 1);
-        goto done;
+        int saved_errno = errno;
+        /* The authoritative Tracker settings were already committed to server state above.
+           carracho-server.json only mirrors the effective registration setup for operators,
+           so a read-only/non-writable startup config must not turn a successful admin save
+           into protocol error 1. Keep the saved state and report the mirror problem in logs. */
+        log_msg("Could not persist tracker registration mirror to %s: %s; saved Tracker state remains active",
+                s->server->config_path,
+                saved_errno ? strerror(saved_errno) : "unknown write error");
     }
 
     if (groups_changed) {
