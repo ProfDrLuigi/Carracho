@@ -1,6 +1,227 @@
 import Cocoa
 import QuickLookUI
 
+private enum RoomDiscoveryStyle {
+    static func color(_ name: String, light: UInt32, dark: UInt32) -> NSColor {
+        NSColor(name: NSColor.Name("Carracho.Discovery." + name)) { appearance in
+            let value = CarrachoTheme.isDark(appearance) ? dark : light
+            return NSColor(calibratedRed: CGFloat((value >> 16) & 255) / 255,
+                           green: CGFloat((value >> 8) & 255) / 255,
+                           blue: CGFloat(value & 255) / 255, alpha: 1)
+        }
+    }
+    static let background = color("background", light: 0xF3F7FB, dark: 0x101E2B)
+    static let surface = color("surface", light: 0xFFFFFF, dark: 0x172939)
+    static let selected = color("selected", light: 0xE4F2FC, dark: 0x20394F)
+    static let border = color("border", light: 0xC6DAE8, dark: 0x34546E)
+    static let accent = color("accent", light: 0x008BBA, dark: 0x38D4F3)
+    static let secondary = color("secondary", light: 0x516577, dark: 0xB0C1D4)
+    static let joined = color("joined", light: 0x187737, dark: 0x99F287)
+    static let joinedBackground = color("joinedBackground", light: 0xDDF2E1, dark: 0x21492B)
+}
+
+final class RoomDiscoveryTableRowView: NSTableRowView {
+    override var isSelected: Bool { didSet { needsDisplay = true } }
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
+    }
+    override func drawBackground(in dirtyRect: NSRect) {
+        let rect = bounds.insetBy(dx: 1, dy: 3)
+        let path = NSBezierPath(roundedRect: rect, xRadius: 10, yRadius: 10)
+        (isSelected ? RoomDiscoveryStyle.selected : RoomDiscoveryStyle.surface).setFill()
+        path.fill()
+        RoomDiscoveryStyle.border.setStroke()
+        path.lineWidth = 1
+        path.stroke()
+        if isSelected {
+            NSGraphicsContext.saveGraphicsState()
+            path.addClip()
+            RoomDiscoveryStyle.accent.setFill()
+            NSRect(x: rect.minX, y: rect.minY, width: 5, height: rect.height).fill()
+            NSGraphicsContext.restoreGraphicsState()
+        }
+    }
+    override func drawSelection(in dirtyRect: NSRect) {}
+}
+
+final class RoomDiscoveryView: NSView {
+    let countLabel = NSTextField(labelWithString: "")
+    let emptyLabel = NSTextField(labelWithString: "")
+    let refreshButton = NSButton(title: L("Refresh"), target: nil, action: nil)
+    let closeButton = NSButton(title: L("Close"), target: nil, action: nil)
+    private let listHeight: NSLayoutConstraint
+    private let emptyHost: NSView
+
+    init(table: NSTableView, joinedLabel: NSTextField, joinButton: NSButton, deleteButton: NSButton) {
+        let scroll = ViewportWidthTableScrollView()
+        scroll.documentView = table
+        scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true
+        scroll.drawsBackground = false
+        scroll.borderType = .noBorder
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        listHeight = scroll.heightAnchor.constraint(equalToConstant: 90)
+        emptyHost = NSView()
+        super.init(frame: .zero)
+        let background = CarrachoBackgroundView()
+        background.fillColor = RoomDiscoveryStyle.background
+        background.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(background)
+        NSLayoutConstraint.activate([
+            background.leadingAnchor.constraint(equalTo: leadingAnchor),
+            background.trailingAnchor.constraint(equalTo: trailingAnchor),
+            background.topAnchor.constraint(equalTo: topAnchor),
+            background.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+
+        let icon = NSImageView()
+        icon.image = NSImage(named: "Discover Rooms")
+        icon.imageScaling = .scaleProportionallyUpOrDown
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        icon.widthAnchor.constraint(equalToConstant: 60).isActive = true
+        icon.heightAnchor.constraint(equalToConstant: 60).isActive = true
+        let title = NSTextField(labelWithString: L("Discover Rooms"))
+        title.font = .systemFont(ofSize: 23, weight: .bold)
+        let subtitle = NSTextField(wrappingLabelWithString: L("Find a room on this server and join the conversation."))
+        subtitle.font = .systemFont(ofSize: 15)
+        subtitle.textColor = RoomDiscoveryStyle.secondary
+        let intro = row([icon, column([title, subtitle], spacing: 7)], spacing: 20)
+
+        let heading = NSTextField(labelWithString: L("Available Rooms"))
+        heading.font = .systemFont(ofSize: 18, weight: .semibold)
+        refreshButton.bezelStyle = .rounded
+        refreshButton.font = .systemFont(ofSize: 14)
+        refreshButton.imagePosition = .imageLeading
+        if #available(macOS 11.0, *) {
+            refreshButton.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: nil)
+        } else { refreshButton.image = NSImage(named: NSImage.refreshTemplateName) }
+        let listHeading = row([heading, NSView(), refreshButton], spacing: 12)
+
+        emptyHost.addSubview(scroll)
+        emptyHost.addSubview(emptyLabel)
+        emptyLabel.translatesAutoresizingMaskIntoConstraints = false
+        emptyLabel.font = .systemFont(ofSize: 14)
+        emptyLabel.textColor = RoomDiscoveryStyle.secondary
+        emptyLabel.alignment = .center
+        emptyLabel.lineBreakMode = .byTruncatingTail
+        NSLayoutConstraint.activate([
+            scroll.leadingAnchor.constraint(equalTo: emptyHost.leadingAnchor),
+            scroll.trailingAnchor.constraint(equalTo: emptyHost.trailingAnchor),
+            scroll.topAnchor.constraint(equalTo: emptyHost.topAnchor),
+            scroll.bottomAnchor.constraint(equalTo: emptyHost.bottomAnchor),
+            emptyLabel.centerXAnchor.constraint(equalTo: emptyHost.centerXAnchor),
+            emptyLabel.centerYAnchor.constraint(equalTo: emptyHost.centerYAnchor),
+            emptyLabel.widthAnchor.constraint(lessThanOrEqualTo: emptyHost.widthAnchor, constant: -20),
+            listHeight,
+        ])
+        for label in [countLabel, joinedLabel] {
+            label.font = .systemFont(ofSize: 13)
+            label.textColor = RoomDiscoveryStyle.secondary
+        }
+        let counts = row([countLabel, NSView(), joinedLabel], spacing: 12)
+        let list = column([listHeading, emptyHost, counts], spacing: 10)
+
+        let note = CarrachoCardView()
+        note.fillColor = RoomDiscoveryStyle.surface
+        let lock = NSImageView()
+        if #available(macOS 11.0, *) {
+            lock.image = NSImage(systemSymbolName: "lock.fill", accessibilityDescription: nil)
+            lock.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 24, weight: .medium)
+        } else { lock.image = NSImage(named: NSImage.lockLockedTemplateName) }
+        lock.contentTintColor = .systemYellow
+        lock.translatesAutoresizingMaskIntoConstraints = false
+        lock.widthAnchor.constraint(equalToConstant: 30).isActive = true
+        let noteText = NSTextField(wrappingLabelWithString: L("A password is requested only when you join a protected room."))
+        noteText.font = .systemFont(ofSize: 14)
+        noteText.textColor = RoomDiscoveryStyle.secondary
+        let noteContent = row([lock, noteText], spacing: 16)
+        note.addSubview(noteContent)
+        NSLayoutConstraint.activate([
+            noteContent.leadingAnchor.constraint(equalTo: note.leadingAnchor, constant: 18),
+            noteContent.trailingAnchor.constraint(equalTo: note.trailingAnchor, constant: -18),
+            noteContent.topAnchor.constraint(equalTo: note.topAnchor, constant: 16),
+            noteContent.bottomAnchor.constraint(equalTo: note.bottomAnchor, constant: -16),
+            note.heightAnchor.constraint(greaterThanOrEqualToConstant: 64),
+        ])
+        let body = column([intro, list, note], spacing: 24)
+        addSubview(body)
+
+        let divider = NSBox()
+        divider.boxType = .separator
+        divider.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(divider)
+        let hint = NSTextField(wrappingLabelWithString: L("Double-click a room to join."))
+        hint.font = .systemFont(ofSize: 12)
+        hint.textColor = RoomDiscoveryStyle.secondary
+        hint.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        closeButton.bezelStyle = .rounded
+        closeButton.keyEquivalent = "\u{1b}"
+        joinButton.bezelStyle = .rounded
+        joinButton.keyEquivalent = "\r"
+        for button in [closeButton, joinButton, deleteButton] {
+            button.controlSize = .regular
+            button.font = .systemFont(ofSize: 14)
+            button.setContentCompressionResistancePriority(.required, for: .horizontal)
+        }
+        let footer = row([hint, NSView(), deleteButton, closeButton, joinButton], spacing: 12)
+        addSubview(footer)
+        NSLayoutConstraint.activate([
+            body.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 30),
+            body.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -30),
+            body.topAnchor.constraint(equalTo: topAnchor, constant: 26),
+            divider.topAnchor.constraint(equalTo: body.bottomAnchor, constant: 24),
+            divider.leadingAnchor.constraint(equalTo: leadingAnchor),
+            divider.trailingAnchor.constraint(equalTo: trailingAnchor),
+            footer.leadingAnchor.constraint(equalTo: body.leadingAnchor),
+            footer.trailingAnchor.constraint(equalTo: body.trailingAnchor),
+            footer.topAnchor.constraint(equalTo: divider.bottomAnchor, constant: 16),
+            footer.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -18),
+            closeButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 110),
+            joinButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 150),
+        ])
+    }
+    required init?(coder: NSCoder) { nil }
+
+    func update(roomCount: Int, loading: Bool, manualRefresh: Bool, connected: Bool) {
+        countLabel.stringValue = roomCount == 1 ? L("1 room available") : LF("%@ rooms available", String(roomCount))
+        // Background polling must not make the Refresh control flash every cycle. Only a
+        // user-initiated refresh owns the visible busy state of this button.
+        refreshButton.isEnabled = connected && !manualRefresh
+        refreshButton.title = manualRefresh ? L("Refreshing…") : L("Refresh")
+        emptyLabel.stringValue = loading ? L("Loading rooms…") : L("No rooms available")
+        emptyLabel.isHidden = roomCount > 0
+        listHeight.constant = CGFloat(min(max(roomCount, 1), 4)) * 90
+    }
+
+    func showRefreshError(_ message: String) {
+        countLabel.stringValue = L("Rooms could not be refreshed.")
+        countLabel.toolTip = message
+        if !emptyLabel.isHidden { emptyLabel.stringValue = L("Rooms could not be refreshed.") }
+    }
+
+    private func row(_ views: [NSView], spacing: CGFloat) -> NSStackView {
+        let result = NSStackView(views: views)
+        result.orientation = .horizontal
+        result.alignment = .centerY
+        result.spacing = spacing
+        result.translatesAutoresizingMaskIntoConstraints = false
+        return result
+    }
+    private func column(_ views: [NSView], spacing: CGFloat) -> NSStackView {
+        let result = NSStackView(views: views)
+        result.orientation = .vertical
+        result.alignment = .leading
+        result.spacing = spacing
+        result.translatesAutoresizingMaskIntoConstraints = false
+        for view in views {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            view.widthAnchor.constraint(equalTo: result.widthAnchor).isActive = true
+        }
+        return result
+    }
+}
+
 final class NewChatRoomWindowController: NSWindowController, NSWindowDelegate, NSTextFieldDelegate {
     let nameField = NSTextField(string: "")
     let passwordField = NSSecureTextField(string: "")
@@ -578,56 +799,6 @@ extension ViewController {
         guard let user = selectedChannelMemberUser else { return }
         focusGeneralUser(user)
         messageSelectedUser(sender)
-    }
-
-    @objc func showChannelMemberActions(_ sender: NSButton) {
-        let menu = NSMenu(title: L("Participant Actions"))
-        guard let member = selectedChannelMember,
-              let user = liveUsers[member.userID] else {
-            let none = NSMenuItem(title: L("Select a participant"), action: nil, keyEquivalent: "")
-            none.isEnabled = false
-            menu.addItem(none)
-            menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.maxY + 2), in: sender)
-            return
-        }
-        let name = Self.macRomanString(user.nickname)
-        let info = NSMenuItem(title: LF("User Info: %@…", name), action: #selector(showSelectedChannelMemberInfo(_:)), keyEquivalent: "")
-        info.target = self
-        menu.addItem(info)
-        let message = NSMenuItem(title: LF("Message %@…", name), action: #selector(messageSelectedChannelMember(_:)), keyEquivalent: "")
-        message.target = self
-        menu.addItem(message)
-        if isActiveChannelOperator {
-            menu.addItem(.separator())
-
-            let operatorEnabled = member.mode & Self.channelOperatorMode != 0
-            let operatorItem = NSMenuItem(
-                title: operatorEnabled ? L("Remove Operator Mode") : L("Grant Operator Mode"),
-                action: #selector(toggleSelectedChannelMemberOperatorMode(_:)),
-                keyEquivalent: ""
-            )
-            operatorItem.target = self
-            operatorItem.state = operatorEnabled ? .on : .off
-            operatorItem.isEnabled = client.isConnected
-            menu.addItem(operatorItem)
-
-            let speakEnabled = member.mode & Self.channelSpeechMode != 0
-            let speakItem = NSMenuItem(
-                title: speakEnabled ? L("Remove Speak Permission") : L("Grant Speak Permission"),
-                action: #selector(toggleSelectedChannelMemberSpeakPermission(_:)),
-                keyEquivalent: ""
-            )
-            speakItem.target = self
-            speakItem.state = speakEnabled ? .on : .off
-            speakItem.isEnabled = client.isConnected
-            menu.addItem(speakItem)
-
-            let role = NSMenuItem(title: L("Manage Room Role…"), action: #selector(editSelectedChannelMemberMode(_:)), keyEquivalent: "")
-            role.target = self
-            role.isEnabled = client.isConnected
-            menu.addItem(role)
-        }
-        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.maxY + 2), in: sender)
     }
 
     @objc func inviteUserToActiveChannel(_ sender: Any?) {
@@ -1497,6 +1668,7 @@ extension ViewController {
         channelCatalogRefreshTimer?.invalidate()
         channelCatalogRefreshTimer = nil
         channelCatalogRefreshInFlight = false
+        channelCatalogManualRefreshInFlight = false
     }
 
     func selectedChannelID() -> UInt32? {
@@ -1518,13 +1690,25 @@ extension ViewController {
         }
     }
 
-    func refreshChannelCatalog() {
-        guard client.isConnected, !channelCatalogRefreshInFlight else { return }
+    func refreshChannelCatalog(manual: Bool = false) {
+        guard client.isConnected else { return }
+        if channelCatalogRefreshInFlight {
+            if manual && !channelCatalogManualRefreshInFlight {
+                // A click during an already-running background poll adopts that request as the
+                // manual refresh, so the user still gets feedback without sending a duplicate.
+                channelCatalogManualRefreshInFlight = true
+                updateChannelDiscoverySelection()
+            }
+            return
+        }
         let requestClient = client
         channelCatalogRefreshInFlight = true
+        channelCatalogManualRefreshInFlight = manual
+        updateChannelDiscoverySelection()
         requestClient.requestChannels { [weak self, weak requestClient] result in
             guard let self, let requestClient, self.client === requestClient, requestClient.isConnected else { return }
             self.channelCatalogRefreshInFlight = false
+            self.channelCatalogManualRefreshInFlight = false
             if case let .success(channels) = result {
                 let selectedID = self.selectedChannelID()
                 self.lastChannels = channels
@@ -1532,60 +1716,64 @@ extension ViewController {
                 self.reloadChannelView(reloadTables: false, renderTranscript: false)
                 self.refreshShellChrome()
             }
+            self.updateChannelDiscoverySelection()
+            if case let .failure(error) = result {
+                self.channelDiscoveryView?.showRefreshError(Self.displayMessage(for: error))
+            }
         }
     }
 
     @objc func showChannelDiscovery(_ sender: Any?) {
         guard client.isConnected, let parent = view.window else { return }
-        refreshChannelCatalog()
-        let alert = NSAlert()
-        alert.messageText = L("Discover Rooms")
-        alert.informativeText = L("Available rooms reported by the server. A room password is requested only when you join a protected room.")
-        alert.addButton(withTitle: L("Close"))
-
-        let title = NSTextField(labelWithString: L("Available Rooms"))
-        title.font = .systemFont(ofSize: 13, weight: .semibold)
-        let refresh = NSButton(title: L("Refresh"), target: self, action: #selector(refreshChannelDiscovery(_:)))
-        refresh.controlSize = .small
-        refresh.image = symbolImage("arrow.clockwise", fallback: NSImage.refreshTemplateName)
-        refresh.imagePosition = .imageLeading
-        let top = horizontalStack([title, NSView(), chatJoinedRoomsLabel, refresh], spacing: 8)
-        let scroll = tableScroll(channelTable)
-        scroll.heightAnchor.constraint(equalToConstant: 330).isActive = true
-        channelJoinButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 92).isActive = true
+        guard channelDiscoverySheet == nil else {
+            channelDiscoverySheet?.makeKeyAndOrderFront(nil)
+            return
+        }
+        let sheet = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 800, height: 460),
+                             styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        sheet.title = L("Discover Rooms")
+        sheet.isReleasedWhenClosed = false
+        sheet.titlebarAppearsTransparent = true
+        sheet.backgroundColor = RoomDiscoveryStyle.background
+        let discovery = RoomDiscoveryView(table: channelTable, joinedLabel: chatJoinedRoomsLabel,
+                                          joinButton: channelJoinButton, deleteButton: channelDiscoveryDeleteButton)
+        discovery.refreshButton.target = self
+        discovery.refreshButton.action = #selector(refreshChannelDiscovery(_:))
+        discovery.closeButton.target = self
+        discovery.closeButton.action = #selector(closeChannelDiscovery(_:))
         channelDiscoveryDeleteButton.image = symbolImage("trash", fallback: NSImage.trashEmptyName)
         channelDiscoveryDeleteButton.imagePosition = .imageLeading
         channelDiscoveryDeleteButton.contentTintColor = .systemRed
-        let footer = horizontalStack([
-            infoLabel(L("Double-click a room or select it and choose Join.")), NSView(),
-            channelDiscoveryDeleteButton, channelJoinButton,
-        ], spacing: 8)
-        let stack = verticalStack([top, scroll, footer], spacing: 8)
-        let accessory = NSView(frame: NSRect(x: 0, y: 0, width: 590, height: 380))
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        accessory.addSubview(stack)
-        NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: accessory.leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: accessory.trailingAnchor),
-            stack.topAnchor.constraint(equalTo: accessory.topAnchor),
-            stack.bottomAnchor.constraint(equalTo: accessory.bottomAnchor),
-        ])
-        alert.accessoryView = accessory
+        sheet.contentView = discovery
+        channelDiscoveryView = discovery
+        channelDiscoverySheet = sheet
         reloadChannelTablePreservingSelection(preferredChannelID: activeChannel?.channelID)
         updateChannelDiscoverySelection()
-        channelDiscoverySheet = alert.window
-        alert.beginSheetModal(for: parent) { [weak self, weak alert] _ in
-            guard let self else { return }
-            if self.channelDiscoverySheet === alert?.window { self.channelDiscoverySheet = nil }
+        sheet.initialFirstResponder = channelTable
+        parent.beginSheet(sheet) { [weak self, weak sheet] _ in
+            guard let self, self.channelDiscoverySheet === sheet else { return }
+            self.channelDiscoverySheet = nil
+            self.channelDiscoveryView = nil
         }
+        refreshChannelCatalog()
     }
 
+    @objc func closeChannelDiscovery(_ sender: Any?) { closeChannelDiscoverySheet() }
+
     @objc func refreshChannelDiscovery(_ sender: Any?) {
-        refreshChannelCatalog()
-        updateChannelDiscoverySelection()
+        refreshChannelCatalog(manual: true)
     }
 
     func updateChannelDiscoverySelection() {
+        channelDiscoveryView?.update(roomCount: displayedChannels.count,
+                                     loading: channelCatalogRefreshInFlight,
+                                     manualRefresh: channelCatalogManualRefreshInFlight,
+                                     connected: client.isConnected)
+        chatJoinedRoomsLabel.stringValue = LF("%@/%@ joined", String(joinedChannels.count), String(Self.maximumJoinedChannels))
+        if let sheet = channelDiscoverySheet, let discovery = channelDiscoveryView {
+            discovery.layoutSubtreeIfNeeded()
+            sheet.setContentSize(NSSize(width: 800, height: discovery.fittingSize.height))
+        }
         let row = channelTable.selectedRow
         guard row >= 0, row < displayedChannels.count else {
             channelJoinButton.title = L("Join")
@@ -1599,7 +1787,7 @@ extension ViewController {
         channelDiscoveryDeleteButton.isHidden = !canDelete
         channelDiscoveryDeleteButton.isEnabled = canDelete
         if joinedChannels[summary.channelID] != nil {
-            channelJoinButton.title = activeChannel?.channelID == summary.channelID ? L("Active") : L("Open")
+            channelJoinButton.title = activeChannel?.channelID == summary.channelID ? L("Already Joined") : L("Open")
             channelJoinButton.isEnabled = activeChannel?.channelID != summary.channelID
         } else {
             channelJoinButton.title = summary.isPasswordProtected ? L("Join…") : L("Join")
@@ -1608,7 +1796,8 @@ extension ViewController {
     }
 
     @objc func joinSelectedChannel(_ sender: Any?) {
-        let row = channelTable.clickedRow >= 0 ? channelTable.clickedRow : channelTable.selectedRow
+        let row = (sender as? NSTableView) === channelTable && channelTable.clickedRow >= 0
+            ? channelTable.clickedRow : channelTable.selectedRow
         guard client.isConnected, row >= 0, row < displayedChannels.count else { return }
         guard canJoinChatRooms else {
             showError(L("This account is not allowed to join chat rooms."))
@@ -1686,7 +1875,9 @@ extension ViewController {
     func closeChannelDiscoverySheet() {
         guard let sheet = channelDiscoverySheet else { return }
         if let parent = sheet.sheetParent { parent.endSheet(sheet) }
+        sheet.orderOut(nil)
         channelDiscoverySheet = nil
+        channelDiscoveryView = nil
     }
 
     @objc func clearActiveChannelTranscript(_ sender: Any?) {
@@ -1701,7 +1892,8 @@ extension ViewController {
     }
 
     @objc func deleteSelectedChannel(_ sender: Any?) {
-        let row = channelTable.clickedRow >= 0 ? channelTable.clickedRow : channelTable.selectedRow
+        let row = (sender as? NSTableView) === channelTable && channelTable.clickedRow >= 0
+            ? channelTable.clickedRow : channelTable.selectedRow
         guard row >= 0, row < displayedChannels.count else { return }
         let summary = displayedChannels[row]
         confirmDeleteChannel(channelID: summary.channelID, name: summary.name,
@@ -2064,6 +2256,7 @@ extension ViewController {
             channelMemberTable.reloadData()
         }
         let connected = client.isConnected
+        if channelDiscoverySheet != nil { updateChannelDiscoverySelection() }
         chatJoinedRoomsLabel.stringValue = LF("%@/%@ joined", String(joinedChannels.count), String(Self.maximumJoinedChannels))
         channelDiscoverButton.isEnabled = connected
         channelNewButton.isEnabled = canJoinChatRooms && joinedChannels.count < Self.maximumJoinedChannels

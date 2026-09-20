@@ -34,7 +34,7 @@ extension ViewController {
         conferenceInspectorParticipantsLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         let participantsHeader = horizontalStack([
             conferenceInspectorParticipantsLabel, NSView(),
-            channelToggleOperatorButton, channelToggleSpeakButton, channelMemberActionsButton,
+            channelToggleOperatorButton, channelToggleSpeakButton,
         ], spacing: 6)
 
         channelMemberTable.backgroundColor = .clear

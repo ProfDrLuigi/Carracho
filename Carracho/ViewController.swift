@@ -725,6 +725,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
     let conferenceInspectorPropertiesLabel = NSTextField(labelWithString: "")
     let conferenceInspectorParticipantsLabel = NSTextField(labelWithString: L("Participants"))
     var channelDiscoverySheet: NSWindow?
+    var channelDiscoveryView: RoomDiscoveryView?
     var newChatRoomWindowController: NewChatRoomWindowController?
     var trackerEditorWindowController: TrackerEditorWindowController?
     var trackerPrivateLoginWindowController: TrackerPrivateLoginWindowController?
@@ -1078,7 +1079,6 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
     let channelRoomSwitchButton = NSButton()
     let channelToggleOperatorButton = NSButton()
     let channelToggleSpeakButton = NSButton()
-    let channelMemberActionsButton = NSButton()
     let channelTopicEditButton = NSButton(title: L("Edit Topic"), target: nil, action: nil)
     let channelDiscoverButton = CarrachoSidebarButton(title: L("Discover Rooms"), target: nil, action: nil)
     let joinedChannelSidebarStack = NSStackView()
@@ -1285,6 +1285,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
     var newsBadgeRefreshInFlight = false
     var channelCatalogRefreshTimer: Timer?
     var channelCatalogRefreshInFlight = false
+    var channelCatalogManualRefreshInFlight = false
     var channelSendInFlight = false
     var isRestoringChannelComposer = false
     var isReloadingChannelTable = false
@@ -1771,8 +1772,9 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         channelTable.headerView = nil
         channelTable.usesAlternatingRowBackgroundColors = false
         channelTable.allowsEmptySelection = true
-        channelTable.rowHeight = 52
-        channelTable.intercellSpacing = NSSize(width: 0, height: 2)
+        channelTable.rowHeight = 84
+        channelTable.intercellSpacing = NSSize(width: 0, height: 6)
+        channelTable.backgroundColor = .clear
         channelTable.target = self
         channelTable.doubleAction = #selector(joinSelectedChannel(_:))
 
@@ -1882,10 +1884,6 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
                              asset: "Toggle Speak Permission Off",
                              help: L("Toggle Speak Permission"))
         channelToggleSpeakButton.isHidden = true
-
-        channelMemberActionsButton.target = self
-        channelMemberActionsButton.action = #selector(showChannelMemberActions(_:))
-        styleIconButton(channelMemberActionsButton, symbol: "ellipsis", help: L("Participant actions"))
 
         channelAttachButton.target = self
         channelAttachButton.action = #selector(attachImageToChannel(_:))
@@ -2945,7 +2943,6 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
             channelDeleteButton.isHidden = true
             channelDeleteButton.isEnabled = false
             channelLeaveButton.isEnabled = false
-            channelMemberActionsButton.isEnabled = false
             return
         }
 
@@ -2980,8 +2977,6 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         channelDeleteButton.isHidden = !canDeleteActive
         channelDeleteButton.isEnabled = canDeleteActive
         channelLeaveButton.isEnabled = connected
-        channelMemberActionsButton.isEnabled = channelMemberTable.selectedRow >= 0
-            && channelMemberTable.selectedRow < sortedChannelMembers.count
     }
 
     func inspectorDisclosureButton(title: String, collapsed: Bool, action: Selector) -> NSButton {
@@ -7182,8 +7177,9 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         } else if tableView === channelTable && identifier == "name", row < displayedChannels.count {
             return verticallyCenteredTableContent(
                 channelRoomCell(for: displayedChannels[row]),
-                leadingInset: 12,
-                trailingInset: 8
+                fillWidth: true,
+                leadingInset: 26,
+                trailingInset: 18
             )
         } else {
             icon = nil
@@ -7230,6 +7226,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
     }
 
     func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+        if tableView === channelTable { return RoomDiscoveryTableRowView() }
         if tableView === fileTable || tableView === transferTable || tableView === newsArticleTable
             || tableView === adminAccountTable || tableView === adminNewsgroupTable
             || tableView === adminBotCommandTable || tableView === adminBotRSSTable {
