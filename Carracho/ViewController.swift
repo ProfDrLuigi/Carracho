@@ -2117,13 +2117,17 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         newsReplyAttachButton.target = self
         newsReplyAttachButton.action = #selector(attachImageToInlineNewsReply(_:))
         newsReplyAttachButton.controlSize = .small
-        newsReplyAttachButton.image = symbolImage("photo", fallback: NSImage.addTemplateName)
+        newsReplyAttachButton.image = sizedAssetImage(named: "Image", size: 16)
         newsReplyAttachButton.imagePosition = .imageLeading
+        newsReplyAttachButton.imageScaling = .scaleNone
+        newsReplyAttachButton.contentTintColor = nil
         newsReplyYouTubeButton.target = self
         newsReplyYouTubeButton.action = #selector(attachYouTubeToInlineNewsReply(_:))
         newsReplyYouTubeButton.controlSize = .small
-        newsReplyYouTubeButton.image = symbolImage("play.rectangle", fallback: NSImage.addTemplateName)
+        newsReplyYouTubeButton.image = sizedAssetImage(named: "YouTube", size: 16)
         newsReplyYouTubeButton.imagePosition = .imageLeading
+        newsReplyYouTubeButton.imageScaling = .scaleNone
+        newsReplyYouTubeButton.contentTintColor = nil
 
         newsReplySendingIndicator.style = .spinning
         newsReplySendingIndicator.controlSize = .small
@@ -4831,8 +4835,10 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
             if isTemporary {
                 edit.font = .systemFont(ofSize: 16)
             } else {
-                edit.image = symbolImage("pencil", fallback: NSImage.actionTemplateName)
-                edit.contentTintColor = CarrachoTheme.secondaryText
+                edit.image = sizedAssetImage(named: "Edit", size: 14)
+                edit.imagePosition = .imageOnly
+                edit.imageScaling = .scaleNone
+                edit.contentTintColor = nil
             }
             edit.translatesAutoresizingMaskIntoConstraints = false
             edit.widthAnchor.constraint(equalToConstant: 22).isActive = true

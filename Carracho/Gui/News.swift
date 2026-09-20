@@ -1169,6 +1169,10 @@ extension ViewController {
         htmlHint.maximumNumberOfLines = 2
         htmlHint.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         let attachImage = CarrachoClosureButton(title: L("Attach Image…"))
+        attachImage.image = sizedAssetImage(named: "Image", size: 16)
+        attachImage.imagePosition = .imageLeading
+        attachImage.imageScaling = .scaleNone
+        attachImage.contentTintColor = nil
         attachImage.isHidden = mediaClient == nil
         attachImage.handler = { [weak self, weak body, weak attachImage, weak alert] in
             guard let self, let body else { return }
@@ -1200,6 +1204,10 @@ extension ViewController {
             }
         }
         let attachYouTube = CarrachoClosureButton(title: L("YouTube…"))
+        attachYouTube.image = sizedAssetImage(named: "YouTube", size: 16)
+        attachYouTube.imagePosition = .imageLeading
+        attachYouTube.imageScaling = .scaleNone
+        attachYouTube.contentTintColor = nil
         attachYouTube.isHidden = lastLoginResult?.supportsYouTubeLinks != true
         attachYouTube.handler = { [weak self, weak alert] in
             guard let self, attachments.youtubeCount < LegacyMediaTransfer.maximumYouTubeLinksPerNewsPost,
@@ -1381,6 +1389,10 @@ extension ViewController {
         htmlHint.maximumNumberOfLines = 2
         htmlHint.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         let attachImage = CarrachoClosureButton(title: L("Attach Image…"))
+        attachImage.image = sizedAssetImage(named: "Image", size: 16)
+        attachImage.imagePosition = .imageLeading
+        attachImage.imageScaling = .scaleNone
+        attachImage.contentTintColor = nil
         attachImage.isHidden = mediaClient == nil
         attachImage.handler = { [weak self, weak body, weak attachImage, weak alert] in
             guard let self, let body else { return }
@@ -1410,6 +1422,10 @@ extension ViewController {
             }
         }
         let attachYouTube = CarrachoClosureButton(title: L("YouTube…"))
+        attachYouTube.image = sizedAssetImage(named: "YouTube", size: 16)
+        attachYouTube.imagePosition = .imageLeading
+        attachYouTube.imageScaling = .scaleNone
+        attachYouTube.contentTintColor = nil
         attachYouTube.isHidden = lastLoginResult?.supportsYouTubeLinks != true
         attachYouTube.handler = { [weak self, weak alert] in
             guard let self, attachments.youtubeCount < LegacyMediaTransfer.maximumYouTubeLinksPerNewsPost,

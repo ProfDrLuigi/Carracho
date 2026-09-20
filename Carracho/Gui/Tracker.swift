@@ -1613,8 +1613,10 @@ extension ViewController {
             edit.tag = index
             edit.isBordered = false
             edit.toolTip = L("Edit Tracker")
-            edit.image = symbolImage("pencil", fallback: NSImage.actionTemplateName)
-            edit.contentTintColor = CarrachoTheme.secondaryText
+            edit.image = sizedAssetImage(named: "Edit", size: 13)
+            edit.imagePosition = .imageOnly
+            edit.imageScaling = .scaleNone
+            edit.contentTintColor = nil
             edit.translatesAutoresizingMaskIntoConstraints = false
             edit.widthAnchor.constraint(equalToConstant: 22).isActive = true
             edit.heightAnchor.constraint(equalToConstant: 26).isActive = true

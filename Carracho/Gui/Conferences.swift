@@ -591,8 +591,29 @@ extension ViewController {
             channelComposerPlaceholderLabel.topAnchor.constraint(equalTo: composerCard.topAnchor, constant: 10),
         ])
 
-        styleIconButton(channelAttachButton, symbol: "paperclip", help: L("Attach PNG or JPEG image"))
-        styleIconButton(channelYouTubeButton, symbol: "play.rectangle", help: L("Attach a verified YouTube link"))
+        channelAttachButton.title = ""
+        channelAttachButton.image = sizedAssetImage(named: "Paperclip", size: 18)
+        channelAttachButton.imagePosition = .imageOnly
+        channelAttachButton.imageScaling = .scaleNone
+        channelAttachButton.isBordered = false
+        channelAttachButton.contentTintColor = nil
+        channelAttachButton.toolTip = L("Attach PNG or JPEG image")
+        channelAttachButton.setAccessibilityLabel(L("Attach PNG or JPEG image"))
+        channelAttachButton.translatesAutoresizingMaskIntoConstraints = false
+        channelAttachButton.widthAnchor.constraint(equalToConstant: 30).isActive = true
+        channelAttachButton.heightAnchor.constraint(equalToConstant: 30).isActive = true
+
+        channelYouTubeButton.title = ""
+        channelYouTubeButton.image = sizedAssetImage(named: "YouTube", size: 18)
+        channelYouTubeButton.imagePosition = .imageOnly
+        channelYouTubeButton.imageScaling = .scaleNone
+        channelYouTubeButton.isBordered = false
+        channelYouTubeButton.contentTintColor = nil
+        channelYouTubeButton.toolTip = L("Attach a verified YouTube link")
+        channelYouTubeButton.setAccessibilityLabel(L("Attach a verified YouTube link"))
+        channelYouTubeButton.translatesAutoresizingMaskIntoConstraints = false
+        channelYouTubeButton.widthAnchor.constraint(equalToConstant: 30).isActive = true
+        channelYouTubeButton.heightAnchor.constraint(equalToConstant: 30).isActive = true
         channelSendButton.title = L("Send")
         channelSendButton.image = symbolImage("paperplane.fill", fallback: NSImage.goRightTemplateName)
         channelSendButton.imagePosition = .imageLeading
