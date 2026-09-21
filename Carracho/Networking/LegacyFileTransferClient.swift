@@ -631,12 +631,22 @@ final class LegacyFileTransferClient {
                                     maximumFileSize: UInt64?,
                                     progress: ((LegacyFileTransferProgress) -> Void)?,
                                     completion: @escaping (Result<UInt64, Error>) -> Void) {
-        stream.sendPayload(LegacyWire.uint64BE(resumeOffset)) { sent in
+        var resumePayload = LegacyWire.uint64BE(resumeOffset)
+        if !session.usesModernCrypto {
+            // Classic encrypted downloads negotiate both forks. Carracho Server 1.0b13
+            // reads a 64-bit data-fork resume offset followed by a 64-bit resource-fork
+            // resume offset before sending either fork length.
+            resumePayload.append(LegacyWire.uint64BE(0))
+        }
+
+        stream.sendPayload(resumePayload) { sent in
             guard case .success = sent else { completion(sent.map { 0 }); return }
-            stream.readPayload(8) { lengthResult in
+            let lengthBytes = self.session.usesModernCrypto ? 8 : 16
+            stream.readPayload(lengthBytes) { lengthResult in
                 do {
                     var cursor = LegacyByteCursor(try lengthResult.get())
-                    let dataLength = (UInt64(try cursor.readUInt32BE()) << 32) | UInt64(try cursor.readUInt32BE())
+                    let dataLength = try cursor.readUInt64BE()
+                    let resourceLength = self.session.usesModernCrypto ? 0 : try cursor.readUInt64BE()
                     let (logicalEnd, overflow) = completedBase.addingReportingOverflow(dataLength)
                     guard !overflow else {
                         throw LegacyFileTransferError.invalidTransferRecord("Download-Größenzähler überläuft")
@@ -648,25 +658,53 @@ final class LegacyFileTransferClient {
                                       completedBase: completedBase, total: max(totalBytes, logicalEnd),
                                       progress: progress) { bytesResult in
                         guard case .success = bytesResult else { completion(bytesResult.map { dataLength }); return }
-                        stream.readPayload(2) { commentLenResult in
-                            do {
-                                var cc = LegacyByteCursor(try commentLenResult.get())
-                                let commentLength = Int(try cc.readUInt16BE())
-                                guard commentLength <= 4096 else {
-                                    throw LegacyFileTransferError.invalidTransferRecord("Kommentar ist zu lang")
-                                }
-                                stream.readPayload(commentLength) { commentResult in
-                                    do {
-                                        _ = try commentResult.get()
-                                        completion(.success(dataLength))
-                                    } catch { completion(.failure(error)) }
-                                }
-                            } catch { completion(.failure(error)) }
+                        self.discardBytes(stream: stream, count: resourceLength) { resourceResult in
+                            guard case .success = resourceResult else {
+                                completion(resourceResult.map { dataLength }); return
+                            }
+                            stream.readPayload(2) { commentLenResult in
+                                do {
+                                    var cc = LegacyByteCursor(try commentLenResult.get())
+                                    let commentLength = Int(try cc.readUInt16BE())
+                                    guard commentLength <= 4096 else {
+                                        throw LegacyFileTransferError.invalidTransferRecord("Kommentar ist zu lang")
+                                    }
+                                    stream.readPayload(commentLength) { commentResult in
+                                        do {
+                                            _ = try commentResult.get()
+                                            completion(.success(dataLength))
+                                        } catch { completion(.failure(error)) }
+                                    }
+                                } catch { completion(.failure(error)) }
+                            }
                         }
                     }
                 } catch { completion(.failure(error)) }
             }
         }
+    }
+
+    private func discardBytes(stream: AuthenticatedTransferStream,
+                              count: UInt64,
+                              completion: @escaping (Result<Void, Error>) -> Void) {
+        var remaining = count
+        func next() {
+            guard remaining > 0 else { completion(.success(())); return }
+            let chunk = Int(min(UInt64(Self.ioChunk), remaining))
+            stream.readPayload(chunk) { result in
+                do {
+                    let data = try result.get()
+                    guard !data.isEmpty else {
+                        throw LegacyFileTransferError.connectionClosed
+                    }
+                    remaining -= UInt64(data.count)
+                    next()
+                } catch {
+                    completion(.failure(error))
+                }
+            }
+        }
+        next()
     }
 
     private func receiveBytes(stream: AuthenticatedTransferStream,

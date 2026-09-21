@@ -422,6 +422,10 @@ struct LegacyBotAdminStatus: Equatable {
 
 enum LegacyUserInfoField {
     static let maximumPictureLength = Int(UInt16.max)
+    /// Original Carracho 1.0 clients use a fixed 0x27c-byte native user icon payload.
+    /// Larger modern PNG avatars must not be sent to Classic Server 1.0b13: it closes
+    /// the control connection after receiving such a User Update.
+    static let classicPictureLength = 0x27c
     static let nickname: UInt32 = 4
     static let name: UInt32 = 0xb0
     static let email: UInt32 = 0xb1

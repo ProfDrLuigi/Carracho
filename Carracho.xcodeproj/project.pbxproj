@@ -57,6 +57,7 @@
 		2A13EC58305AA3AE002A3039 /* carrachoclient.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; path = carrachoclient.html; sourceTree = "<group>"; };
 		2A13EC59305AA7FD002A3039 /* carrachoserver.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; path = carrachoserver.html; sourceTree = "<group>"; };
 		2A3840A9305961DB00D5C253 /* Carracho-Server-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = "Carracho-Server-Info.plist"; sourceTree = "<group>"; };
+		2A8153BA3061161A007CA770 /* build-debs.sh */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; path = "build-debs.sh"; sourceTree = "<group>"; };
 		2AD52C523052E26B00CD47B6 /* Carracho.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Carracho.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		2AD53F4B3054732E00CD47B6 /* Carracho Server.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Carracho Server.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		2AD542343055691A00CD47B6 /* compile.sh */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; path = compile.sh; sourceTree = "<group>"; };
@@ -206,6 +207,7 @@
 		2AD52C493052E26B00CD47B6 = {
 			isa = PBXGroup;
 			children = (
+				2A8153BA3061161A007CA770 /* build-debs.sh */,
 				2A3840A9305961DB00D5C253 /* Carracho-Server-Info.plist */,
 				2A13EC58305AA3AE002A3039 /* carrachoclient.html */,
 				2A13EC59305AA7FD002A3039 /* carrachoserver.html */,

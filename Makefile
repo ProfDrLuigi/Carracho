@@ -1,4 +1,4 @@
-.PHONY: all native server tracker native-werror swift-tests c-tests macos-build release-check clean
+.PHONY: all native server tracker native-werror debs deb-server deb-tracker swift-tests c-tests macos-build release-check clean
 
 all: native
 
@@ -13,6 +13,15 @@ tracker:
 native-werror:
 	EXTRA_CFLAGS=-Werror ./ServerLinux/build.sh
 	EXTRA_CFLAGS=-Werror ./TrackerLinux/build.sh
+
+debs:
+	./build-debs.sh all
+
+deb-server:
+	./build-debs.sh server
+
+deb-tracker:
+	./build-debs.sh tracker
 
 swift-tests:
 	Analysis/tests/run_all.zsh

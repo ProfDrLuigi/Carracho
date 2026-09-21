@@ -1023,7 +1023,14 @@ final class LegacyControlClient {
             completion(.failure(LegacyControlClientError.invalidInput("Nickname/Picture/Status überschreitet das User-Update-Limit."))); return
         }
         currentNickname = nickname
-        var fields = [LegacyTLV(type: 2, value: nickname), LegacyTLV(type: 5, value: picture)]
+        var fields = [LegacyTLV(type: 2, value: nickname)]
+        // Classic Server 1.0b13 accepts the historical fixed-size 0x27c-byte icon
+        // (and an empty picture used to clear it), but disconnects the whole control
+        // session when a modern multi-kilobyte PNG is sent in this field. On Classic
+        // transport, preserve the remote avatar instead of sending an incompatible PNG.
+        if !negotiatedLegacyCrypto || picture.isEmpty || picture.count == LegacyUserInfoField.classicPictureLength {
+            fields.append(LegacyTLV(type: 5, value: picture))
+        }
         if let statusMessage { fields.append(LegacyTLV(type: LegacyUserInfoField.statusMessage, value: statusMessage)) }
         sendOneWay(command: LegacyCommand.userUpdate, fields: fields, completion: completion)
     }
@@ -1056,11 +1063,20 @@ final class LegacyControlClient {
         guard name.count <= 64, email.count <= 64, aboutMe.count <= 128 else {
             completion(.failure(LegacyControlClientError.invalidInput("Profilfelder überschreiten das Classic-Limit."))); return
         }
-        sendTaskCompleteRequest(command: LegacyCommand.extendedOwnUserInfo, fields: [
+        let fields = [
             LegacyTLV(type: LegacyUserInfoField.name, value: name),
             LegacyTLV(type: LegacyUserInfoField.email, value: email),
             LegacyTLV(type: LegacyUserInfoField.aboutMe, value: aboutMe),
-        ], completion: completion)
+        ]
+        if negotiatedLegacyCrypto {
+            // Original Client 1.0b10r4 sends command 0x16 as a one-way packet with
+            // transaction ID 0. Classic Server 1.0b13 does not complete a transaction
+            // for this update and can stop processing later requests when given one.
+            sendOneWay(command: LegacyCommand.extendedOwnUserInfo, fields: fields, completion: completion)
+        } else {
+            sendTaskCompleteRequest(command: LegacyCommand.extendedOwnUserInfo, fields: fields,
+                                    completion: completion)
+        }
     }
 
     func requestUserInfo(userID: UInt32,
