@@ -663,6 +663,127 @@ Start the tracker with:
 .build/linux/carracho-tracker --port 6702
 ```
 
+### Install as systemd services
+
+For a permanent Linux installation, a simple layout is `/opt/carracho` with a dedicated unprivileged `carracho` user.
+
+Create the service account and install the initial build:
+
+```sh
+sudo useradd --system --home /opt/carracho --shell /usr/sbin/nologin carracho
+sudo install -d -o carracho -g carracho /opt/carracho
+sudo cp -a .build/linux/. /opt/carracho/
+sudo chown -R carracho:carracho /opt/carracho
+```
+
+The server must be able to write its databases and persistent state. Keeping `/opt/carracho` owned by the service account also allows administration changes that are mirrored back to `etc/carracho-server.json` to be persisted.
+
+Create `/etc/systemd/system/carracho.service`:
+
+```ini
+[Unit]
+Description=Carracho Server
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=carracho
+Group=carracho
+WorkingDirectory=/opt/carracho
+ExecStart=/opt/carracho/carracho-server --config /opt/carracho/etc/carracho-server.json
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+If the standalone tracker should run on the same machine, create `/etc/systemd/system/carracho-tracker.service`:
+
+```ini
+[Unit]
+Description=Carracho Tracker
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=carracho
+Group=carracho
+WorkingDirectory=/opt/carracho
+ExecStart=/opt/carracho/carracho-tracker --port 6702
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Reload systemd and enable the services:
+
+```sh
+sudo systemctl daemon-reload
+sudo systemctl enable --now carracho.service
+sudo systemctl enable --now carracho-tracker.service
+```
+
+If the tracker is not needed on that host, simply omit `carracho-tracker.service`.
+
+Check service state and follow the logs with:
+
+```sh
+systemctl status carracho.service --no-pager
+systemctl status carracho-tracker.service --no-pager
+
+journalctl -u carracho.service -f
+journalctl -u carracho-tracker.service -f
+```
+
+With the default ports, the firewall/NAT rules normally need:
+
+```text
+6700/tcp   Carracho control connection
+6701/tcp   Carracho transfer connections
+6702/tcp   Tracker queries
+6702/udp   Tracker server registrations
+```
+
+For example with UFW:
+
+```sh
+sudo ufw allow 6700/tcp
+sudo ufw allow 6701/tcp
+sudo ufw allow 6702/tcp
+sudo ufw allow 6702/udp
+```
+
+The WebAdmin does **not** need its own systemd service. When it is enabled, `carracho-server` starts the bundled helper as a child process. If an environment file is used for the WebAdmin token, add a systemd drop-in for `carracho.service` as documented in `ServerLinux/Webinterface/README.md`.
+
+#### Updating an existing service installation
+
+Do not replace the live `etc/` or `db/` directories with fresh build defaults. Stop the services, replace only the binaries (and the optional WebAdmin helper), then start them again:
+
+```sh
+sudo systemctl stop carracho.service carracho-tracker.service
+
+sudo install -m 0755 .build/linux/carracho-server /opt/carracho/carracho-server
+sudo install -m 0755 .build/linux/carracho-tracker /opt/carracho/carracho-tracker
+
+# Only when the optional helper was built:
+sudo install -d -o carracho -g carracho /opt/carracho/libexec/carracho
+sudo install -m 0755 .build/linux/libexec/carracho/carracho-web-admin-helper \
+  /opt/carracho/libexec/carracho/carracho-web-admin-helper
+
+sudo chown carracho:carracho \
+  /opt/carracho/carracho-server \
+  /opt/carracho/carracho-tracker
+
+sudo systemctl start carracho.service carracho-tracker.service
+```
+
+That preserves the live configuration, accounts, databases and server state under `/opt/carracho`.
+
 Remove generated native build output with:
 
 ```sh
