@@ -20,6 +20,7 @@ struct ServerMediaObject: Equatable {
 enum ServerMediaReferenceKind: Int32 {
     case chat = 1
     case news = 2
+    case privateMessage = 3
 }
 
 enum ServerMediaStoreError: Error, LocalizedError {

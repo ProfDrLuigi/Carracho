@@ -2642,12 +2642,24 @@ static int handle_private_message(cr_session *s, const cr_packet *p) {
     int classic_ready=!tagged||!classic_text_describing_emoji(message->value,message->length,classic,sizeof(classic),&classic_len);
     uint8_t uid[4]; cr_write_be32(uid, s->user_id);
 
+    char media_ids[4][37];size_t media_count=0;
+    if(s->modern_transport&&extract_media_ids(message->value,message->length,media_ids,4,&media_count))
+        return p->transaction_id?send_error(s,p->transaction_id,1):0;
+
     pthread_mutex_lock(&s->server->mutex);
     cr_session *target = find_session_locked(s->server, target_id);
     const uint8_t*wire=message->value;size_t wire_len=message->length;
+    if(target&&media_count&&!target->modern_transport)target=NULL;
     if(target&&tagged&&!target->modern_transport){
         if(!classic_ready||!classic_len)target=NULL;
         else{wire=classic;wire_len=classic_len;}
+    }
+    if(target&&media_count){
+        char message_id[33];
+        if(media_message_id(message_id)||
+           bind_media_tokens(s->server,s,message->value,message->length,4,
+                             CR_MEDIA_KIND_PRIVATE_MESSAGE,target->account_id,message_id,
+                             time(NULL)+30*24*60*60))target=NULL;
     }
     cr_tlv_out fields[3]; size_t n=0;
     fields[n++] = (cr_tlv_out){1,uid,4}; fields[n++] = (cr_tlv_out){2,wire,(uint16_t)wire_len};
@@ -4775,6 +4787,7 @@ static int serve_media_download(cr_server*s,cr_transfer_stream*stream,cr_session
     uint8_t h[2];if(cr_transfer_read(stream,h,2)||h[0]!=1)return-1;uint8_t kind=h[1];uint8_t*scope=NULL,*idw=NULL;size_t sn=0,in=0;if(transfer_read_string16_alloc(stream,&scope,&sn,4096)||transfer_read_string16_alloc(stream,&idw,&in,36)){free(scope);free(idw);return-1;}if(in!=36||!media_uuid_text_valid((const char*)idw)){free(scope);free(idw);uint8_t no=0;return cr_transfer_send(stream,&no,1);}char id[37];memcpy(id,idw,36);id[36]='\0';free(idw);int allowed=cr_media_store_is_owned(&s->media,id,session->account_id);
     if(!allowed&&kind==CR_MEDIA_KIND_CHAT&&sn==4){uint32_t cid=cr_read_be32(scope);char key[32];snprintf(key,sizeof(key),"%u",cid);pthread_mutex_lock(&s->mutex);cr_channel*c=channel_by_id_locked(s,cid);int member=c&&channel_member_index(c,session->user_id)>=0;pthread_mutex_unlock(&s->mutex);allowed=member&&cr_media_store_has_ref(&s->media,id,CR_MEDIA_KIND_CHAT,key);}
     else if(!allowed&&kind==CR_MEDIA_KIND_NEWS&&sn){cr_newsgroup g;if(!lookup_newsgroup(s,scope,sn,&g)&&group_can_read(&g,session->mode))allowed=cr_media_store_has_ref(&s->media,id,CR_MEDIA_KIND_NEWS,g.id);}
+    else if(!allowed&&kind==CR_MEDIA_KIND_PRIVATE_MESSAGE&&!sn)allowed=cr_media_store_has_ref(&s->media,id,CR_MEDIA_KIND_PRIVATE_MESSAGE,session->account_id);
     free(scope);if(!allowed){uint8_t no=0;return cr_transfer_send(stream,&no,1);}cr_media_object o;if(cr_media_store_load(&s->media,id,&o))return-1;size_t mn=strlen(o.mime_type),fn=strlen(o.filename);if(mn>UINT16_MAX||fn>UINT16_MAX||o.data_len>UINT32_MAX||o.width>UINT16_MAX||o.height>UINT16_MAX){cr_media_object_free(&o);return-1;}cr_buffer b;cr_buffer_init(&b);int fail=cr_buffer_append_u8(&b,1)||cr_buffer_append_string16(&b,o.mime_type,mn)||cr_buffer_append_string16(&b,o.filename,fn)||cr_buffer_append_u16(&b,(uint16_t)o.width)||cr_buffer_append_u16(&b,(uint16_t)o.height)||cr_buffer_append_u32(&b,(uint32_t)o.data_len)||cr_buffer_append(&b,o.data,o.data_len);cr_media_object_free(&o);int rc=fail?-1:cr_transfer_send(stream,b.data,b.len);cr_buffer_free(&b);return rc;
 }
 

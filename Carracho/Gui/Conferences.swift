@@ -1347,6 +1347,24 @@ extension ViewController {
         }
     }
 
+    func showMediaPreview(_ id: UUID) {
+        guard let image = mediaCache?.image(id: id) else { return }
+
+        mediaPreviewWindowController?.close()
+        let controller = CarrachoImagePreviewWindowController(
+            image: image,
+            parentWindow: view.window
+        )
+        controller.onClose = { [weak self, weak controller] in
+            guard let self else { return }
+            if self.mediaPreviewWindowController === controller {
+                self.mediaPreviewWindowController = nil
+            }
+        }
+        mediaPreviewWindowController = controller
+        controller.show(relativeTo: view.window)
+    }
+
     func applyDeletedMedia(_ id: UUID) {
         mediaCache?.remove(id: id)
         mediaDownloadsInFlight.remove(id)
@@ -1642,7 +1660,7 @@ extension ViewController {
             }
         }
 
-        channelChatTextView.textStorage?.setAttributedString(output)
+        channelChatTextView.textStorage?.setAttributedString(CarrachoHTMLText.addingDetectedLinks(to: output))
         if hadTextSelection {
             let length = output.length
             let restored = oldSelectedRanges.compactMap { value -> NSValue? in

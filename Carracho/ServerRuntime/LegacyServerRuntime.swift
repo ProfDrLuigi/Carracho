@@ -2209,6 +2209,7 @@ final class LegacyServerRuntime {
     private func handlePrivateMessage(packet: LegacyPacket, session: LegacyServerSession) throws {
         do {
             guard let senderID = session.userID,
+                  let senderAccount = session.account,
                   let message = packet.firstField(type: 2)?.value,
                   !message.isEmpty, message.count <= 0x8000 else {
                 throw LegacyServerRuntimeError.protocolFailure("invalid private-message payload")
@@ -2218,8 +2219,29 @@ final class LegacyServerRuntime {
                 throw LegacyServerRuntimeError.protocolFailure("private-message secondary payload exceeds limit")
             }
             let userID = try targetUserID(from: packet)
-            guard let target = authenticatedSession(userID: userID) else {
+            guard let target = authenticatedSession(userID: userID),
+                  let targetAccount = target.account else {
                 throw LegacyServerRuntimeError.protocolFailure("private-message target is not connected")
+            }
+            let mediaReferences = session.isLegacyTransport
+                ? []
+                : LegacyMediaReference.references(inWire: message)
+            guard mediaReferences.count <= LegacyMediaTransfer.maximumImagesPerPrivateMessage else {
+                throw LegacyServerRuntimeError.protocolFailure("too many private-message media attachments")
+            }
+            if target.isLegacyTransport, !mediaReferences.isEmpty {
+                throw LegacyServerRuntimeError.protocolFailure("Classic private messages do not support media attachments")
+            }
+            if !mediaReferences.isEmpty {
+                try validateAndBindMediaReferences(
+                    in: message,
+                    ownerAccountID: senderAccount.id,
+                    maximum: LegacyMediaTransfer.maximumImagesPerPrivateMessage,
+                    kind: .privateMessage,
+                    scope: targetAccount.id.uuidString.lowercased(),
+                    messageID: UUID().uuidString.lowercased(),
+                    expiresAt: Date().addingTimeInterval(LegacyMediaTransfer.privateMessageLifetime)
+                )
             }
             let wireMessage: Data
             if target.isLegacyTransport, CarrachoTextWire.isTaggedUTF8(message) {
@@ -5889,6 +5911,12 @@ extension LegacyServerRuntime {
         } else if !allowed, kind == ServerMediaReferenceKind.news.rawValue,
                   let group = configuredNewsgroup(named: scopeWire), canRead(group: group, account: access.account) {
             allowed = try mediaStore.hasReference(id: id, kind: .news, scope: group.id.uuidString.lowercased())
+        } else if !allowed, kind == ServerMediaReferenceKind.privateMessage.rawValue, scopeWire.isEmpty {
+            allowed = try mediaStore.hasReference(
+                id: id,
+                kind: .privateMessage,
+                scope: access.account.id.uuidString.lowercased()
+            )
         }
         guard allowed else { try stream.sendPayload(Data([0])); return }
         let object = try mediaStore.load(id: id)

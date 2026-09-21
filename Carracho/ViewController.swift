@@ -1060,6 +1060,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
     weak var privateMessageTranscriptScroll: NSScrollView?
     let privateMessageEmptyLabel = NSTextField(wrappingLabelWithString: L("Choose a conversation or start a new message."))
     let privateMessageComposer = CarrachoMediaComposerTextView(frame: .zero)
+    let privateMessageAttachments = CarrachoComposerAttachmentStrip()
     lazy var privateMessageEmojiButton = EmojiPickerButton(editor: privateMessageComposer)
     let privateMessageSendButton = NSButton(title: L("Send"), target: nil, action: nil)
     let privateMessageComposerStatusLabel = NSTextField(labelWithString: "")
@@ -1261,6 +1262,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
     var newsClient: LegacyNewsClient?
     var mediaClient: LegacyMediaClient?
     var mediaCache: CarrachoMediaCache?
+    var mediaPreviewWindowController: CarrachoImagePreviewWindowController?
     var mediaDownloadsInFlight: Set<UUID> = []
     var mediaDownloadFailures: Set<UUID> = []
     var hiddenMediaIDs: Set<UUID> = []
@@ -1923,6 +1925,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         }
         channelAttachmentStrip.onRemoveImage = { [weak self] id in self?.deletePendingMedia(id) }
         channelChatTextView.mediaDeleteHandler = { [weak self] id in self?.confirmDeletePostedMedia(id) }
+        channelChatTextView.mediaOpenHandler = { [weak self] id in self?.showMediaPreview(id) }
 
         channelComposerPlaceholderLabel.font = .systemFont(ofSize: 13)
         channelComposerPlaceholderLabel.textColor = CarrachoTheme.tertiaryText
@@ -2072,6 +2075,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         newsArticleTextView.font = NSFont.systemFont(ofSize: newsFontSize)
         newsArticleTextView.textContainerInset = NSSize(width: 18, height: 16)
         newsArticleTextView.mediaDeleteHandler = { [weak self] id in self?.confirmDeletePostedMedia(id) }
+        newsArticleTextView.mediaOpenHandler = { [weak self] id in self?.showMediaPreview(id) }
         newsArticleTextView.appLinkHandler = { [weak self] link in
             self?.handleNewsInlineLink(link) ?? false
         }

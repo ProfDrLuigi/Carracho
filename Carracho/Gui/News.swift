@@ -2185,7 +2185,7 @@ extension ViewController {
                 output.addAttribute(.carrachoPostBackground, value: index % 2 != 0, range: postRange)
             }
         }
-        newsArticleTextView.textStorage?.setAttributedString(output)
+        newsArticleTextView.textStorage?.setAttributedString(CarrachoHTMLText.addingDetectedLinks(to: output))
 
         renderedNewsCategory = currentNewsCategory
         renderedNewsThreadID = currentNewsThreadID

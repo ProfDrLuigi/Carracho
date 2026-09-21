@@ -16,6 +16,7 @@
 #define CR_MEDIA_MAX_DIMENSION 4096u
 #define CR_MEDIA_KIND_CHAT 1
 #define CR_MEDIA_KIND_NEWS 2
+#define CR_MEDIA_KIND_PRIVATE_MESSAGE 3
 
 typedef struct cr_media_store {
   sqlite3 *db;

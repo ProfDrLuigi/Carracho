@@ -1134,7 +1134,7 @@ final class FlatNewsWindowController: NSWindowController, NSWindowDelegate {
             rendered.append(CarrachoHTMLText.attributedString(fromWire: item, baseFont: .systemFont(ofSize: fontSize)))
             if index + 1 < items.count { rendered.append(NSAttributedString(string: "\n\n")) }
         }
-        streamView.textStorage?.setAttributedString(rendered)
+        streamView.textStorage?.setAttributedString(CarrachoHTMLText.addingDetectedLinks(to: rendered))
         let hasItems = !items.isEmpty
         streamScroll.isHidden = !hasItems
         streamMinimumHeightConstraint.isActive = hasItems

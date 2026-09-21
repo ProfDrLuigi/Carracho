@@ -18,12 +18,14 @@ enum LegacyMediaContext: Equatable {
     case pending
     case channel(UInt32)
     case news(Data)
+    case privateMessage
 
     var kind: UInt8 {
         switch self {
         case .pending: return 0
         case .channel: return 1
         case .news: return 2
+        case .privateMessage: return 3
         }
     }
 
@@ -32,6 +34,7 @@ enum LegacyMediaContext: Equatable {
         case .pending: return Data()
         case let .channel(channelID): return LegacyWire.uint32BE(channelID)
         case let .news(group): return group
+        case .privateMessage: return Data()
         }
     }
 }
@@ -189,9 +192,11 @@ enum LegacyMediaTransfer {
     static let maximumImageBytes = 4 * 1024 * 1024
     static let maximumDimension = 4096
     static let maximumImagesPerChatMessage = 4
+    static let maximumImagesPerPrivateMessage = 4
     static let maximumImagesPerNewsPost = 10
     static let maximumYouTubeLinksPerChatMessage = 4
     static let maximumYouTubeLinksPerNewsPost = 10
     static let pendingLifetime: TimeInterval = 60 * 60
     static let chatLifetime: TimeInterval = 7 * 24 * 60 * 60
+    static let privateMessageLifetime: TimeInterval = 30 * 24 * 60 * 60
 }

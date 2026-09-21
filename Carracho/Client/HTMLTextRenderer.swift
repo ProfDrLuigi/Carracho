@@ -20,6 +20,43 @@ enum CarrachoHTMLText {
 
     static let editorHint = "Emoji + HTML supported: <b>, <i>, <u>, <a>, lists, blockquotes and code."
 
+    private static let linkDetector = try? NSDataDetector(
+        types: NSTextCheckingResult.CheckingType.link.rawValue
+    )
+
+    /// AppKit's automatic link detection is not reliable for attributed strings that are replaced
+    /// programmatically (chat/news transcripts do this on every render). Add link attributes here
+    /// so plain URLs behave like HTML <a> elements in every renderer that uses CarrachoHTMLText.
+    static func addingDetectedLinks(to attributed: NSAttributedString) -> NSAttributedString {
+        guard attributed.length > 0, let linkDetector else { return attributed }
+        let result = NSMutableAttributedString(attributedString: attributed)
+        let fullRange = NSRange(location: 0, length: result.length)
+        linkDetector.enumerateMatches(in: result.string, options: [], range: fullRange) { match, _, _ in
+            guard let match, let url = match.url, match.range.length > 0,
+                  NSMaxRange(match.range) <= result.length else { return }
+
+            // Keep explicit HTML/app links authoritative. The detector only fills otherwise plain
+            // text, so media actions and <a href=...> destinations are never rewritten.
+            var hasExistingLink = false
+            result.enumerateAttribute(.link, in: match.range, options: []) { value, _, stop in
+                if value != nil {
+                    hasExistingLink = true
+                    stop.pointee = true
+                }
+            }
+            if !hasExistingLink {
+                result.addAttribute(.link, value: url, range: match.range)
+            }
+        }
+        return result
+    }
+
+    private static func finalized(_ attributed: NSAttributedString,
+                                  expandLegacyEmoticons: Bool) -> NSAttributedString {
+        let expanded = expandLegacyEmoticons ? replacingLegacyEmoticons(in: attributed) : attributed
+        return addingDetectedLinks(to: expanded)
+    }
+
     static func string(fromWire data: Data) -> String {
         CarrachoTextWire.string(from: data)
     }
@@ -46,7 +83,7 @@ enum CarrachoHTMLText {
                 .font: baseFont,
                 .foregroundColor: textColor,
             ])
-            return expandLegacyEmoticons ? replacingLegacyEmoticons(in: rendered) : rendered
+            return finalized(rendered, expandLegacyEmoticons: expandLegacyEmoticons)
         }
 
         let safeBody = sanitize(normalized)
@@ -70,9 +107,9 @@ enum CarrachoHTMLText {
                 .font: baseFont,
                 .foregroundColor: textColor,
             ])
-            return expandLegacyEmoticons ? replacingLegacyEmoticons(in: rendered) : rendered
+            return finalized(rendered, expandLegacyEmoticons: expandLegacyEmoticons)
         }
-        return expandLegacyEmoticons ? replacingLegacyEmoticons(in: value) : value
+        return finalized(value, expandLegacyEmoticons: expandLegacyEmoticons)
     }
 
     static func plainText(fromWire data: Data, expandLegacyEmoticons: Bool = false) -> String {

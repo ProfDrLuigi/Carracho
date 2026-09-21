@@ -185,6 +185,25 @@ extension ViewController {
         privateMessageComposer.drawsBackground = false
         privateMessageComposer.toolTip = CarrachoHTMLText.editorHint
         privateMessageComposer.setAccessibilityLabel(L("Private message"))
+        privateMessageComposer.imageFileHandler = { [weak self] urls in
+            self?.uploadPrivateMessageImages(urls: urls)
+        }
+        privateMessageComposer.imageDataHandler = { [weak self] data in
+            self?.uploadPrivateMessageImage(data: data)
+        }
+        privateMessageComposer.youTubeURLHandler = { [weak self] reference in
+            guard let self,
+                  let userID = self.selectedPrivateConversationID,
+                  let conversation = self.privateMessageConversations[userID],
+                  !conversation.isLegacyTransport,
+                  self.lastLoginResult?.supportsYouTubeLinks == true,
+                  self.privateMessageAttachments.youtubeCount < LegacyMediaTransfer.maximumYouTubeLinksPerChatMessage else {
+                return false
+            }
+            self.privateMessageAttachments.addYouTube(reference)
+            return true
+        }
+        privateMessageAttachments.onRemoveImage = { [weak self] id in self?.deletePendingMedia(id) }
         let composerScroll = NSScrollView()
         composerScroll.documentView = privateMessageComposer
         composerScroll.drawsBackground = true
@@ -208,7 +227,7 @@ extension ViewController {
         privateMessageComposerHintLabel.setContentHuggingPriority(.required, for: .horizontal)
         let composerTop = horizontalStack([privateMessageComposerStatusLabel, NSView(), privateMessageComposerHintLabel], spacing: 8)
         let composerActions = horizontalStack([privateMessageEmojiButton, NSView(), privateMessageSendButton], spacing: 8)
-        let composer = verticalStack([composerTop, composerScroll, composerActions], spacing: 7)
+        let composer = verticalStack([composerTop, privateMessageAttachments, composerScroll, composerActions], spacing: 7)
         composer.translatesAutoresizingMaskIntoConstraints = false
         let composerDivider = CarrachoDividerView()
         composerDivider.translatesAutoresizingMaskIntoConstraints = false
@@ -624,6 +643,126 @@ extension ViewController {
         return row
     }
 
+    func messageCenterTextLabel(_ attributed: NSAttributedString) -> NSTextField {
+        let body = NSTextField(wrappingLabelWithString: "")
+        body.attributedStringValue = attributed
+        body.font = .systemFont(ofSize: messageCenterFontSize)
+        body.maximumNumberOfLines = 0
+        body.isEditable = false
+        body.isSelectable = true
+        body.allowsEditingTextAttributes = true
+        body.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        return body
+    }
+
+    func messageCenterBodyLabel(fromWire data: Data) -> NSTextField {
+        messageCenterTextLabel(CarrachoHTMLText.attributedString(
+            fromWire: data,
+            baseFont: .systemFont(ofSize: messageCenterFontSize),
+            expandLegacyEmoticons: true
+        ))
+    }
+
+    func messageCenterBodyView(fromWire data: Data, allowMedia: Bool = true) -> NSView {
+        guard allowMedia else { return messageCenterBodyLabel(fromWire: data) }
+        let source = CarrachoTextWire.string(from: data)
+        let segments = LegacyMediaReference.segments(in: source)
+        guard segments.contains(where: {
+            switch $0 {
+            case .image, .youtube: return true
+            case .text: return false
+            }
+        }) else {
+            return messageCenterBodyLabel(fromWire: data)
+        }
+
+        var views: [NSView] = []
+        for segment in segments {
+            switch segment {
+            case let .text(text):
+                guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+                views.append(messageCenterTextLabel(CarrachoHTMLText.attributedString(
+                    from: text,
+                    baseFont: .systemFont(ofSize: messageCenterFontSize),
+                    expandLegacyEmoticons: true
+                )))
+            case let .image(id):
+                if hiddenMediaIDs.contains(id) { continue }
+                if let image = mediaCache?.image(id: id) {
+                    let availableWidth = privateMessageTranscriptScroll?.contentView.bounds.width ?? 640
+                    let maximumWidth = max(160, min(520, availableWidth * 0.62))
+                    let maximumHeight: CGFloat = 280
+                    let rawWidth = max(1, image.size.width)
+                    let rawHeight = max(1, image.size.height)
+                    let scale = min(1, maximumWidth / rawWidth, maximumHeight / rawHeight)
+                    let button = NSButton(image: image, target: self, action: #selector(openMessageCenterImage(_:)))
+                    button.identifier = NSUserInterfaceItemIdentifier(id.uuidString.lowercased())
+                    button.imagePosition = .imageOnly
+                    button.imageScaling = .scaleProportionallyUpOrDown
+                    button.isBordered = false
+                    button.focusRingType = .none
+                    button.toolTip = L("Open image preview")
+                    button.translatesAutoresizingMaskIntoConstraints = false
+                    NSLayoutConstraint.activate([
+                        button.widthAnchor.constraint(equalToConstant: max(1, floor(rawWidth * scale))),
+                        button.heightAnchor.constraint(equalToConstant: max(1, floor(rawHeight * scale))),
+                    ])
+                    views.append(button)
+                } else {
+                    let failed = mediaDownloadFailures.contains(id)
+                    let placeholder = NSTextField(labelWithString: failed ? L("[Image unavailable]") : L("[Loading image…]"))
+                    placeholder.font = .systemFont(ofSize: max(10, messageCenterFontSize - 1))
+                    placeholder.textColor = CarrachoTheme.secondaryText
+                    views.append(placeholder)
+                    requestMediaIfNeeded(id: id, context: .privateMessage) { [weak self] in
+                        self?.refreshPrivateMessageCenter(scrollToBottom: false)
+                    }
+                }
+            case let .youtube(reference):
+                views.append(messageCenterTextLabel(CarrachoHTMLText.addingDetectedLinks(to:
+                    NSAttributedString(
+                        string: reference.canonicalURLString,
+                        attributes: [.font: NSFont.systemFont(ofSize: messageCenterFontSize)]
+                    )
+                )))
+            }
+        }
+
+        if views.isEmpty { return messageCenterBodyLabel(fromWire: data) }
+        return views.count == 1 ? views[0] : verticalStack(views, spacing: 6)
+    }
+
+    @objc func openMessageCenterImage(_ sender: NSButton) {
+        guard let raw = sender.identifier?.rawValue,
+              let id = UUID(uuidString: raw) else { return }
+        showMediaPreview(id)
+    }
+
+    func messageCenterPreviewText(fromWire data: Data, allowMedia: Bool = true) -> String {
+        if !allowMedia {
+            return CarrachoHTMLText.plainText(fromWire: data, expandLegacyEmoticons: true)
+                .replacingOccurrences(of: "\n", with: " ")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        let source = CarrachoTextWire.string(from: data)
+        return LegacyMediaReference.segments(in: source).map { segment in
+            switch segment {
+            case let .text(text):
+                return CarrachoHTMLText.attributedString(
+                    from: text,
+                    baseFont: .systemFont(ofSize: messageCenterFontSize),
+                    expandLegacyEmoticons: true
+                ).string
+            case .image:
+                return L("[Image]")
+            case let .youtube(reference):
+                return reference.canonicalURLString
+            }
+        }.joined(separator: " ")
+            .replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     func offlineMessageTranscriptCard(_ message: LegacyOfflineMessage) -> NSView {
         let card = CarrachoCardView()
         card.cornerRadius = 7
@@ -656,11 +795,7 @@ extension ViewController {
         deleteButton.setContentHuggingPriority(.required, for: .horizontal)
         let header = horizontalStack([sender, NSView(), time, deleteButton], spacing: 8)
 
-        let body = NSTextField(wrappingLabelWithString: CarrachoHTMLText.plainText(fromWire: message.message, expandLegacyEmoticons: true))
-        body.font = .systemFont(ofSize: messageCenterFontSize)
-        body.maximumNumberOfLines = 0
-        body.isSelectable = true
-        body.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        let body = messageCenterBodyLabel(fromWire: message.message)
         let offlineLabel = NSTextField(labelWithString: L("Offline Message"))
         offlineLabel.font = .systemFont(ofSize: 9.5, weight: .medium)
         offlineLabel.textColor = CarrachoTheme.secondaryText
@@ -756,6 +891,10 @@ extension ViewController {
             privateMessageConversations[previousID] = previous
             persistPrivateConversation(previousID)
         }
+        if selectedPrivateConversationID != userID {
+            privateMessageAttachments.imageIDs.forEach(deletePendingMedia)
+            privateMessageAttachments.clear()
+        }
         selectedPrivateConversationID = userID
         if var conversation = privateMessageConversations[userID] {
             conversation.unreadCount = 0
@@ -773,6 +912,8 @@ extension ViewController {
             privateMessageConversations[previousID] = previous
             persistPrivateConversation(previousID)
         }
+        privateMessageAttachments.imageIDs.forEach(deletePendingMedia)
+        privateMessageAttachments.clear()
         selectedPrivateConversationID = nil
         selectedOfflineMessages = true
         offlineMessageCenterUnreadIDs.removeAll()
@@ -807,7 +948,7 @@ extension ViewController {
 
         let previewText: String
         if let last = conversation.entries.last {
-            let plain = CarrachoHTMLText.plainText(fromWire: last.message, expandLegacyEmoticons: true).replacingOccurrences(of: "\n", with: " ")
+            let plain = messageCenterPreviewText(fromWire: last.message, allowMedia: !conversation.isLegacyTransport)
             previewText = (last.outgoing ? L("You: ") : "") + plain
         } else {
             previewText = conversation.isLegacyTransport ? L("Classic client · one PM per message") : L("No messages yet")
@@ -857,12 +998,7 @@ extension ViewController {
         time.setContentHuggingPriority(.required, for: .horizontal)
         let header = horizontalStack([sender, NSView(), time], spacing: 8)
 
-        let plain = CarrachoHTMLText.plainText(fromWire: entry.message, expandLegacyEmoticons: true)
-        let body = NSTextField(wrappingLabelWithString: plain)
-        body.font = .systemFont(ofSize: messageCenterFontSize)
-        body.maximumNumberOfLines = 0
-        body.isSelectable = true
-        body.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        let body = messageCenterBodyView(fromWire: entry.message, allowMedia: !conversation.isLegacyTransport)
         let stack = verticalStack([header, body], spacing: 5)
         stack.translatesAutoresizingMaskIntoConstraints = false
         card.addSubview(stack)
@@ -1139,6 +1275,70 @@ extension ViewController {
         openPrivateConversation(with: user)
     }
 
+    @MainActor func uploadPrivateMessageImages(urls: [URL]) {
+        guard let userID = selectedPrivateConversationID,
+              let conversation = privateMessageConversations[userID],
+              !conversation.isLegacyTransport,
+              let mediaClient else {
+            showError(L("Images in private messages require a modern Carracho peer."))
+            return
+        }
+        let remaining = max(0, LegacyMediaTransfer.maximumImagesPerPrivateMessage - privateMessageAttachments.imageCount)
+        let selected = Array(urls.prefix(remaining))
+        guard !selected.isEmpty else { return }
+        do {
+            let prepared = try selected.map { try CarrachoMediaImageProcessor.prepare(url: $0) }
+            privateMessageSendButton.isEnabled = false
+            privateMessageComposerStatusLabel.stringValue = L("Uploading image…")
+            uploadPreparedMedia(prepared, client: mediaClient) { [weak self, weak mediaClient] result in
+                guard let self, self.mediaClient === mediaClient else { return }
+                switch result {
+                case let .success(ids):
+                    self.addUploadedImages(ids: ids, prepared: prepared, to: self.privateMessageAttachments)
+                    self.privateMessageComposerStatusLabel.stringValue = LF("Message to %@", conversation.nickname)
+                case let .failure(error):
+                    self.showError(LF("Image upload failed: %@", Self.displayMessage(for: error)))
+                }
+                self.privateMessageSendButton.isEnabled = self.client.isConnected && self.liveUsers[userID] != nil
+            }
+        } catch {
+            showError(LF("Image could not be prepared: %@", Self.displayMessage(for: error)))
+        }
+    }
+
+    @MainActor func uploadPrivateMessageImage(data: Data) {
+        guard let userID = selectedPrivateConversationID,
+              let conversation = privateMessageConversations[userID],
+              !conversation.isLegacyTransport,
+              let mediaClient else {
+            showError(L("Images in private messages require a modern Carracho peer."))
+            return
+        }
+        guard privateMessageAttachments.imageCount < LegacyMediaTransfer.maximumImagesPerPrivateMessage else {
+            showError(LF("A private message can contain at most %@ images.",
+                         String(LegacyMediaTransfer.maximumImagesPerPrivateMessage)))
+            return
+        }
+        do {
+            let prepared = try CarrachoMediaImageProcessor.prepare(data: data)
+            privateMessageSendButton.isEnabled = false
+            privateMessageComposerStatusLabel.stringValue = L("Uploading image…")
+            uploadPreparedMedia([prepared], client: mediaClient) { [weak self, weak mediaClient] result in
+                guard let self, self.mediaClient === mediaClient else { return }
+                switch result {
+                case let .success(ids):
+                    self.addUploadedImages(ids: ids, prepared: [prepared], to: self.privateMessageAttachments)
+                    self.privateMessageComposerStatusLabel.stringValue = LF("Message to %@", conversation.nickname)
+                case let .failure(error):
+                    self.showError(LF("Image upload failed: %@", Self.displayMessage(for: error)))
+                }
+                self.privateMessageSendButton.isEnabled = self.client.isConnected && self.liveUsers[userID] != nil
+            }
+        } catch {
+            showError(LF("Clipboard image could not be prepared: %@", Self.displayMessage(for: error)))
+        }
+    }
+
     @objc func sendPrivateMessageFromCenter(_ sender: Any?) {
         guard let userID = selectedPrivateConversationID,
               liveUsers[userID] != nil, client.isConnected else {
@@ -1146,9 +1346,10 @@ extension ViewController {
             privateMessageComposerStatusLabel.textColor = .systemRed
             return
         }
-        let source = privateMessageComposer.string
+        let plainSource = privateMessageComposer.string
+        let source = composedRichText(plainSource, attachments: privateMessageAttachments)
         guard !source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            privateMessageComposerStatusLabel.stringValue = L("Enter a message.")
+            privateMessageComposerStatusLabel.stringValue = L("Enter a message or add an attachment before sending.")
             privateMessageComposerStatusLabel.textColor = .systemRed
             return
         }
@@ -1170,8 +1371,9 @@ extension ViewController {
                     conversation.draftText = ""
                     self.privateMessageConversations[userID] = conversation
                 }
-                if self.selectedPrivateConversationID == userID, self.privateMessageComposer.string == source {
+                if self.selectedPrivateConversationID == userID, self.privateMessageComposer.string == plainSource {
                     self.privateMessageComposer.string = ""
+                    self.privateMessageAttachments.clear()
                 }
                 self.privateMessageComposerStatusLabel.textColor = CarrachoTheme.secondaryText
                 self.appendPrivateMessage(userID: userID, message: data, outgoing: true)

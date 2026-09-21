@@ -2039,3 +2039,7 @@
 "Task #%@" = "Task #%@";
 "Code %@" = "Code %@";
 "Relative folder inside General. Absolute paths and .. are not allowed. The last folder name is used as the visible root name." = "Relative folder inside General. Absolute paths and .. are not allowed. The last folder name is used as the visible root name.";
+"A private message can contain at most %@ images." = "A private message can contain at most %@ images.";
+"Images in private messages require a modern Carracho peer." = "Images in private messages require a modern Carracho peer.";
+"Open image preview" = "Open image preview";
+"Uploading image…" = "Uploading image…";

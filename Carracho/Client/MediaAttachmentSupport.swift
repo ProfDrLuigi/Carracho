@@ -586,6 +586,7 @@ private final class CarrachoInlineHoverCardView: NSView {
 /// The server remains authoritative about ownership; a forged/foreign UUID is rejected there.
 final class CarrachoMediaDisplayTextView: NSTextView, NSTextViewDelegate {
     var mediaDeleteHandler: ((UUID) -> Void)?
+    var mediaOpenHandler: ((UUID) -> Void)?
     private var youtubePlayers: [String: CarrachoYouTubeInlinePlayerView] = [:]
     private var youtubePlayerSyncScheduled = false
     private var inlineToolTipSyncScheduled = false
@@ -600,6 +601,41 @@ final class CarrachoMediaDisplayTextView: NSTextView, NSTextViewDelegate {
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
         needsDisplay = true
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        if event.buttonNumber == 0, event.clickCount == 1,
+           let id = mediaID(at: event), let mediaOpenHandler {
+            mediaOpenHandler(id)
+            return
+        }
+        super.mouseDown(with: event)
+    }
+
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        guard mediaOpenHandler != nil,
+              let storage = textStorage, storage.length > 0,
+              let layoutManager, let textContainer else { return }
+
+        layoutManager.ensureLayout(for: textContainer)
+        let origin = textContainerOrigin
+        storage.enumerateAttribute(
+            .carrachoMediaID,
+            in: NSRange(location: 0, length: storage.length),
+            options: []
+        ) { value, characterRange, _ in
+            guard value != nil else { return }
+            let glyphRange = layoutManager.glyphRange(
+                forCharacterRange: characterRange,
+                actualCharacterRange: nil
+            )
+            guard glyphRange.length > 0 else { return }
+            var rect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
+            guard !rect.isEmpty else { return }
+            rect = rect.offsetBy(dx: origin.x, dy: origin.y)
+            addCursorRect(rect, cursor: .pointingHand)
+        }
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -949,6 +985,102 @@ final class CarrachoMediaDisplayTextView: NSTextView, NSTextViewDelegate {
     @objc private func deleteMediaFromMenu(_ sender: NSMenuItem) {
         guard let text = sender.representedObject as? String, let id = UUID(uuidString: text) else { return }
         mediaDeleteHandler?(id)
+    }
+}
+
+final class CarrachoImagePreviewWindow: NSWindow {
+    override func keyDown(with event: NSEvent) {
+        if event.keyCode == 53 { // Escape
+            close()
+            return
+        }
+        super.keyDown(with: event)
+    }
+}
+
+final class CarrachoImagePreviewWindowController: NSWindowController, NSWindowDelegate {
+    var onClose: (() -> Void)?
+
+    init(image: NSImage, parentWindow: NSWindow?) {
+        let screenFrame = (parentWindow?.screen ?? NSScreen.main)?.visibleFrame
+            ?? NSRect(x: 0, y: 0, width: 1280, height: 800)
+        let sourceWidth = max(1, image.size.width)
+        let sourceHeight = max(1, image.size.height)
+        // Start compact enough to keep the surrounding chat visible. The window remains
+        // resizable, so users can enlarge a screenshot when they actually want the details.
+        let maximumWidth = max(360, min(960, floor(screenFrame.width * 0.70)))
+        let maximumHeight = max(240, min(700, floor(screenFrame.height * 0.70)))
+        let scale = min(1, maximumWidth / sourceWidth, maximumHeight / sourceHeight)
+        let imageWidth = max(1, floor(sourceWidth * scale))
+        let imageHeight = max(1, floor(sourceHeight * scale))
+        let contentSize = NSSize(
+            width: max(320, imageWidth),
+            height: max(180, imageHeight)
+        )
+
+        let window = CarrachoImagePreviewWindow(
+            contentRect: NSRect(origin: .zero, size: contentSize),
+            styleMask: [.titled, .closable, .resizable, .miniaturizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = L("Image Preview")
+        window.isReleasedWhenClosed = false
+        window.minSize = NSSize(width: 320, height: 180)
+        window.backgroundColor = CarrachoTheme.canvas
+
+        let root = NSView()
+        root.translatesAutoresizingMaskIntoConstraints = false
+        root.wantsLayer = true
+        root.layer?.backgroundColor = CarrachoTheme.canvas.cgColor
+        window.contentView = root
+
+        let imageView = NSImageView(image: image)
+        imageView.translatesAutoresizingMaskIntoConstraints = false
+        imageView.imageScaling = .scaleProportionallyUpOrDown
+        imageView.imageAlignment = .alignCenter
+        root.addSubview(imageView)
+        NSLayoutConstraint.activate([
+            imageView.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 12),
+            imageView.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -12),
+            imageView.topAnchor.constraint(equalTo: root.topAnchor, constant: 12),
+            imageView.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -12),
+        ])
+
+        super.init(window: window)
+        window.delegate = self
+        window.setContentSize(contentSize)
+        if let parentWindow {
+            let parentFrame = parentWindow.frame
+            var origin = NSPoint(
+                x: parentFrame.midX - window.frame.width / 2,
+                y: parentFrame.midY - window.frame.height / 2
+            )
+            origin.x = min(max(origin.x, screenFrame.minX), screenFrame.maxX - window.frame.width)
+            origin.y = min(max(origin.y, screenFrame.minY), screenFrame.maxY - window.frame.height)
+            window.setFrameOrigin(origin)
+        } else {
+            window.center()
+        }
+    }
+
+    required init?(coder: NSCoder) {
+        return nil
+    }
+
+    func show(relativeTo parentWindow: NSWindow?) {
+        if let parentWindow, let window {
+            parentWindow.addChildWindow(window, ordered: .above)
+        }
+        showWindow(nil)
+        window?.makeKeyAndOrderFront(nil)
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        if let window, let parent = window.parent {
+            parent.removeChildWindow(window)
+        }
+        onClose?()
     }
 }
 
