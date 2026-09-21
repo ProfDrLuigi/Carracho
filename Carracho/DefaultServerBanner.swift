@@ -7,7 +7,7 @@ import Foundation
 /// never silently put the bundled logo back.
 enum CarrachoDefaultServerBanner {
     static func pngData() -> Data? {
-        guard let image = NSImage(named: "CarrachoLogo"),
+        guard let image = NSImage(named: "ClassicServerBanner"),
               let tiff = image.tiffRepresentation,
               let bitmap = NSBitmapImageRep(data: tiff) else { return nil }
         return bitmap.representation(using: .png, properties: [:])

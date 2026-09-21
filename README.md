@@ -432,29 +432,7 @@ Server/
 
 `ServerLinux/` contains a native C implementation intended for headless deployment. It does not require a Swift runtime and uses OpenSSL, json-c, SQLite, libcurl and libxml2.
 
-On Debian 13:
-
-```sh
-sudo apt update
-sudo apt install build-essential pkg-config libssl-dev libjson-c-dev libsqlite3-dev libcurl4-openssl-dev libxml2-dev
-make native-werror
-```
-
-The resulting binaries are written to `.build/linux/`:
-
-```text
-.build/linux/
-├── carracho-server
-├── carracho-tracker
-├── etc/
-│   ├── carracho-server.json
-│   └── carracho-bot.json
-├── db/
-│   ├── server.db
-│   ├── file-index.db
-│   └── bot-rss.db
-└── logs/
-```
+Compilation of the native Linux components is documented in the **Building on Linux** section below.
 
 The server listens on the configured control port, normally `6700`; the adjacent port is used for transfer connections. The standalone tracker defaults to port `6702`.
 
@@ -518,15 +496,9 @@ The SQLite databases remain in the fixed `db/` directory beside the server insta
 
 <img width="1032" height="804" alt="image" src="https://github.com/user-attachments/assets/a5ca73e7-2b46-4077-8bd1-22d96825d375" />
 
-`TrackerLinux/` contains the native tracker service.
+`TrackerLinux/` contains the native tracker service. It is built together with the native server by the Linux build described below, or separately with `make tracker`.
 
-Build it together with the server using:
-
-```sh
-make native
-```
-
-or start the compiled tracker directly:
+Start the compiled tracker directly with:
 
 ```sh
 .build/linux/carracho-tracker --port 6702
@@ -559,6 +531,146 @@ Servers can also be configured as `modernOnly`. In that mode the compatibility p
 
 </details>
 
+
+<details>
+<summary><strong>Building on Linux</strong></summary>
+
+
+The native Linux build produces the headless **Carracho Server** and **Carracho Tracker**. The macOS GUI client is not part of the Linux build.
+
+### Build requirements
+
+A normal build needs:
+
+- a C11 compiler such as GCC or Clang;
+- `make` and a POSIX shell;
+- `pkg-config`;
+- OpenSSL development headers and libraries;
+- json-c;
+- SQLite 3;
+- libcurl;
+- libxml2;
+- pthread support supplied by the system C library.
+
+On **Debian 12 or newer** and **Ubuntu 22.04 or newer**, install the required development packages with:
+
+```sh
+sudo apt update
+sudo apt install \
+  build-essential \
+  pkg-config \
+  libssl-dev \
+  libjson-c-dev \
+  libsqlite3-dev \
+  libcurl4-openssl-dev \
+  libxml2-dev
+```
+
+These package names are shared by current Debian and Ubuntu releases. Other Linux distributions need the equivalent development packages. The build scripts use `pkg-config` to obtain the compiler and linker flags.
+
+### Build server and tracker
+
+From the repository root:
+
+```sh
+make native
+```
+
+For the stricter development build used by this project:
+
+```sh
+make native-werror
+```
+
+`native-werror` builds both components with the normal warning set plus `-Werror`.
+
+The two components can also be built separately:
+
+```sh
+make server
+make tracker
+```
+
+The scripts can be called directly as well:
+
+```sh
+./ServerLinux/build.sh
+./TrackerLinux/build.sh
+```
+
+To use a different C compiler:
+
+```sh
+CC=clang make native
+```
+
+### Optional WebAdmin helper
+
+The native server itself builds without Python. The bundled WebAdmin frontend uses a separate PyInstaller ONEFILE helper. Only the **build machine** needs Python for this step; the generated helper contains its own Python runtime.
+
+On Debian 12+ and Ubuntu 22.04+:
+
+```sh
+sudo apt install python3 python3-venv python3-dev
+```
+
+Using `python3-dev` instead of a version-specific `libpython3.x` package keeps the build instructions portable across distributions with different default Python versions.
+
+Build and stage the helper with:
+
+```sh
+./ServerLinux/Webinterface/scripts/linux-build-phase.sh \
+  .build/linux/libexec/carracho
+```
+
+On the first build the script creates a private virtual environment below `ServerLinux/Webinterface/.linux-build/` and installs the required PyInstaller version there.
+
+### Build output
+
+After building the native components, the relevant output is under:
+
+```text
+.build/linux/
+├── carracho-server
+├── carracho-tracker
+├── etc/
+│   ├── carracho-server.json
+│   └── carracho-bot.json
+├── db/
+└── libexec/
+    └── carracho/
+        └── carracho-web-admin-helper   # only when the optional helper was built
+```
+
+The databases inside `db/` are created as the server runs; they are not prebuilt artifacts.
+
+The server resolves its default configuration relative to its executable, so the development build can be started directly:
+
+```sh
+.build/linux/carracho-server
+```
+
+An explicit configuration file can also be supplied:
+
+```sh
+.build/linux/carracho-server \
+  --config .build/linux/etc/carracho-server.json
+```
+
+Start the tracker with:
+
+```sh
+.build/linux/carracho-tracker --port 6702
+```
+
+Remove generated native build output with:
+
+```sh
+make clean
+```
+
+
+</details>
 
 <details>
 <summary><strong>Building the macOS client</strong></summary>

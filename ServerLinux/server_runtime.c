@@ -10,6 +10,7 @@
 #include "flat_news_store.h"
 #include "media_store.h"
 #include "bot_rss.h"
+#include "classic_banner_png.h"
 
 #include <arpa/inet.h>
 #include <dirent.h>
@@ -225,6 +226,7 @@
 #define TRANSFER_MEDIA_DOWNLOAD 0xf101u
 #define TRANSFER_MEDIA_DELETE 0xf102u
 #define TRANSFER_NEWS_INDEX 5u
+#define TRANSFER_SERVER_LOG 7u
 #define TRANSFER_BANNER_UPLOAD 8u
 #define TRANSFER_FILE_SEARCH 9u
 #define TRANSFER_ENCRYPTED_DOWNLOAD 10u
@@ -2188,7 +2190,9 @@ static int handle_server_info(cr_session*s,const cr_packet*p){
                     {SERVER_INFO_FIELD_SOFTWARE_VERSION,version,(uint16_t)(sizeof(version)-1)},{SERVER_INFO_FIELD_UPTIME_TICKS,uptime,4},
                     {SERVER_INFO_FIELD_MAX_TRANSFERS,max_total,2},{SERVER_INFO_FIELD_ACTIVE_TRANSFERS,active_total,2},
                     {SERVER_INFO_FIELD_MAX_USER_TRANSFERS,max_user,2},{SERVER_INFO_FIELD_ACTIVE_USER_TRANSFERS,active_user,2}};
-    return session_send(s,CMD_SERVER_INFO,p->transaction_id,f,10);
+    /* Server 1.0b13 sends exactly fields 2/6/7/8. Original clients do not safely
+       skip the modern 0xf000... extension fields appended by current Carracho. */
+    return session_send(s,CMD_SERVER_INFO,p->transaction_id,f,s->modern_transport?10:4);
 }
 static int handle_directory(cr_session*s,const cr_packet*p){const cr_tlv*path=cr_packet_field(p,1);const uint8_t*pv=path?path->value:NULL;size_t pn=path?path->length:0;cr_buffer listing,labels;if(encode_directory(s->server,s,pv,pn,&listing,&labels)){cr_buffer_free(&listing);cr_buffer_free(&labels);return send_error(s,p->transaction_id,200);}if(listing.len>UINT16_MAX||labels.len>UINT16_MAX){cr_buffer_free(&listing);cr_buffer_free(&labels);return send_error(s,p->transaction_id,200);}cr_tlv_out f[2];size_t n=0;f[n++]=(cr_tlv_out){2,listing.data,(uint16_t)listing.len};if(s->modern_transport)f[n++]=(cr_tlv_out){DIRECTORY_LABELS_FIELD,labels.data,(uint16_t)labels.len};int rc=session_send(s,CMD_DIRECTORY,p->transaction_id,f,n);cr_buffer_free(&listing);cr_buffer_free(&labels);return rc;}
 static int handle_channel_list(cr_session*s,const cr_packet*p){cr_buffer b;if(encode_channel_list(s->server,&b))return-1;if(b.len>UINT16_MAX){cr_buffer_free(&b);return send_error(s,p->transaction_id,200);}cr_tlv_out f={0x0a,b.data,(uint16_t)b.len};int rc=session_send(s,CMD_CHANNEL_LIST,p->transaction_id,&f,1);cr_buffer_free(&b);return rc;}
@@ -3820,7 +3824,13 @@ static int setting_value_locked(cr_server*s,uint32_t field,cr_buffer*b){
             json_object*arr=NULL;if(!json_object_object_get_ex(advanced,"trackers",&arr)||!json_object_is_type(arr,json_type_array))return cr_buffer_append_u16(b,0);
             size_t count=json_object_array_length(arr);if(count>UINT16_MAX)return-1;if(cr_buffer_append_u16(b,(uint16_t)count))return-1;
             for(size_t i=0;i<count;i++){json_object*t=json_object_array_get_idx(arr,i),*x=NULL;const char*name="",*address="",*reserved="";uint32_t rv=0;if(json_object_object_get_ex(t,"name",&x))name=json_object_get_string(x);if(json_object_object_get_ex(t,"address",&x))address=json_object_get_string(x);if(json_object_object_get_ex(t,"reservedString",&x))reserved=json_object_get_string(x);if(json_object_object_get_ex(t,"reservedValue",&x))rv=(uint32_t)json_object_get_int64(x);uint8_t nm[128],am[256],rm[128];size_t nn=0,an=0,rn=0;if(cr_utf8_to_macroman(name,nm,sizeof(nm),&nn)||nn>32||cr_utf8_to_macroman(address,am,sizeof(am),&an)||an>64||cr_utf8_to_macroman(reserved,rm,sizeof(rm),&rn)||rn>16)return-1;if(cr_buffer_append_string16(b,nm,nn)||cr_buffer_append_string16(b,am,an)||cr_buffer_append_string16(b,rm,rn)||cr_buffer_append_u32(b,rv))return-1;}return 0;}
-        case 0x32:{uint32_t f=st->advanced.tracker_advertisement_flags;uint8_t x[3]={(uint8_t)(f>>24),(uint8_t)(f>>16),(uint8_t)(f>>8)};return cr_buffer_append(b,x,3);}
+        case 0x32:{
+            /* Classic Server 1.0b13 declares this setting as three bytes but physically
+               writes all four flag bytes. Client 1.0b10r4 always reads UInt32 here.
+               A normal four-byte TLV preserves that effective wire contract while also
+               remaining valid for modern clients. */
+            return cr_buffer_append_u32(b,st->advanced.tracker_advertisement_flags);
+        }
         case 0x33:return append_macroman_text(b,st->advanced.tracker_description);
         case 0x36:{time_t now=time(NULL);double sec=difftime(now,s->started_at);if(sec<0)sec=0;uint64_t ticks=(uint64_t)(sec*60.0);if(ticks>UINT32_MAX)ticks=UINT32_MAX;return cr_buffer_append_u32(b,(uint32_t)ticks);}
         default:break;
@@ -4306,6 +4316,19 @@ done:session_unregister(s);shutdown(s->fd,SHUT_RDWR);close(s->fd);log_msg("Conne
 static void send_async_error_to_user(cr_server*s,uint32_t user_id,uint16_t code){pthread_mutex_lock(&s->mutex);cr_session*x=find_session_locked(s,user_id);if(x&&x->authenticated&&!x->closed)send_error(x,0,code);pthread_mutex_unlock(&s->mutex);}
 
 static void broadcast_banner_changed(cr_server*s){pthread_mutex_lock(&s->mutex);for(size_t i=0;i<s->allocated_session_count;i++){cr_session*x=s->sessions[i];if(session_ready_for_async(x))session_send(x,CMD_BANNER_CHANGED,0,NULL,0);}pthread_mutex_unlock(&s->mutex);}
+static int banner_is_oversized_builtin_logo(const uint8_t*data,size_t len){
+    static const uint8_t expected[32]={
+        0x79,0x69,0xda,0x2a,0x54,0x41,0xf3,0x79,
+        0x02,0xa4,0xe1,0x5c,0xe3,0xff,0x86,0x59,
+        0x05,0x31,0x45,0x81,0x7a,0x40,0x19,0x30,
+        0xe1,0xdb,0x32,0x6e,0xe6,0x28,0x63,0x0d
+    };
+    uint8_t digest[EVP_MAX_MD_SIZE];unsigned int digest_len=0;
+    return data&&len==794991u&&
+           EVP_Digest(data,len,digest,&digest_len,EVP_sha256(),NULL)==1&&digest_len==sizeof(expected)&&
+           CRYPTO_memcmp(digest,expected,sizeof(expected))==0;
+}
+
 
 static int ascii_case_contains(const char *haystack,const char *needle){if(!*needle)return 1;size_t nl=strlen(needle);for(const char*h=haystack;*h;h++){size_t i=0;while(i<nl&&h[i]&&tolower((unsigned char)h[i])==tolower((unsigned char)needle[i]))i++;if(i==nl)return 1;}return 0;}
 static int append_search_result_record(cr_buffer*b,const uint8_t*name,size_t name_len,uint32_t creator,uint32_t file_type,uint32_t size,uint32_t timestamp,const uint8_t*path,size_t path_len){
@@ -4822,6 +4845,59 @@ static void transfer_access_as_session(cr_server *s,const cr_transfer_access *a,
     fake->key_len=a->key_len; memcpy(fake->key,a->key,a->key_len);fake->modern_transport=a->modern_transport;if(a->modern_transport)memcpy(fake->modern_salt,a->modern_salt,CR_MODERN_SESSION_SALT);
 }
 
+static int serve_classic_server_log(cr_transfer_stream*stream,cr_session*session){
+    if(!stream||!session||!account_perm(session,PERM_VIEW_SERVER_LOG))return-1;
+
+    /* TLogGrabber in Client 1.0b10r4 expects two length-prefixed blocks:
+       the MacRoman log text followed by a Styled TextEdit style scrap. Keep the
+       compatibility snapshot bounded so an old client never allocates an
+       arbitrarily large modern log in one gulp. */
+    const size_t maximum=60u*1024u;
+    uint64_t total=0,offset=0;
+    cr_buffer probe,raw;cr_buffer_init(&probe);cr_buffer_init(&raw);
+    if(read_log_chunk(UINT64_MAX,1,&total,&offset,&probe)){cr_buffer_free(&probe);return-1;}
+    cr_buffer_free(&probe);
+    uint64_t start=total>maximum?total-maximum:0;
+    if(read_log_chunk(start,maximum,&total,&offset,&raw))return-1;
+
+    const char empty_message[]="Server log is empty.\r";
+    uint8_t*text=NULL;size_t text_len=0;
+    if(raw.len){
+        char*utf8=malloc(raw.len+1);
+        text=malloc(raw.len+1);
+        if(!utf8||!text){free(utf8);free(text);cr_buffer_free(&raw);return-1;}
+        memcpy(utf8,raw.data,raw.len);utf8[raw.len]=0;
+        for(size_t i=0;i<raw.len;i++)if(utf8[i]=='\n')utf8[i]='\r';
+        if(cr_utf8_to_macroman(utf8,text,raw.len+1,&text_len)){
+            free(utf8);free(text);cr_buffer_free(&raw);return-1;
+        }
+        free(utf8);
+    }else{
+        text_len=sizeof(empty_message)-1;
+        text=malloc(text_len);
+        if(!text){cr_buffer_free(&raw);return-1;}
+        memcpy(text,empty_message,text_len);
+    }
+    cr_buffer_free(&raw);
+    if(text_len>UINT32_MAX){free(text);return-1;}
+
+    /* One Monaco 10pt/black style run, encoded as the classic StScrpRec used
+       elsewhere by Carracho for styled text. */
+    static const uint8_t style[]={
+        0x00,0x01, 0x00,0x00,0x00,0x00, 0x00,0x0b, 0x00,0x09,
+        0x00,0x16, 0x00,0x00, 0x00,0x0a, 0x00,0x00,0x00,0x00,0x00,0x00
+    };
+    uint8_t length[4];int rc=-1;
+    cr_write_be32(length,(uint32_t)text_len);
+    if(cr_transfer_send(stream,length,4)||cr_transfer_send(stream,text,text_len))goto done;
+    cr_write_be32(length,(uint32_t)sizeof(style));
+    if(cr_transfer_send(stream,length,4)||cr_transfer_send(stream,style,sizeof(style)))goto done;
+    rc=0;
+done:
+    free(text);
+    return rc;
+}
+
 static void *transfer_connection_main(void *opaque) {
   accepted_ctx *ctx = opaque;
   cr_server *s = ctx->server;
@@ -4873,6 +4949,9 @@ static void *transfer_connection_main(void *opaque) {
   } else if (op == TRANSFER_NEWS_INDEX) {
     if (serve_news_index(s, &stream, session))
       goto done;
+  } else if (op == TRANSFER_SERVER_LOG) {
+    if (serve_classic_server_log(&stream, session))
+      goto done;
   } else if (op == TRANSFER_FILE_SEARCH) {
     if (serve_file_search(s, &stream, session))
       goto done;
@@ -4912,6 +4991,17 @@ static void *transfer_connection_main(void *opaque) {
     if (!copy || url_error || un > 255) {
       free(copy);
       goto done;
+    }
+    if (!access.modern_transport && banner_is_oversized_builtin_logo(copy, len)) {
+      uint8_t *classic = malloc(k_carracho_classic_banner_png_len);
+      if (!classic) {
+        free(copy);
+        goto done;
+      }
+      memcpy(classic, k_carracho_classic_banner_png, k_carracho_classic_banner_png_len);
+      free(copy);
+      copy = classic;
+      len = k_carracho_classic_banner_png_len;
     }
     cr_buffer payload;
     cr_buffer_init(&payload);

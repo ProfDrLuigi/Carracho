@@ -5741,6 +5741,22 @@ extension LegacyServerRuntime {
     }
 
     private static let maximumBannerBytes = 8 * 1024 * 1024
+    private static let oversizedBuiltInBannerSHA256 = Data([
+        0x79, 0x69, 0xda, 0x2a, 0x54, 0x41, 0xf3, 0x79,
+        0x02, 0xa4, 0xe1, 0x5c, 0xe3, 0xff, 0x86, 0x59,
+        0x05, 0x31, 0x45, 0x81, 0x7a, 0x40, 0x19, 0x30,
+        0xe1, 0xdb, 0x32, 0x6e, 0xe6, 0x28, 0x63, 0x0d,
+    ])
+
+    private static func classicCompatibleBanner(_ banner: Data) -> Data {
+        guard banner.count == 794_991,
+              Data(SHA256.hash(data: banner)) == oversizedBuiltInBannerSHA256,
+              let classic = CarrachoDefaultServerBanner.pngData(),
+              !classic.isEmpty else {
+            return banner
+        }
+        return classic
+    }
 
     private func broadcastAuthenticated(_ packet: LegacyPacket) {
         stateLock.lock(); let recipients = Array(authenticatedByUserID.values); stateLock.unlock()
@@ -5779,7 +5795,8 @@ extension LegacyServerRuntime {
 
     private func serveBannerDownload(stream: LegacySocketTransferStream, access: LegacyTransferAccess) throws {
         let identity = backend.snapshot().identity
-        let banner = identity.bannerData ?? Data()
+        let storedBanner = identity.bannerData ?? Data()
+        let banner = access.modernSalt == nil ? Self.classicCompatibleBanner(storedBanner) : storedBanner
         guard banner.count <= Self.maximumBannerBytes, banner.count <= Int(UInt32.max) else {
             throw LegacyServerRuntimeError.protocolFailure("stored banner image exceeds transfer limit")
         }

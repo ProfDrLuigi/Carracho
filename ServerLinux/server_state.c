@@ -2,6 +2,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include "server_state.h"
 #include "sqlite_state.h"
+#include "classic_banner_png.h"
 
 #include <ctype.h>
 #include <errno.h>
@@ -151,7 +152,9 @@ static json_object *initial_account(const char *login,const char *name,const cha
 static json_object *initial_state(void){
     json_object*root=json_object_new_object();json_object_object_add(root,"formatVersion",json_object_new_int(4));
     json_object*auth=json_object_new_object();json_object_object_add(auth,"mode",json_object_new_string("legacyCompatible"));json_object_object_add(root,"authentication",auth);
-    json_object*identity=json_object_new_object();json_object_object_add(identity,"name",json_object_new_string("Carracho Server"));json_object_object_add(identity,"operatorName",json_object_new_string("unknown"));json_object_object_add(identity,"location",json_object_new_string("unknown"));json_object_object_add(identity,"description",json_object_new_string(""));json_object_object_add(identity,"bannerURL",json_object_new_string(""));json_object_object_add(root,"identity",identity);
+    json_object*identity=json_object_new_object();json_object_object_add(identity,"name",json_object_new_string("Carracho Server"));json_object_object_add(identity,"operatorName",json_object_new_string("unknown"));json_object_object_add(identity,"location",json_object_new_string("unknown"));json_object_object_add(identity,"description",json_object_new_string(""));json_object_object_add(identity,"bannerURL",json_object_new_string(""));
+    char*default_banner=base64_encode(k_carracho_classic_banner_png,k_carracho_classic_banner_png_len);if(default_banner){json_object_object_add(identity,"bannerData",json_object_new_string(default_banner));free(default_banner);}
+    json_object_object_add(root,"identity",identity);
     json_object*adv=json_object_new_object();json_object_object_add(adv,"controlPort",json_object_new_int(6700));json_object_object_add(adv,"maxConnections",json_object_new_int(100));json_object_object_add(adv,"maxConnectionsPerIP",json_object_new_int(5));json_object_object_add(adv,"maxSimultaneousFileTransfers",json_object_new_int(20));json_object_object_add(adv,"maxFileTransfersPerUser",json_object_new_int(1));json_object_object_add(adv,"maxFolderDownloadDepth",json_object_new_int(8));json_object_object_add(adv,"newsExpirationHour",json_object_new_int(0));json_object_object_add(adv,"newsExpirationMinute",json_object_new_int(0));json_object_object_add(adv,"ipRestrictions",json_object_new_array());json_object_object_add(adv,"trackers",json_object_new_array());json_object_object_add(adv,"trackerAdvertisementFlags",json_object_new_int64(0));json_object_object_add(adv,"trackerDescription",json_object_new_string(""));json_object_object_add(root,"advanced",adv);
     json_object*runtime=json_object_new_object();json_object_object_add(runtime,"filesRoot",json_object_new_string(""));json_object_object_add(runtime,"legacyFilesRoot",json_object_new_string(""));json_object_object_add(runtime,"uploadBandwidthLimitBytesPerSecond",json_object_new_int64(0));json_object_object_add(runtime,"searchIndexExclusions",json_object_new_array());json_object_object_add(runtime,"searchIndexRebuildIntervalHours",json_object_new_int(0));json_object_object_add(root,"runtime",runtime);
     json_object*agreement=json_object_new_object();json_object_object_add(agreement,"enabled",json_object_new_boolean(0));json_object_object_add(agreement,"text",json_object_new_string(""));json_object_object_add(root,"agreement",agreement);
