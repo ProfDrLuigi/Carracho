@@ -147,6 +147,157 @@ static int config_int(json_object *root, const char *key, int64_t fallback,
     return 0;
 }
 
+static int config_tracker_registration(json_object *root, cr_startup_persistent_settings *out) {
+    json_object *registration = NULL;
+    if (!json_object_object_get_ex(root, "trackerRegistration", &registration)) return 0;
+    if (!json_object_is_type(registration, json_type_object)) {
+        fprintf(stderr, "carracho-server: config field 'trackerRegistration' must be an object\n");
+        return -1;
+    }
+    out->tracker_registration_configured = 1;
+
+    uint32_t flags = 0;
+    json_object *value = NULL;
+    if (json_object_object_get_ex(registration, "flags", &value)) {
+        if (!json_object_is_type(value, json_type_int)) {
+            fprintf(stderr, "carracho-server: trackerRegistration.flags must be an integer\n");
+            return -1;
+        }
+        int64_t raw = json_object_get_int64(value);
+        if (raw < 0 || (uint64_t)raw > UINT32_MAX) {
+            fprintf(stderr, "carracho-server: trackerRegistration.flags must fit UInt32\n");
+            return -1;
+        }
+        flags = (uint32_t)raw;
+    }
+    if (json_object_object_get_ex(registration, "bandwidthCode", &value)) {
+        if (!json_object_is_type(value, json_type_int)) {
+            fprintf(stderr, "carracho-server: trackerRegistration.bandwidthCode must be an integer\n");
+            return -1;
+        }
+        int64_t code = json_object_get_int64(value);
+        if (code < 0 || code > 255) {
+            fprintf(stderr, "carracho-server: trackerRegistration.bandwidthCode must be between 0 and 255\n");
+            return -1;
+        }
+        flags = (flags & 0x00ffffffu) | ((uint32_t)code << 24);
+    }
+    if (json_object_object_get_ex(registration, "enabled", &value)) {
+        if (!json_object_is_type(value, json_type_boolean)) {
+            fprintf(stderr, "carracho-server: trackerRegistration.enabled must be a boolean\n");
+            return -1;
+        }
+        if (json_object_get_boolean(value)) flags |= 0x00800000u;
+        else flags &= ~0x00800000u;
+    }
+    if (json_object_object_get_ex(registration, "private", &value)) {
+        if (!json_object_is_type(value, json_type_boolean)) {
+            fprintf(stderr, "carracho-server: trackerRegistration.private must be a boolean\n");
+            return -1;
+        }
+        if (json_object_get_boolean(value)) flags |= 0x00400000u;
+        else flags &= ~0x00400000u;
+    }
+    out->tracker_advertisement_flags = flags;
+
+    const char *description = "";
+    if (json_object_object_get_ex(registration, "description", &value)) {
+        if (!json_object_is_type(value, json_type_string)) {
+            fprintf(stderr, "carracho-server: trackerRegistration.description must be a string\n");
+            return -1;
+        }
+        description = json_object_get_string(value);
+    }
+    if (!description || strlen(description) >= sizeof(out->tracker_description)) {
+        fprintf(stderr, "carracho-server: trackerRegistration.description is too long\n");
+        return -1;
+    }
+    uint8_t mac[512]; size_t mac_len = 0;
+    if (cr_utf8_to_macroman(description, mac, sizeof(mac), &mac_len) ||
+        mac_len > CR_CLASSIC_TRACKER_DESCRIPTION_MAX) {
+        fprintf(stderr, "carracho-server: trackerRegistration.description must be MacRoman and at most %d bytes for Classic Tracker\n",
+                CR_CLASSIC_TRACKER_DESCRIPTION_MAX);
+        return -1;
+    }
+    snprintf(out->tracker_description, sizeof(out->tracker_description), "%s", description);
+
+    json_object *trackers = NULL;
+    if (!json_object_object_get_ex(registration, "trackers", &trackers)) return 0;
+    if (!json_object_is_type(trackers, json_type_array)) {
+        fprintf(stderr, "carracho-server: trackerRegistration.trackers must be an array\n");
+        return -1;
+    }
+    size_t count = json_object_array_length(trackers);
+    if (count > CR_MAX_TRACKERS) {
+        fprintf(stderr, "carracho-server: trackerRegistration.trackers exceeds %d entries\n", CR_MAX_TRACKERS);
+        return -1;
+    }
+    for (size_t i = 0; i < count; ++i) {
+        json_object *item = json_object_array_get_idx(trackers, i);
+        if (!item || !json_object_is_type(item, json_type_object)) {
+            fprintf(stderr, "carracho-server: trackerRegistration.trackers[%zu] must be an object\n", i);
+            return -1;
+        }
+        cr_startup_tracker_setting *dst = &out->trackers[out->tracker_count];
+        json_object *field = NULL;
+        const char *name = "", *address = "", *reserved = "";
+
+        if (json_object_object_get_ex(item, "name", &field)) {
+            if (!json_object_is_type(field, json_type_string)) return -1;
+            name = json_object_get_string(field);
+        }
+        if (!json_object_object_get_ex(item, "address", &field) || !json_object_is_type(field, json_type_string)) {
+            fprintf(stderr, "carracho-server: trackerRegistration.trackers[%zu].address must be a string\n", i);
+            return -1;
+        }
+        address = json_object_get_string(field);
+        if (!address || !*address) {
+            fprintf(stderr, "carracho-server: trackerRegistration.trackers[%zu].address must not be empty\n", i);
+            return -1;
+        }
+        if (json_object_object_get_ex(item, "reservedString", &field)) {
+            if (!json_object_is_type(field, json_type_string)) return -1;
+            reserved = json_object_get_string(field);
+        }
+
+        uint8_t encoded[512]; size_t encoded_len = 0;
+        if (cr_utf8_to_macroman(name, encoded, sizeof(encoded), &encoded_len) || encoded_len > 32 ||
+            strlen(name) >= sizeof(dst->name)) {
+            fprintf(stderr, "carracho-server: trackerRegistration.trackers[%zu].name exceeds Classic limits\n", i);
+            return -1;
+        }
+        if (cr_utf8_to_macroman(address, encoded, sizeof(encoded), &encoded_len) || encoded_len > 64 ||
+            strlen(address) >= sizeof(dst->address)) {
+            fprintf(stderr, "carracho-server: trackerRegistration.trackers[%zu].address exceeds Classic limits\n", i);
+            return -1;
+        }
+        if (cr_utf8_to_macroman(reserved, encoded, sizeof(encoded), &encoded_len) || encoded_len > 16 ||
+            strlen(reserved) >= sizeof(dst->reserved_string)) {
+            fprintf(stderr, "carracho-server: trackerRegistration.trackers[%zu].reservedString exceeds Classic limits\n", i);
+            return -1;
+        }
+
+        snprintf(dst->name, sizeof(dst->name), "%s", name);
+        snprintf(dst->address, sizeof(dst->address), "%s", address);
+        snprintf(dst->reserved_string, sizeof(dst->reserved_string), "%s", reserved);
+
+        int64_t reserved_value = 0;
+        if (json_object_object_get_ex(item, "reservedValue", &field)) {
+            if (!json_object_is_type(field, json_type_int)) return -1;
+            reserved_value = json_object_get_int64(field);
+            if (reserved_value < 0 || (uint64_t)reserved_value > UINT32_MAX) return -1;
+        }
+        dst->reserved_value = (uint32_t)reserved_value;
+        if (json_object_object_get_ex(item, "enabled", &field)) {
+            if (!json_object_is_type(field, json_type_boolean)) return -1;
+            if (json_object_get_boolean(field)) dst->reserved_value &= ~0x80000000u;
+            else dst->reserved_value |= 0x80000000u;
+        }
+        out->tracker_count++;
+    }
+    return 0;
+}
+
 static int config_search_index_exclusions(json_object *root, cr_search_index_exclusions *out) {
     memset(out, 0, sizeof(*out));
     json_object *value = NULL;
@@ -314,6 +465,7 @@ static int load_startup_config(const char *config_path, const char *instance_roo
     if (config_int(root, "searchIndexRebuildIntervalHours", 0, 0, UINT32_MAX, &number)) { json_object_put(root); return -1; }
     config->persistent.search_index_rebuild_interval_hours = (uint32_t)number;
     if (config_search_index_exclusions(root, &config->persistent.search_index_exclusions)) { json_object_put(root); return -1; }
+    if (config_tracker_registration(root, &config->persistent)) { json_object_put(root); return -1; }
 
     config->http_admin_enabled = 0;
     snprintf(config->http_admin_bind, sizeof(config->http_admin_bind), "%s", "127.0.0.1");

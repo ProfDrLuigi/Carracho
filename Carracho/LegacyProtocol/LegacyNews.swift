@@ -119,7 +119,7 @@ struct LegacyArticleBodyPayload: Equatable {
         return data
     }
 
-    static func decode(_ data: Data) throws -> LegacyArticleBodyPayload {
+    static func decode(_ data: Data, allowsTrailingClassicBytes: Bool = false) throws -> LegacyArticleBodyPayload {
         var cursor = LegacyByteCursor(data)
         let articleID = try cursor.readUInt32BE()
         let reservedWord = try cursor.readUInt32BE()
@@ -129,7 +129,10 @@ struct LegacyArticleBodyPayload: Equatable {
                                              reservedWord: reservedWord,
                                              text: try cursor.readBytes(count: textLength),
                                              styleData: try cursor.readBytes(count: styleLength))
-        try cursor.requireEnd()
+        // Carracho Server 1.0b13 can return bytes after the declared text/style
+        // payload when reading persisted Classic articles. They are not part of
+        // the article contents. Keep modern/persisted decoding strict.
+        if !allowsTrailingClassicBytes { try cursor.requireEnd() }
         return value
     }
 }

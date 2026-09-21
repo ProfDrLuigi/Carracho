@@ -638,7 +638,10 @@ final class LegacyControlClient {
                     throw LegacyControlClientError.protocolFailure("unvollständige Artikel-Antwort")
                 }
                 let metadata = try LegacyArticleReplyMetadata.decode(metadataField.value)
-                let body = try LegacyArticleBodyPayload.decode(bodyField.value)
+                let body = try LegacyArticleBodyPayload.decode(
+                    bodyField.value,
+                    allowsTrailingClassicBytes: self.transferSession?.usesModernCrypto != true
+                )
                 guard metadata.articleID == body.articleID else {
                     throw LegacyControlClientError.protocolFailure("Artikel-ID von Metadaten und Body stimmt nicht überein")
                 }

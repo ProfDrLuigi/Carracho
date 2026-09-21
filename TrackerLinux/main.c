@@ -4,6 +4,7 @@
 #include <errno.h>
 #include <netinet/in.h>
 #include <pthread.h>
+#include <poll.h>
 #include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -19,6 +20,9 @@
 #define CARRACHO_TRACKER_EXPIRATION_SECONDS 600
 #define CARRACHO_TRACKER_MAX_REGISTRATIONS 4096u
 #define CARRACHO_TRACKER_BACKLOG 64
+#define CARRACHO_TRACKER_MAX_NAME_LENGTH 40u
+#define CARRACHO_TRACKER_MAX_DESCRIPTION_LENGTH 100u
+#define CARRACHO_TRACKER_MAX_DATAGRAM 256u
 
 static const uint8_t k_query_magic[4] = {'C','T','Q',1};
 static const uint8_t k_registration_magic[4] = {'C','T','T',1};
@@ -202,6 +206,39 @@ static int handle_query(connection_ctx *ctx) {
     return 0;
 }
 
+static int store_registration(tracker_state *state, const tracker_registration *incoming,
+                              const char *peer) {
+    pthread_mutex_lock(&state->mutex);
+    prune_locked(state, incoming->last_seen);
+    size_t index = state->count;
+    for (size_t i = 0; i < state->count; ++i) {
+        tracker_registration *r = &state->registrations[i];
+        if (r->port == incoming->port && memcmp(r->ipv4, incoming->ipv4, 4) == 0) {
+            index = i;
+            break;
+        }
+    }
+    if (index == state->count) {
+        if (state->count >= CARRACHO_TRACKER_MAX_REGISTRATIONS) {
+            pthread_mutex_unlock(&state->mutex);
+            return -1;
+        }
+        ++state->count;
+    }
+    state->registrations[index] = *incoming;
+    size_t live_count = state->count;
+    pthread_mutex_unlock(&state->mutex);
+
+    char name[256];
+    memcpy(name, incoming->name, incoming->name_len);
+    name[incoming->name_len] = '\0';
+    char detail[640];
+    snprintf(detail, sizeof(detail), "from %s: %s (%u users, %zu live)", peer, name,
+             (unsigned)incoming->users, live_count);
+    log_line("Tracker registration updated", detail);
+    return 0;
+}
+
 static int handle_registration(connection_ctx *ctx) {
     tracker_registration incoming;
     memset(&incoming, 0, sizeof(incoming));
@@ -210,46 +247,61 @@ static int handle_registration(connection_ctx *ctx) {
     memcpy(incoming.ipv4, fixed, 4);
     incoming.port = read_be16(fixed + 4);
 
-    if (read_exact(ctx->fd, &incoming.name_len, 1) != 0) return -1;
+    if (read_exact(ctx->fd, &incoming.name_len, 1) != 0 ||
+        incoming.name_len > CARRACHO_TRACKER_MAX_NAME_LENGTH) return -1;
     if (incoming.name_len && read_exact(ctx->fd, incoming.name, incoming.name_len) != 0) return -1;
-    if (read_exact(ctx->fd, &incoming.description_len, 1) != 0) return -1;
-    if (incoming.description_len && read_exact(ctx->fd, incoming.description, incoming.description_len) != 0) return -1;
+    if (read_exact(ctx->fd, &incoming.description_len, 1) != 0 ||
+        incoming.description_len > CARRACHO_TRACKER_MAX_DESCRIPTION_LENGTH) return -1;
+    if (incoming.description_len &&
+        read_exact(ctx->fd, incoming.description, incoming.description_len) != 0) return -1;
+
     uint8_t tail[6];
     if (read_exact(ctx->fd, tail, sizeof(tail)) != 0) return -1;
     incoming.users = read_be16(tail);
     incoming.flags = read_be32(tail + 2);
     incoming.last_seen = time(NULL);
+    return store_registration(ctx->state, &incoming, ctx->peer);
+}
 
-    if ((size_t)incoming.name_len + incoming.description_len > 237u) return -1;
+static int handle_udp_registration(tracker_state *state, const uint8_t *wire, size_t length,
+                                   const struct sockaddr_in *peer_address) {
+    if (length < 17u || length > CARRACHO_TRACKER_MAX_DATAGRAM ||
+        memcmp(wire, k_registration_magic, sizeof(k_registration_magic)) != 0) return -1;
 
-    pthread_mutex_lock(&ctx->state->mutex);
-    prune_locked(ctx->state, incoming.last_seen);
-    size_t index = ctx->state->count;
-    for (size_t i = 0; i < ctx->state->count; ++i) {
-        tracker_registration *r = &ctx->state->registrations[i];
-        if (r->port == incoming.port && memcmp(r->ipv4, incoming.ipv4, 4) == 0) {
-            index = i;
-            break;
-        }
-    }
-    if (index == ctx->state->count) {
-        if (ctx->state->count >= CARRACHO_TRACKER_MAX_REGISTRATIONS) {
-            pthread_mutex_unlock(&ctx->state->mutex);
-            return -1;
-        }
-        ++ctx->state->count;
-    }
-    ctx->state->registrations[index] = incoming;
-    size_t live_count = ctx->state->count;
-    pthread_mutex_unlock(&ctx->state->mutex);
+    tracker_registration incoming;
+    memset(&incoming, 0, sizeof(incoming));
+    size_t p = 4;
 
-    char name[256];
-    memcpy(name, incoming.name, incoming.name_len); name[incoming.name_len] = '\0';
-    char detail[640];
-    snprintf(detail, sizeof(detail), "from %s: %s (%u users, %zu live)", ctx->peer, name,
-             (unsigned)incoming.users, live_count);
-    log_line("Tracker registration updated", detail);
-    return 0;
+    /* Tracker X 1.1.1 overwrites the CTT address with the UDP source IPv4. */
+    memcpy(incoming.ipv4, &peer_address->sin_addr, 4);
+    p += 4; /* skip the four IPv4 bytes carried in CTT */
+    if (p + 2 > length) return -1;
+    incoming.port = read_be16(wire + p);
+    p += 2;
+
+    if (p >= length) return -1;
+    incoming.name_len = wire[p++];
+    if (incoming.name_len > CARRACHO_TRACKER_MAX_NAME_LENGTH ||
+        p + incoming.name_len > length) return -1;
+    memcpy(incoming.name, wire + p, incoming.name_len);
+    p += incoming.name_len;
+
+    if (p >= length) return -1;
+    incoming.description_len = wire[p++];
+    if (incoming.description_len > CARRACHO_TRACKER_MAX_DESCRIPTION_LENGTH ||
+        p + incoming.description_len + 6u > length) return -1;
+    memcpy(incoming.description, wire + p, incoming.description_len);
+    p += incoming.description_len;
+
+    incoming.users = read_be16(wire + p);
+    p += 2;
+    incoming.flags = read_be32(wire + p);
+    incoming.last_seen = time(NULL);
+
+    char peer[INET_ADDRSTRLEN];
+    if (!inet_ntop(AF_INET, &peer_address->sin_addr, peer, sizeof(peer)))
+        strcpy(peer, "unknown");
+    return store_registration(state, &incoming, peer);
 }
 
 static void *connection_main(void *opaque) {
@@ -326,6 +378,24 @@ static int make_listener(uint16_t port, uint16_t *actual_port) {
     return fd;
 }
 
+static int make_udp_listener(uint16_t port) {
+    int fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (fd < 0) return -1;
+    int yes = 1;
+    if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) != 0) {
+        close(fd); return -1;
+    }
+    struct sockaddr_in address;
+    memset(&address, 0, sizeof(address));
+    address.sin_family = AF_INET;
+    address.sin_port = htons(port);
+    address.sin_addr.s_addr = htonl(INADDR_ANY);
+    if (bind(fd, (struct sockaddr *)&address, sizeof(address)) != 0) {
+        close(fd); return -1;
+    }
+    return fd;
+}
+
 static int parse_port(const char *text, uint16_t *out) {
     char *end = NULL;
     errno = 0;
@@ -337,7 +407,8 @@ static int parse_port(const char *text, uint16_t *out) {
 
 static void usage(FILE *stream) {
     fprintf(stream, "Usage: carracho-tracker [--port PORT]\n");
-    fprintf(stream, "Default: TCP 6702. Registrations expire after 600 seconds without refresh.\n");
+    fprintf(stream, "Default: TCP/UDP 6702. CTT registrations use UDP; CTQ/QLI uses TCP.\n");
+    fprintf(stream, "Registrations expire after 600 seconds without refresh.\n");
 }
 
 int main(int argc, char **argv) {
@@ -382,19 +453,58 @@ int main(int argc, char **argv) {
     }
     g_listener = listener;
 
+    int udp_listener = make_udp_listener(actual_port);
+    if (udp_listener < 0) {
+        fprintf(stderr, "carracho-tracker: UDP bind failed: %s\n", strerror(errno));
+        close(listener);
+        pthread_mutex_destroy(&state.mutex);
+        return 1;
+    }
+
     pthread_t cleanup_thread;
     if (pthread_create(&cleanup_thread, NULL, cleanup_main, &state) != 0) {
         fprintf(stderr, "carracho-tracker: cleanup thread failed\n");
+        close(udp_listener);
         close(listener);
         pthread_mutex_destroy(&state.mutex);
         return 1;
     }
 
     char ready[96];
-    snprintf(ready, sizeof(ready), "port=%u", (unsigned)actual_port);
+    snprintf(ready, sizeof(ready), "TCP/UDP port=%u", (unsigned)actual_port);
     log_line("Carracho tracker ready", ready);
 
     while (!g_stop) {
+        struct pollfd fds[2] = {
+            {.fd = listener, .events = POLLIN},
+            {.fd = udp_listener, .events = POLLIN}
+        };
+        int ready_count = poll(fds, 2, -1);
+        if (ready_count < 0) {
+            if (errno == EINTR) continue;
+            fprintf(stderr, "carracho-tracker: poll failed: %s\n", strerror(errno));
+            break;
+        }
+
+        if (fds[1].revents & POLLIN) {
+            uint8_t wire[CARRACHO_TRACKER_MAX_DATAGRAM + 1u];
+            struct sockaddr_in peer_address;
+            socklen_t peer_len = sizeof(peer_address);
+            ssize_t n;
+            do {
+                n = recvfrom(udp_listener, wire, sizeof(wire), 0,
+                             (struct sockaddr *)&peer_address, &peer_len);
+            } while (n < 0 && errno == EINTR);
+            if (n > 0 && handle_udp_registration(&state, wire, (size_t)n, &peer_address) != 0) {
+                char peer[INET_ADDRSTRLEN];
+                if (!inet_ntop(AF_INET, &peer_address.sin_addr, peer, sizeof(peer)))
+                    strcpy(peer, "unknown");
+                log_line("Tracker UDP registration rejected", peer);
+            }
+        }
+
+        if (!(fds[0].revents & POLLIN)) continue;
+
         struct sockaddr_in peer_address;
         socklen_t peer_len = sizeof(peer_address);
         int client = accept(listener, (struct sockaddr *)&peer_address, &peer_len);
@@ -425,6 +535,7 @@ int main(int argc, char **argv) {
     g_listener = -1;
     shutdown(listener, SHUT_RDWR);
     close(listener);
+    close(udp_listener);
     pthread_join(cleanup_thread, NULL);
     pthread_mutex_destroy(&state.mutex);
     log_line("Tracker stopped", NULL);

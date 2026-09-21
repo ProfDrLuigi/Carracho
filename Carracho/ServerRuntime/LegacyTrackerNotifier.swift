@@ -63,10 +63,8 @@ enum LegacyTrackerNotifier {
         for tracker in enabledTrackers {
             do {
                 let endpoint = try parseEndpoint(tracker.address)
-                let fd = try connectTCP(host: endpoint.host, port: endpoint.port)
-                defer { closeSocket(fd) }
-                try writeAll(fd: fd, data: wire)
-                log("Tracker registration sent to \(tracker.name.isEmpty ? tracker.address : tracker.name) (\(tracker.address))")
+                try sendDatagram(host: endpoint.host, port: endpoint.port, data: wire)
+                log("Tracker registration sent via UDP to \(tracker.name.isEmpty ? tracker.address : tracker.name) (\(tracker.address))")
             } catch {
                 log("Tracker registration failed for \(tracker.address): \(error.localizedDescription)")
             }
@@ -170,47 +168,47 @@ enum LegacyTrackerNotifier {
         return fallback ?? Data([127, 0, 0, 1])
     }
 
-    private static func connectTCP(host: String, port: UInt16) throws -> Int32 {
+    private static func sendDatagram(host: String, port: UInt16, data: Data) throws {
+        var hints = addrinfo()
+        hints.ai_family = AF_INET
+        hints.ai_socktype = datagramSocketType
         var result: UnsafeMutablePointer<addrinfo>?
         let service = String(port)
-        let code = getaddrinfo(host, service, nil, &result)
+        let code = getaddrinfo(host, service, &hints, &result)
         guard code == 0, let first = result else {
             throw LegacyTrackerNotifierError.resolve(host)
         }
         defer { freeaddrinfo(result) }
+
         var cursor: UnsafeMutablePointer<addrinfo>? = first
+        var lastError: String?
         while let info = cursor {
             let value = info.pointee
-            if value.ai_socktype == streamSocketType || value.ai_socktype == 0 {
-                let fd = socket(value.ai_family, streamSocketType, value.ai_protocol)
-                if fd >= 0 {
-                    if systemConnect(fd, value.ai_addr, value.ai_addrlen) == 0 { return fd }
-                    closeSocket(fd)
+            let fd = socket(value.ai_family, datagramSocketType, value.ai_protocol)
+            if fd >= 0 {
+                defer { closeSocket(fd) }
+                if systemConnect(fd, value.ai_addr, value.ai_addrlen) == 0 {
+                    let sent = data.withUnsafeBytes { raw -> Int in
+                        guard let base = raw.baseAddress else { return 0 }
+                        return systemSend(fd, base, data.count)
+                    }
+                    if sent == data.count { return }
+                    if sent >= 0 {
+                        lastError = "short datagram send (\(sent)/\(data.count) bytes)"
+                    } else {
+                        lastError = String(cString: strerror(errno))
+                    }
+                } else {
+                    lastError = String(cString: strerror(errno))
                 }
             }
             cursor = value.ai_next
         }
-        throw LegacyTrackerNotifierError.connect("\(host):\(port)")
-    }
-
-    private static func writeAll(fd: Int32, data: Data) throws {
-        var offset = 0
-        try data.withUnsafeBytes { raw in
-            guard let base = raw.baseAddress else { return }
-            while offset < data.count {
-                let n = systemSend(fd, base.advanced(by: offset), data.count - offset)
-                if n < 0 {
-                    if errno == EINTR { continue }
-                    throw LegacyTrackerNotifierError.send(String(cString: strerror(errno)))
-                }
-                guard n > 0 else { throw LegacyTrackerNotifierError.send("connection closed") }
-                offset += n
-            }
-        }
+        throw LegacyTrackerNotifierError.send(lastError ?? "\(host):\(port)")
     }
 
     #if canImport(Darwin)
-    private static let streamSocketType = SOCK_STREAM
+    private static let datagramSocketType = SOCK_DGRAM
     private static func systemConnect(_ fd: Int32, _ address: UnsafePointer<sockaddr>?, _ length: socklen_t) -> Int32 {
         Darwin.connect(fd, address, length)
     }
@@ -219,7 +217,7 @@ enum LegacyTrackerNotifier {
     }
     private static func closeSocket(_ fd: Int32) { _ = Darwin.close(fd) }
     #else
-    private static let streamSocketType = Int32(SOCK_STREAM.rawValue)
+    private static let datagramSocketType = Int32(SOCK_DGRAM.rawValue)
     private static func systemConnect(_ fd: Int32, _ address: UnsafePointer<sockaddr>?, _ length: socklen_t) -> Int32 {
         Glibc.connect(fd, address, length)
     }

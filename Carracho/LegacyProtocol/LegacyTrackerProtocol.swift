@@ -10,6 +10,9 @@ enum LegacyTrackerProtocol {
     /// in QLI list records.
     static let listRecordReservedLength = 4
     static let maxListRecordTextBytes = 237
+    // Carracho Tracker X 1.1.1 rejects CTT registrations above these limits.
+    static let maxRegistrationServerNameBytes = 40
+    static let maxRegistrationDescriptionBytes = 100
 
     static let registeredFlag: UInt32 = 0x0080_0000
     static let privateFlag: UInt32 = 0x0040_0000
@@ -159,6 +162,12 @@ struct LegacyTrackerRegistration: Equatable {
     func encoded() throws -> Data {
         guard ipv4.count == 4 else {
             throw LegacyProtocolError.invalidLength("tracker registration IPv4 must be exactly 4 bytes")
+        }
+        guard serverName.count <= LegacyTrackerProtocol.maxRegistrationServerNameBytes else {
+            throw LegacyProtocolError.invalidLength("Classic Tracker server name exceeds 40 bytes")
+        }
+        guard description.count <= LegacyTrackerProtocol.maxRegistrationDescriptionBytes else {
+            throw LegacyProtocolError.invalidLength("Classic Tracker description exceeds 100 bytes")
         }
         var data = LegacyTrackerProtocol.registrationMagic
         data.append(ipv4)

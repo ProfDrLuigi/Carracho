@@ -240,6 +240,10 @@ extension ViewController {
 
     func startBackgroundNewsPolling(for context: BookmarkConnectionContext) {
         stopBackgroundNewsPolling(for: context)
+        guard context.client.transferSession?.usesModernCrypto == true else {
+            context.backgroundNewsSupported = false
+            return
+        }
         guard context.client.isConnected, context.backgroundNewsSupported,
               let snapshot = context.snapshot else { return }
         context.backgroundNewsKnownGroups = Set(snapshot.lastNewsgroups)
@@ -410,8 +414,9 @@ extension ViewController {
     }
 
     func updateInlineNewsReplyState() {
+        let isClassicNews = client.transferSession?.usesModernCrypto != true
         let hasThread = client.isConnected && newsClient != nil && currentNewsCategory != nil && currentNewsThreadID != nil
-            && currentNewsIndex == nil && canPostRemoteNews
+            && (currentNewsIndex == nil || isClassicNews) && canPostRemoteNews
         newsReplyTextView.isEditable = hasThread && !newsReplySending && !newsReplyMediaBusy
         newsReplyTextView.isSelectable = true
         newsReplyTargetLabel.stringValue = hasThread ? newsReplyTargetDescription() : L("Select a topic to reply")
@@ -505,11 +510,12 @@ extension ViewController {
     }
 
     @objc func sendInlineNewsReply(_ sender: Any?) {
+        let isClassicNews = client.transferSession?.usesModernCrypto != true
         guard !newsReplySending, !newsReplyMediaBusy,
               client.isConnected, canPostRemoteNews, let newsClient,
               let group = currentNewsCategory,
               let threadID = currentNewsThreadID,
-              currentNewsIndex == nil,
+              currentNewsIndex == nil || isClassicNews,
               let thread = currentNewsThreads.first(where: { $0.threadID == threadID }) else { return }
         let text = composedRichText(newsReplyTextView.string, attachments: newsReplyAttachments)
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -540,7 +546,8 @@ extension ViewController {
         newsReplyValidationLabel.isHidden = true
         updateInlineNewsReplyState()
         let draftKey = newsReplyContextKey
-        newsClient.postArticle(group: group, subject: subject, text: message, parentArticleID: parentID) { [weak self] result in
+        let wireParentID: UInt32? = isClassicNews ? nil : parentID
+        newsClient.postArticle(group: group, subject: subject, text: message, parentArticleID: wireParentID) { [weak self] result in
             guard let self else { return }
             self.newsReplySending = false
             switch result {
@@ -552,7 +559,13 @@ extension ViewController {
                 self.newsReplyValidationLabel.isHidden = true
                 self.appendLine("\n" + LF("Reply posted to topic %@.", String(threadID)))
                 self.updateInlineNewsReplyState()
-                self.loadNewsIndex(group: group, openThreadID: threadID)
+                if isClassicNews {
+                    // Classic News has no parent/thread relation. This becomes a normal
+                    // article with a "Re:" subject, so return to the category list.
+                    self.loadNewsIndex(group: group)
+                } else {
+                    self.loadNewsIndex(group: group, openThreadID: threadID)
+                }
             case let .failure(error):
                 self.newsReplyValidationLabel.stringValue = LF("Reply could not be sent: %@", Self.displayMessage(for: error))
                 self.newsReplyValidationLabel.isHidden = false
@@ -797,6 +810,11 @@ extension ViewController {
     }
 
     func refreshNewsBadgeSnapshots() {
+        guard client.transferSession?.usesModernCrypto == true else {
+            newsBadgesSupported = false
+            stopNewsBadgePolling()
+            return
+        }
         guard client.isConnected, newsBadgesSupported, !newsBadgeRefreshInFlight, !lastNewsgroups.isEmpty else { return }
         newsBadgeRefreshInFlight = true
         refreshNewsBadgeCategory(Array(lastNewsgroups), index: 0)
@@ -954,6 +972,12 @@ extension ViewController {
     }
 
     func loadNewsReactions(group: Data, posts: [LegacyNewsThreadPostSummary], index: Int) {
+        guard client.transferSession?.usesModernCrypto == true else {
+            newsReactionsSupported = false
+            currentNewsReactions = [:]
+            reloadNewsView()
+            return
+        }
         guard newsReactionsSupported else { reloadNewsView(); return }
         guard index < posts.count else { reloadNewsView(); return }
         let articleID = posts[index].articleID
@@ -1081,6 +1105,37 @@ extension ViewController {
         newsArticleTextView.string = ""
         newsTitleLabel.stringValue = LF("%@ — loading threads…", Self.macRomanString(group))
         reloadNewsView()
+
+        if client.transferSession?.usesModernCrypto != true {
+            newsBadgesSupported = false
+            stopNewsBadgePolling()
+            guard let newsClient else { return }
+            newsClient.requestIndex(group: group) { [weak self] legacyResult in
+                guard let self else { return }
+                switch legacyResult {
+                case let .success(index):
+                    self.newsLoadErrorMessage = nil
+                    self.currentNewsIndex = index ?? LegacyArticleIndex(group: group, entries: [])
+                    self.currentNewsThreads = (index?.entries ?? []).map {
+                        LegacyNewsThreadSummary(threadID: $0.articleID, subject: $0.subject,
+                                                sender: $0.sender, date: $0.date,
+                                                replyCount: 0, latestDate: $0.date)
+                    }
+                    if let openThreadID,
+                       self.currentNewsThreads.contains(where: { $0.threadID == openThreadID }) {
+                        self.loadNewsThread(group: group, threadID: openThreadID)
+                    } else {
+                        self.reloadNewsView()
+                    }
+                case let .failure(error):
+                    self.currentNewsThreads = []
+                    self.newsLoadErrorMessage = LF("News category could not be loaded: %@", Self.displayMessage(for: error))
+                    self.appendLine("\n" + LF("News category could not be loaded: %@", Self.displayMessage(for: error)))
+                    self.reloadNewsView()
+                }
+            }
+            return
+        }
 
         client.requestNewsThreads(group: group) { [weak self] result in
             guard let self else { return }
@@ -1536,6 +1591,31 @@ extension ViewController {
         currentArticle = nil
         newsArticleTextView.string = L("Loading thread…")
         reloadNewsView()
+
+        if client.transferSession?.usesModernCrypto != true {
+            newsReactionsSupported = false
+            client.requestArticle(group: group, articleID: threadID) { [weak self] articleResult in
+                guard let self else { return }
+                switch articleResult {
+                case let .success(article):
+                    self.currentNewsThreadPosts = [LegacyNewsThreadPostSummary(articleID: threadID,
+                                                                             parentArticleID: LegacyArticle.noArticle,
+                                                                             sender: article.metadata.sender,
+                                                                             date: article.metadata.date,
+                                                                             bodyLength: UInt32(article.body.text.count))]
+                    self.currentNewsThreadArticles = [article]
+                    self.currentNewsPostCapabilities = [:]
+                    self.currentArticle = article
+                    self.markNewsThreadRead(group: group, threadID: threadID, totalPosts: 1)
+                    self.reloadNewsView()
+                case let .failure(error):
+                    self.newsLoadErrorMessage = LF("Thread could not be loaded: %@", Self.displayMessage(for: error))
+                    self.reloadNewsView()
+                }
+            }
+            return
+        }
+
         client.requestNewsThreadEntriesWithCapabilities(group: group, threadID: threadID) { [weak self] result in
             guard let self else { return }
             switch result {
@@ -1543,8 +1623,8 @@ extension ViewController {
                 self.currentNewsThreadPosts = entries.posts
                 self.currentNewsPostCapabilities = Dictionary(uniqueKeysWithValues: entries.capabilities.map { ($0.articleID, $0) })
                 self.loadNewsThreadBodies(group: group, posts: entries.posts, index: 0, articles: [])
-            case let .failure(error):
-                // A legacy server may not support thread metadata. Open the root article.
+            case .failure:
+                // A server without thread metadata can still expose the root article.
                 self.client.requestArticle(group: group, articleID: threadID) { [weak self] articleResult in
                     guard let self else { return }
                     switch articleResult {
@@ -1560,8 +1640,8 @@ extension ViewController {
                         self.markNewsThreadRead(group: group, threadID: threadID, totalPosts: 1)
                         self.loadNewsReactions(group: group, posts: self.currentNewsThreadPosts, index: 0)
                         self.reloadNewsView()
-                    case .failure:
-                        self.newsLoadErrorMessage = LF("Thread could not be loaded: %@", Self.displayMessage(for: error))
+                    case let .failure(articleError):
+                        self.newsLoadErrorMessage = LF("Thread could not be loaded: %@", Self.displayMessage(for: articleError))
                         self.reloadNewsView()
                     }
                 }

@@ -15,6 +15,9 @@
 #define CR_MAX_IDENTITY_TEXT 16384
 #define CR_MAX_SEARCH_INDEX_EXCLUSIONS 256
 #define CR_MAX_SEARCH_INDEX_PATTERN 256
+#define CR_MAX_TRACKERS 256
+#define CR_CLASSIC_TRACKER_SERVER_NAME_MAX 40
+#define CR_CLASSIC_TRACKER_DESCRIPTION_MAX 100
 #define CR_LOCAL_BOT_ACCOUNT_ID "00000000-0000-0000-0000-00000000b070"
 
 typedef enum cr_account_mode { CR_MODE_GUEST=0, CR_MODE_ACCOUNT=1, CR_MODE_ADMIN=2 } cr_account_mode;
@@ -69,6 +72,13 @@ typedef struct cr_search_index_exclusions {
     char patterns[CR_MAX_SEARCH_INDEX_EXCLUSIONS][CR_MAX_SEARCH_INDEX_PATTERN];
 } cr_search_index_exclusions;
 
+typedef struct cr_startup_tracker_setting {
+    char name[256];
+    char address[512];
+    char reserved_string[128];
+    uint32_t reserved_value;
+} cr_startup_tracker_setting;
+
 typedef struct cr_ip_restriction {
     uint8_t network[4];
     uint8_t mask[4];
@@ -118,6 +128,11 @@ typedef struct cr_startup_persistent_settings {
     uint64_t upload_bandwidth_limit_bytes_per_second;
     cr_search_index_exclusions search_index_exclusions;
     uint32_t search_index_rebuild_interval_hours;
+    int tracker_registration_configured;
+    uint32_t tracker_advertisement_flags;
+    char tracker_description[512];
+    size_t tracker_count;
+    cr_startup_tracker_setting trackers[CR_MAX_TRACKERS];
 } cr_startup_persistent_settings;
 
 typedef struct cr_offline_message_blob cr_offline_message_blob;

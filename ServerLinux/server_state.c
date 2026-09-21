@@ -306,6 +306,50 @@ static int json_set_int_if_changed(json_object *object, const char *key, int64_t
     return 0;
 }
 
+static int json_set_trackers_if_changed(json_object *advanced, const cr_startup_persistent_settings *settings, unsigned *changed) {
+    json_object *old = NULL;
+    int same = json_object_object_get_ex(advanced, "trackers", &old) && json_object_is_type(old, json_type_array) &&
+               json_object_array_length(old) == settings->tracker_count;
+    if (same) {
+        for (size_t i = 0; i < settings->tracker_count; ++i) {
+            json_object *item = json_object_array_get_idx(old, i), *v = NULL;
+            const cr_startup_tracker_setting *src = &settings->trackers[i];
+            const char *name = NULL, *address = NULL, *reserved = NULL;
+            int64_t reserved_value = 0;
+            if (!item || !json_object_is_type(item, json_type_object) ||
+                !json_object_object_get_ex(item, "name", &v) || !json_object_is_type(v, json_type_string)) { same = 0; break; }
+            name = json_object_get_string(v);
+            if (!json_object_object_get_ex(item, "address", &v) || !json_object_is_type(v, json_type_string)) { same = 0; break; }
+            address = json_object_get_string(v);
+            if (json_object_object_get_ex(item, "reservedString", &v) && json_object_is_type(v, json_type_string))
+                reserved = json_object_get_string(v);
+            else
+                reserved = "";
+            if (json_object_object_get_ex(item, "reservedValue", &v) && json_object_is_type(v, json_type_int))
+                reserved_value = json_object_get_int64(v);
+            if (strcmp(name, src->name) || strcmp(address, src->address) || strcmp(reserved, src->reserved_string) ||
+                (uint32_t)reserved_value != src->reserved_value) { same = 0; break; }
+        }
+    }
+    if (same) return 0;
+
+    json_object *array = json_object_new_array();
+    if (!array) return -1;
+    for (size_t i = 0; i < settings->tracker_count; ++i) {
+        const cr_startup_tracker_setting *src = &settings->trackers[i];
+        json_object *item = json_object_new_object();
+        if (!item) { json_object_put(array); return -1; }
+        json_object_object_add(item, "name", json_object_new_string(src->name));
+        json_object_object_add(item, "address", json_object_new_string(src->address));
+        json_object_object_add(item, "reservedString", json_object_new_string(src->reserved_string));
+        json_object_object_add(item, "reservedValue", json_object_new_int64(src->reserved_value));
+        json_object_array_add(array, item);
+    }
+    json_object_object_add(advanced, "trackers", array);
+    if (changed) (*changed)++;
+    return 0;
+}
+
 static int json_set_exclusions_if_changed(json_object *object, const cr_search_index_exclusions *settings, unsigned *changed) {
     json_object *old = NULL;
     int same = json_object_object_get_ex(object, "searchIndexExclusions", &old) && json_object_is_type(old, json_type_array) &&
@@ -394,6 +438,11 @@ int cr_state_reconcile_startup_settings(cr_server_state *s, const cr_startup_per
     json_set_int_if_changed(advanced, "maxFolderDownloadDepth", settings->max_folder_download_depth, &changed);
     json_set_int_if_changed(advanced, "newsExpirationHour", settings->news_expiration_hour, &changed);
     json_set_int_if_changed(advanced, "newsExpirationMinute", settings->news_expiration_minute, &changed);
+    if (settings->tracker_registration_configured) {
+        json_set_int_if_changed(advanced, "trackerAdvertisementFlags", settings->tracker_advertisement_flags, &changed);
+        json_set_string_if_changed(advanced, "trackerDescription", settings->tracker_description, &changed);
+        if (json_set_trackers_if_changed(advanced, settings, &changed)) { pthread_mutex_unlock(&s->mutex); return -1; }
+    }
 
     json_object *runtime = NULL;
     if (!json_object_object_get_ex(s->root, "runtime", &runtime) || !json_object_is_type(runtime, json_type_object)) {

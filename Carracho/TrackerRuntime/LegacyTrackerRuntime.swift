@@ -45,10 +45,12 @@ final class LegacyTrackerRuntime {
     private let cleanupInterval: TimeInterval
     private let stateLock = NSLock()
     private var listenerFD: Int32 = -1
+    private var registrationFD: Int32 = -1
     private var boundPort: UInt16?
     private var running = false
     private var registrations: [Key: Registration] = [:]
     private let acceptQueue = DispatchQueue(label: "com.carracho.tracker.accept", qos: .userInitiated)
+    private let registrationQueue = DispatchQueue(label: "com.carracho.tracker.registration", qos: .utility)
     private let cleanupQueue = DispatchQueue(label: "com.carracho.tracker.cleanup", qos: .utility)
     private let timerLock = NSLock()
     private var cleanupTimer: DispatchSourceTimer?
@@ -76,28 +78,40 @@ final class LegacyTrackerRuntime {
 
         let listener = try TrackerSocket.makeListener(port: port)
         let actualPort = try TrackerSocket.localPort(fd: listener)
+        let registrationSocket: Int32
+        do {
+            registrationSocket = try TrackerSocket.makeDatagramListener(port: actualPort)
+        } catch {
+            TrackerSocket.shutdownAndClose(listener)
+            throw error
+        }
         stateLock.lock()
         listenerFD = listener
+        registrationFD = registrationSocket
         boundPort = actualPort
         running = true
         stateLock.unlock()
         emitStatus()
-        log("Tracker listening on TCP \(actualPort)")
+        log("Tracker listening on TCP/UDP \(actualPort)")
         acceptQueue.async { [weak self] in self?.acceptLoop(fd: listener) }
+        registrationQueue.async { [weak self] in self?.registrationLoop(fd: registrationSocket) }
         scheduleCleanup()
         return actualPort
     }
 
     func stop() {
         stateLock.lock()
-        guard running || listenerFD >= 0 else { stateLock.unlock(); return }
+        guard running || listenerFD >= 0 || registrationFD >= 0 else { stateLock.unlock(); return }
         running = false
         let fd = listenerFD
+        let udpFD = registrationFD
         listenerFD = -1
+        registrationFD = -1
         boundPort = nil
         stateLock.unlock()
         cancelCleanup()
         if fd >= 0 { TrackerSocket.shutdownAndClose(fd) }
+        if udpFD >= 0 { TrackerSocket.closeDatagram(udpFD) }
         emitStatus()
         log("Tracker stopped")
     }
@@ -148,6 +162,48 @@ final class LegacyTrackerRuntime {
         }
     }
 
+    private func registrationLoop(fd: Int32) {
+        while true {
+            stateLock.lock()
+            let shouldRun = running && registrationFD == fd
+            stateLock.unlock()
+            guard shouldRun else { return }
+            do {
+                let datagram = try TrackerSocket.receiveDatagram(fd: fd, maximumBytes: 256)
+                let registration = try LegacyTrackerRegistration.decode(datagram.data)
+                guard registration.serverName.count <= LegacyTrackerProtocol.maxRegistrationServerNameBytes,
+                      registration.description.count <= LegacyTrackerProtocol.maxRegistrationDescriptionBytes else {
+                    throw LegacyTrackerRuntimeError.protocolFailure("Classic Tracker registration exceeds 40/100-byte text limits")
+                }
+                guard let observedIPv4 = TrackerSocket.ipv4Data(datagram.peerIP) else {
+                    throw LegacyTrackerRuntimeError.protocolFailure("registration peer has no usable IPv4 address")
+                }
+                // Tracker X 1.1.1 treats the UDP source address as authoritative and
+                // overwrites the four IPv4 bytes carried in the CTT payload.
+                let entry = LegacyTrackerServerEntry(ipv4: observedIPv4, port: registration.port,
+                                                     serverName: registration.serverName,
+                                                     description: registration.description,
+                                                     users: registration.users, flags: registration.flags)
+                stateLock.lock()
+                registrations[Key(ipv4: entry.ipv4, port: entry.port)] =
+                    Registration(entry: entry, lastSeen: Date())
+                stateLock.unlock()
+                emitStatus()
+                let name = String(data: entry.serverName, encoding: .macOSRoman) ?? "?"
+                log("Tracker UDP registration updated from \(datagram.peerIP): \(name) (\(entry.users) users)")
+            } catch {
+                stateLock.lock()
+                let stillRunning = running && registrationFD == fd
+                stateLock.unlock()
+                if stillRunning {
+                    log("Tracker UDP registration failed: \(error.localizedDescription)")
+                    continue
+                }
+                return
+            }
+        }
+    }
+
     private func handleConnection(fd: Int32, peerIP: String) throws {
         let magic = try TrackerSocket.readExactly(fd: fd, count: 4)
         if magic == LegacyTrackerProtocol.queryMagic {
@@ -173,9 +229,9 @@ final class LegacyTrackerRuntime {
             wire.append(try TrackerSocket.readExactly(fd: fd, count: Int(descriptionLength)))
             wire.append(try TrackerSocket.readExactly(fd: fd, count: 6)) // users + flags
             let registration = try LegacyTrackerRegistration.decode(wire)
-            guard registration.serverName.count + registration.description.count <=
-                    LegacyTrackerProtocol.maxListRecordTextBytes else {
-                throw LegacyTrackerRuntimeError.protocolFailure("tracker registration is too large for a Classic QLI record")
+            guard registration.serverName.count <= LegacyTrackerProtocol.maxRegistrationServerNameBytes,
+                  registration.description.count <= LegacyTrackerProtocol.maxRegistrationDescriptionBytes else {
+                throw LegacyTrackerRuntimeError.protocolFailure("Classic Tracker registration exceeds 40/100-byte text limits")
             }
             guard let observedIPv4 = TrackerSocket.ipv4Data(peerIP) else {
                 throw LegacyTrackerRuntimeError.protocolFailure("registration peer has no usable IPv4 address")
@@ -230,8 +286,10 @@ final class LegacyTrackerRuntime {
 private enum TrackerSocket {
     #if canImport(Darwin)
     static let streamType = SOCK_STREAM
+    static let datagramType = SOCK_DGRAM
     #else
     static let streamType = Int32(SOCK_STREAM.rawValue)
+    static let datagramType = Int32(SOCK_DGRAM.rawValue)
     #endif
 
     static func makeListener(port: UInt16) throws -> Int32 {
@@ -263,6 +321,32 @@ private enum TrackerSocket {
         }
     }
 
+    static func makeDatagramListener(port: UInt16) throws -> Int32 {
+        let fd = socket(AF_INET, datagramType, 0)
+        guard fd >= 0 else { throw socketError("socket(SOCK_DGRAM)") }
+        do {
+            var yes: Int32 = 1
+            guard setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes,
+                             socklen_t(MemoryLayout.size(ofValue: yes))) == 0 else {
+                throw socketError("setsockopt(SO_REUSEADDR)")
+            }
+            var address = sockaddr_in()
+            address.sin_family = sa_family_t(AF_INET)
+            address.sin_port = port.bigEndian
+            address.sin_addr = in_addr(s_addr: INADDR_ANY)
+            let bound = withUnsafePointer(to: &address) {
+                $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                    bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+                }
+            }
+            guard bound == 0 else { throw socketError("bind(SOCK_DGRAM)") }
+            return fd
+        } catch {
+            closeFD(fd)
+            throw error
+        }
+    }
+
     static func localPort(fd: Int32) throws -> UInt16 {
         var address = sockaddr_in()
         var length = socklen_t(MemoryLayout<sockaddr_in>.size)
@@ -285,6 +369,33 @@ private enum TrackerSocket {
         _ = setsockopt(clientFD, SOL_SOCKET, SO_NOSIGPIPE, &yes, socklen_t(MemoryLayout.size(ofValue: yes)))
         #endif
         return (clientFD, peerAddress(storage))
+    }
+
+    static func receiveDatagram(fd: Int32, maximumBytes: Int) throws -> (data: Data, peerIP: String) {
+        guard maximumBytes > 0 else {
+            throw LegacyTrackerRuntimeError.protocolFailure("invalid tracker datagram limit")
+        }
+        // One byte beyond the Classic 256-byte limit lets us reject oversized datagrams
+        // instead of accepting a silently truncated CTT packet.
+        var buffer = [UInt8](repeating: 0, count: maximumBytes + 1)
+        let bufferCapacity = buffer.count
+        var storage = sockaddr_storage()
+        var length = socklen_t(MemoryLayout<sockaddr_storage>.size)
+        let received = buffer.withUnsafeMutableBytes { raw -> Int in
+            withUnsafeMutablePointer(to: &storage) { pointer in
+                pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                    platformRecvFrom(fd, raw.baseAddress, bufferCapacity, $0, &length)
+                }
+            }
+        }
+        if received < 0 {
+            if errno == EINTR { return try receiveDatagram(fd: fd, maximumBytes: maximumBytes) }
+            throw socketError("recvfrom")
+        }
+        guard received <= maximumBytes else {
+            throw LegacyTrackerRuntimeError.protocolFailure("tracker registration exceeds 256 bytes")
+        }
+        return (Data(buffer.prefix(received)), peerAddress(storage))
     }
 
     static func readExactly(fd: Int32, count: Int) throws -> Data {
@@ -345,6 +456,11 @@ private enum TrackerSocket {
         closeFD(fd)
     }
 
+    static func closeDatagram(_ fd: Int32) {
+        guard fd >= 0 else { return }
+        closeFD(fd)
+    }
+
     private static func peerAddress(_ storage: sockaddr_storage) -> String {
         var copy = storage
         var buffer = [CChar](repeating: 0, count: Int(INET6_ADDRSTRLEN))
@@ -371,6 +487,11 @@ private enum TrackerSocket {
     private static func platformRecv(_ fd: Int32, _ buffer: UnsafeMutableRawPointer, _ count: Int) -> Int {
         Darwin.recv(fd, buffer, count, 0)
     }
+    private static func platformRecvFrom(_ fd: Int32, _ buffer: UnsafeMutableRawPointer?, _ count: Int,
+                                         _ address: UnsafeMutablePointer<sockaddr>?,
+                                         _ length: UnsafeMutablePointer<socklen_t>?) -> Int {
+        Darwin.recvfrom(fd, buffer, count, 0, address, length)
+    }
     private static func platformSend(_ fd: Int32, _ buffer: UnsafeRawPointer, _ count: Int) -> Int {
         Darwin.send(fd, buffer, count, 0)
     }
@@ -381,6 +502,11 @@ private enum TrackerSocket {
     }
     private static func platformRecv(_ fd: Int32, _ buffer: UnsafeMutableRawPointer, _ count: Int) -> Int {
         Glibc.recv(fd, buffer, count, 0)
+    }
+    private static func platformRecvFrom(_ fd: Int32, _ buffer: UnsafeMutableRawPointer?, _ count: Int,
+                                         _ address: UnsafeMutablePointer<sockaddr>?,
+                                         _ length: UnsafeMutablePointer<socklen_t>?) -> Int {
+        Glibc.recvfrom(fd, buffer, count, 0, address, length)
     }
     private static func platformSend(_ fd: Int32, _ buffer: UnsafeRawPointer, _ count: Int) -> Int {
         Glibc.send(fd, buffer, count, Int32(MSG_NOSIGNAL))

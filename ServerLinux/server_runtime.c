@@ -3306,6 +3306,22 @@ static void advertised_ipv4(uint8_t out[4]){
 }
 static int parse_tracker_endpoint(const char*raw,char*host,size_t host_cap,uint16_t*port){while(*raw&&isspace((unsigned char)*raw))raw++;size_t len=strlen(raw);while(len&&isspace((unsigned char)raw[len-1]))len--;if(!len||len>=512)return-1;char value[512];memcpy(value,raw,len);value[len]=0;char*last=strrchr(value,':');if(last&&last!=value&&!memchr(value,':',(size_t)(last-value))){char*end=NULL;errno=0;unsigned long p=strtoul(last+1,&end,10);if(!errno&&end&&!*end&&p>0&&p<=65535){*last=0;if(!*value||strlen(value)+1>host_cap)return-1;strcpy(host,value);*port=(uint16_t)p;return 0;}}if(strlen(value)+1>host_cap)return-1;strcpy(host,value);*port=6702;return 0;}
 static int connect_tracker(const char*host,uint16_t port){struct addrinfo hints,*res=NULL;memset(&hints,0,sizeof(hints));hints.ai_socktype=SOCK_STREAM;hints.ai_family=AF_UNSPEC;char service[16];snprintf(service,sizeof(service),"%u",port);if(getaddrinfo(host,service,&hints,&res)!=0)return-1;int result=-1;for(struct addrinfo*a=res;a;a=a->ai_next){int fd=socket(a->ai_family,a->ai_socktype,a->ai_protocol);if(fd<0)continue;int flags=fcntl(fd,F_GETFL,0);if(flags<0){close(fd);continue;}if(fcntl(fd,F_SETFL,flags|O_NONBLOCK)<0){close(fd);continue;}int c=connect(fd,a->ai_addr,a->ai_addrlen);if(c<0&&errno!=EINPROGRESS){close(fd);continue;}if(c<0){struct pollfd pfd={.fd=fd,.events=POLLOUT};int ready=poll(&pfd,1,1000);if(ready<=0){close(fd);continue;}int error=0;socklen_t el=sizeof(error);if(getsockopt(fd,SOL_SOCKET,SO_ERROR,&error,&el)||error){close(fd);continue;}}(void)fcntl(fd,F_SETFL,flags);result=fd;break;}freeaddrinfo(res);return result;}
+static int send_tracker_datagram(const char*host,uint16_t port,const uint8_t*data,size_t length){
+    struct addrinfo hints,*res=NULL;memset(&hints,0,sizeof(hints));
+    hints.ai_socktype=SOCK_DGRAM;hints.ai_family=AF_INET;
+    char service[16];snprintf(service,sizeof(service),"%u",port);
+    if(getaddrinfo(host,service,&hints,&res)!=0)return-1;
+    int result=-1;
+    for(struct addrinfo*a=res;a;a=a->ai_next){
+        int fd=socket(a->ai_family,a->ai_socktype,a->ai_protocol);
+        if(fd<0)continue;
+        ssize_t n;
+        do{n=sendto(fd,data,length,0,a->ai_addr,a->ai_addrlen);}while(n<0&&errno==EINTR);
+        close(fd);
+        if(n==(ssize_t)length){result=0;break;}
+    }
+    freeaddrinfo(res);return result;
+}
 static int tracker_ipv4_private_or_local(const uint8_t ip[4]){
     if(ip[0]==0||ip[0]==10||ip[0]==127||ip[0]>=224)return 1;
     if(ip[0]==100&&ip[1]>=64&&ip[1]<=127)return 1;
@@ -3381,8 +3397,10 @@ static void send_tracker_registrations(cr_server *s) {
     uint8_t name[512], desc[512];
     size_t nn = 0, dn = 0;
     if (cr_utf8_to_macroman(server_name, name, sizeof(name), &nn) ||
-        cr_utf8_to_macroman(description, desc, sizeof(desc), &dn) || nn > 255 || dn > 255) {
-        log_msg("Tracker registration skipped: server name/description is not representable in Classic limits");
+        cr_utf8_to_macroman(description, desc, sizeof(desc), &dn) ||
+        nn > CR_CLASSIC_TRACKER_SERVER_NAME_MAX || dn > CR_CLASSIC_TRACKER_DESCRIPTION_MAX) {
+        log_msg("Tracker registration skipped: Classic Tracker requires name <= %d and description <= %d MacRoman bytes",
+                CR_CLASSIC_TRACKER_SERVER_NAME_MAX, CR_CLASSIC_TRACKER_DESCRIPTION_MAX);
         free(targets);
         return;
     }
@@ -3422,19 +3440,12 @@ static void send_tracker_registrations(cr_server *s) {
             log_msg("Tracker registration failed for %s: invalid address", targets[i].address);
             continue;
         }
-        int fd = connect_tracker(host, port);
-        if (fd < 0) {
-            log_msg("Tracker registration failed for %s: connect/resolve", targets[i].address);
-            continue;
-        }
-        if (cr_write_all(fd, wire.data, wire.len) == 0)
-            log_msg("Tracker registration sent to %s (%s)",
+        if (send_tracker_datagram(host, port, wire.data, wire.len) == 0)
+            log_msg("Tracker registration sent via UDP to %s (%s)",
                     targets[i].name[0] ? targets[i].name : targets[i].address,
                     targets[i].address);
         else
-            log_msg("Tracker registration failed for %s: send", targets[i].address);
-        shutdown(fd, SHUT_RDWR);
-        close(fd);
+            log_msg("Tracker registration failed for %s: UDP send/resolve", targets[i].address);
     }
     cr_buffer_free(&wire);
     free(targets);
@@ -3630,10 +3641,68 @@ static const char*tracker_bandwidth_title(uint8_t code){
 
 /* Tracker registration remains database-managed, but carracho-server.json mirrors the complete
    public registration setup so operators can inspect the effective configuration in one place. */
-static int persist_tracker_registration_config(cr_server*s){
-    if(!s||!s->config_path[0])return-1;
+static json_object* config_root_for_mirror(cr_server*s){
+    if(!s||!s->config_path[0]){errno=EINVAL;return NULL;}
+    errno=0;
     json_object*root=json_object_from_file(s->config_path);
-    if(!root||!json_object_is_type(root,json_type_object)){if(root)json_object_put(root);return-1;}
+    if(root&&json_object_is_type(root,json_type_object))return root;
+    if(root)json_object_put(root);
+    if(errno!=ENOENT)return NULL;
+
+    root=json_object_new_object();
+    if(!root){errno=ENOMEM;return NULL;}
+
+    pthread_mutex_lock(&s->state.mutex);
+    json_object_object_add(root,"serverName",json_object_new_string(s->state.identity.name));
+    json_object_object_add(root,"description",json_object_new_string(s->state.identity.description));
+    json_object_object_add(root,"serverPort",json_object_new_int(s->state.advanced.control_port));
+    json_object_object_add(root,"filesRoot",json_object_new_string(s->state.storage_root));
+    json_object_object_add(root,"legacyFilesRoot",json_object_new_string(s->state.legacy_storage_root));
+    json_object_object_add(root,"authenticationMode",json_object_new_string(s->state.legacy_compatible?"legacyCompatible":"modernOnly"));
+    json_object_object_add(root,"maxConnections",json_object_new_int(s->state.advanced.max_connections));
+    json_object_object_add(root,"maxConnectionsPerIP",json_object_new_int(s->state.advanced.max_connections_per_ip));
+    json_object_object_add(root,"maxSimultaneousFileTransfers",json_object_new_int(s->state.advanced.max_simultaneous_file_transfers));
+    json_object_object_add(root,"maxFileTransfersPerUser",json_object_new_int(s->state.advanced.max_file_transfers_per_user));
+    json_object_object_add(root,"maxFolderDownloadDepth",json_object_new_int(s->state.advanced.max_folder_download_depth));
+    json_object_object_add(root,"newsExpirationHour",json_object_new_int(s->state.advanced.news_expiration_hour));
+    json_object_object_add(root,"newsExpirationMinute",json_object_new_int(s->state.advanced.news_expiration_minute));
+
+    json_object*runtime=NULL,*v=NULL;
+    if(json_object_object_get_ex(s->state.root,"runtime",&runtime)&&json_object_is_type(runtime,json_type_object)){
+        if(json_object_object_get_ex(runtime,"uploadBandwidthLimitBytesPerSecond",&v)&&json_object_is_type(v,json_type_int))
+            json_object_object_add(root,"uploadBandwidthLimitBytesPerSecond",json_object_new_int64(json_object_get_int64(v)));
+        if(json_object_object_get_ex(runtime,"searchIndexRebuildIntervalHours",&v)&&json_object_is_type(v,json_type_int))
+            json_object_object_add(root,"searchIndexRebuildIntervalHours",json_object_new_int64(json_object_get_int64(v)));
+        json_object*ex=NULL;
+        if(json_object_object_get_ex(runtime,"searchIndexExclusions",&ex)&&json_object_is_type(ex,json_type_array)){
+            json_object*copy=json_object_new_array();
+            if(copy){
+                for(size_t i=0;i<json_object_array_length(ex);i++){
+                    json_object*x=json_object_array_get_idx(ex,i);
+                    if(x&&json_object_is_type(x,json_type_string))
+                        json_object_array_add(copy,json_object_new_string(json_object_get_string(x)));
+                }
+                json_object_object_add(root,"searchIndexExclusions",copy);
+            }
+        }
+    }
+    pthread_mutex_unlock(&s->state.mutex);
+
+    json_object*http=json_object_new_object();
+    if(http){
+        json_object_object_add(http,"enabled",json_object_new_boolean(s->http_admin_enabled));
+        json_object_object_add(http,"bind",json_object_new_string(s->http_admin_bind));
+        json_object_object_add(http,"port",json_object_new_int(s->http_admin_port));
+        json_object_object_add(root,"httpAdmin",http);
+    }
+    log_msg("Recreating missing startup config mirror at %s from current server state",s->config_path);
+    return root;
+}
+
+static int persist_tracker_registration_config(cr_server*s){
+    if(!s||!s->config_path[0]){errno=EINVAL;return-1;}
+    json_object*root=config_root_for_mirror(s);
+    if(!root)return-1;
     json_object*registration=json_object_new_object(),*targets=json_object_new_array();
     if(!registration||!targets){if(registration)json_object_put(registration);if(targets)json_object_put(targets);json_object_put(root);return-1;}
 
@@ -3674,8 +3743,7 @@ static int persist_tracker_registration_config(cr_server*s){
     json_object_object_add(registration,"trackers",targets);
     json_object_object_add(root,"trackerRegistration",registration);
 
-    char tmp[PATH_MAX];int n=snprintf(tmp,sizeof(tmp),"%s.tmp",s->config_path);int rc=-1;
-    if(n>0&&(size_t)n<sizeof(tmp)&&json_object_to_file_ext(tmp,root,JSON_C_TO_STRING_PRETTY)==0&&rename(tmp,s->config_path)==0)rc=0;else unlink(tmp);
+    int rc=write_json_config_with_fallback(s->config_path,root,JSON_C_TO_STRING_PRETTY);
     json_object_put(root);return rc;
 }
 
