@@ -380,7 +380,7 @@ final class CarrachoServerAppDelegate: NSObject, NSApplicationDelegate, NSMenuDe
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        !CarrachoServerPresentationPreferences.menuBarIconEnabled
+        true
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
