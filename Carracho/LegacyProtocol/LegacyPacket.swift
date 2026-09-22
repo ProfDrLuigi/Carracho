@@ -24,7 +24,7 @@ struct LegacyPacket: Equatable {
     var reserved: UInt32 = 0
     var fields: [LegacyTLV] = []
 
-    func plaintext(alignOddValuesToUInt16: Bool = false) throws -> Data {
+    func plaintext(classicServerSettingsLayout: Bool = false) throws -> Data {
         guard fields.count <= Int(UInt16.max) else {
             throw LegacyProtocolError.invalidLength("too many TLV fields")
         }
@@ -34,7 +34,6 @@ struct LegacyPacket: Equatable {
                 throw LegacyProtocolError.invalidLength("TLV value exceeds 65535 bytes")
             }
             bodyLength += 6 + field.value.count
-            if alignOddValuesToUInt16 && field.value.count.isMultiple(of: 2) == false { bodyLength += 1 }
         }
         guard bodyLength <= Self.maximumClassicBodyLength else {
             throw LegacyProtocolError.invalidLength("packet body exceeds classic 0x20000-byte limit")
@@ -46,29 +45,32 @@ struct LegacyPacket: Equatable {
         data.append(LegacyWire.uint32BE(reserved))
         data.append(LegacyWire.uint16BE(UInt16(fields.count)))
         for field in fields {
+            // Server 1.0b13 has exactly one malformed-looking server-settings field:
+            // tracker flags (0x32) declare three value bytes but physically carry the
+            // complete UInt32. Ordinary odd-sized strings are NOT aligned or padded.
+            let classicTrackerFlags = classicServerSettingsLayout &&
+                command == LegacyCommand.serverSettingsReply &&
+                field.type == LegacyServerSettingField.trackerRegistrationFlags &&
+                field.value.count == 4
+            let declaredLength = classicTrackerFlags ? 3 : field.value.count
             data.append(LegacyWire.uint32BE(field.type))
-            data.append(LegacyWire.uint16BE(UInt16(field.value.count)))
+            data.append(LegacyWire.uint16BE(UInt16(declaredLength)))
             data.append(field.value)
-            if alignOddValuesToUInt16 && field.value.count.isMultiple(of: 2) == false { data.append(0) }
         }
         return data
     }
 
     private static func parseFields(_ body: Data, fieldCount: Int,
-                                    alignOddValuesToUInt16: Bool) throws -> [LegacyTLV] {
+                                    classicServerSettingsLayout: Bool) throws -> [LegacyTLV] {
         var cursor = LegacyByteCursor(body)
         var fields: [LegacyTLV] = []
         fields.reserveCapacity(fieldCount)
         for _ in 0 ..< fieldCount {
             let type = try cursor.readUInt32BE()
             let length = Int(try cursor.readUInt16BE())
-            fields.append(LegacyTLV(type: type, value: try cursor.readBytes(count: length)))
-            if alignOddValuesToUInt16 && length.isMultiple(of: 2) == false {
-                // Server 1.0b13 aligns server-setting values to a 16-bit boundary while the
-                // TLV length still describes only the meaningful bytes. The pad byte itself
-                // is unspecified and must not leak into the field value.
-                _ = try cursor.readUInt8()
-            }
+            let physicalLength = classicServerSettingsLayout &&
+                type == LegacyServerSettingField.trackerRegistrationFlags && length == 3 ? 4 : length
+            fields.append(LegacyTLV(type: type, value: try cursor.readBytes(count: physicalLength)))
         }
         try cursor.requireEnd()
         return fields
@@ -96,13 +98,13 @@ struct LegacyPacket: Equatable {
 
         let fields: [LegacyTLV]
         do {
-            fields = try parseFields(body, fieldCount: fieldCount, alignOddValuesToUInt16: false)
+            fields = try parseFields(body, fieldCount: fieldCount, classicServerSettingsLayout: false)
         } catch let standardError {
-            // Classic Server 1.0b13 is peculiar only for command 0xc0: odd-sized setting
-            // values are followed by one in-body alignment byte. Modern peers use ordinary
-            // packed TLVs, so retry the aligned layout only when the canonical parse fails.
+            // Classic Server 1.0b13 is peculiar only for tracker-flags field 0x32 in
+            // command 0xc0: its TLV length says 3 while four flag bytes are physically
+            // present. Retry that exact historical layout, without padding other odd fields.
             guard command == LegacyCommand.serverSettingsReply else { throw standardError }
-            fields = try parseFields(body, fieldCount: fieldCount, alignOddValuesToUInt16: true)
+            fields = try parseFields(body, fieldCount: fieldCount, classicServerSettingsLayout: true)
         }
         return (LegacyPacket(command: command, transactionID: transactionID, reserved: reserved, fields: fields), trailing)
     }

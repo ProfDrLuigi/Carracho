@@ -3,9 +3,9 @@ import Foundation
 enum LegacyControlCodec {
     static let maximumCiphertextLength = LegacyPacket.headerSize + LegacyPacket.maximumClassicBodyLength + 8
 
-    static func encode(_ packet: LegacyPacket, key: Data, alignOddValuesToUInt16: Bool = false) throws -> Data {
+    static func encode(_ packet: LegacyPacket, key: Data, classicServerSettingsLayout: Bool = false) throws -> Data {
         try LegacyCryptoFraming.encodeControlFrame(
-            plaintext: packet.plaintext(alignOddValuesToUInt16: alignOddValuesToUInt16), key: key
+            plaintext: packet.plaintext(classicServerSettingsLayout: classicServerSettingsLayout), key: key
         )
     }
 

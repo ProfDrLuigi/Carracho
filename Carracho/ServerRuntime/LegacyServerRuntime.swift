@@ -4198,8 +4198,7 @@ final class LegacyServerRuntime {
         case LegacyServerSettingField.trackerList:
             return try LegacyServerSettingField.encodeTrackerSettings(state.advanced.trackers.map { try $0.legacyRecord() })
         case LegacyServerSettingField.trackerRegistrationFlags:
-            let flags = state.advanced.trackerAdvertisementFlags
-            return Data([UInt8((flags >> 24) & 0xff), UInt8((flags >> 16) & 0xff), UInt8((flags >> 8) & 0xff)])
+            return LegacyWire.uint32BE(state.advanced.trackerAdvertisementFlags)
         case LegacyServerSettingField.trackerDescription:
             return Self.macRoman(state.advanced.trackerDescription)
         case LegacyServerSettingField.uptimeTicks:
@@ -5531,7 +5530,7 @@ private final class LegacyServerSession {
         } else {
             frame = try LegacyControlCodec.encode(
                 packet, key: sessionKey,
-                alignOddValuesToUInt16: packet.command == LegacyCommand.serverSettingsReply
+                classicServerSettingsLayout: packet.command == LegacyCommand.serverSettingsReply
             )
         }
         try LegacySocket.writeAll(fd: fd, data: frame)

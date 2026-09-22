@@ -409,11 +409,11 @@ int cr_decode_control(const uint8_t *ciphertext, size_t ciphertext_len,
 
 static int build_packet_internal(uint32_t command, uint32_t transaction_id, uint32_t reserved,
                                  const cr_tlv_out *fields, size_t field_count,
-                                 int align_odd_values, cr_buffer *plaintext) {
+                                 int classic_server_settings_layout, cr_buffer *plaintext) {
     if (field_count > UINT16_MAX) return -1;
     size_t body = 0;
     for(size_t i=0;i<field_count;++i){
-        size_t part=6u+fields[i].length+((align_odd_values&&fields[i].length&1u)?1u:0u);
+        size_t part=6u+fields[i].length;
         if(body>CR_MAX_BODY_LENGTH-part)return-1;
         body+=part;
     }
@@ -421,9 +421,11 @@ static int build_packet_internal(uint32_t command, uint32_t transaction_id, uint
     if(cr_buffer_append_u32(plaintext,command)||cr_buffer_append_u32(plaintext,transaction_id)||cr_buffer_append_u32(plaintext,(uint32_t)body)||
        cr_buffer_append_u32(plaintext,reserved)||cr_buffer_append_u16(plaintext,(uint16_t)field_count))return -1;
     for(size_t i=0;i<field_count;++i){
-        if(cr_buffer_append_u32(plaintext,fields[i].type)||cr_buffer_append_u16(plaintext,fields[i].length)||
+        /* Server 1.0b13 packs ordinary odd-sized settings without padding. Its one
+           exception is tracker flags (0x32): four physical bytes with TLV length 3. */
+        uint16_t declared_length=(classic_server_settings_layout&&fields[i].type==0x32u&&fields[i].length==4u)?3u:fields[i].length;
+        if(cr_buffer_append_u32(plaintext,fields[i].type)||cr_buffer_append_u16(plaintext,declared_length)||
            cr_buffer_append(plaintext,fields[i].value,fields[i].length))return -1;
-        if(align_odd_values&&(fields[i].length&1u)){uint8_t pad=0;if(cr_buffer_append(plaintext,&pad,1))return -1;}
     }
     return 0;
 }
@@ -455,11 +457,9 @@ const cr_tlv *cr_packet_field(const cr_packet *p,uint32_t type){for(uint16_t i=0
 
 int cr_send_packet(int fd,const uint8_t*key,size_t key_len,uint32_t command,uint32_t tx,const cr_tlv_out*fields,size_t field_count){
     cr_buffer plain,frame;cr_buffer_init(&plain);cr_buffer_init(&frame);int ok=-1;
-    /* Original Server 1.0b13 aligns odd-sized values inside command 0xc0 while the
-       TLV length excludes the one-byte pad. Classic Client 1.0b10r4 relies on that
-       layout, notably for tracker field 0x32 whose reply is exactly three bytes. */
-    int align_odd_values=command==0x000000c0u;
-    if(build_packet_internal(command,tx,0,fields,field_count,align_odd_values,&plain)==0&&
+    /* Reproduce the original command-0xc0 tracker-flags length quirk only. */
+    int classic_server_settings_layout=command==0x000000c0u;
+    if(build_packet_internal(command,tx,0,fields,field_count,classic_server_settings_layout,&plain)==0&&
        cr_encode_control(plain.data,plain.len,key,key_len,&frame)==0&&cr_write_all(fd,frame.data,frame.len)==0)ok=0;
     cr_buffer_free(&plain);cr_buffer_free(&frame);return ok;
 }
