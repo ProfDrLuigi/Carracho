@@ -39,8 +39,7 @@ The modern client combines chat, files, News, private messages, trackers and ser
 
 The new client is designed around one main window with a persistent sidebar. Servers, trackers and workspaces stay visible while the active content changes, so the application behaves more like a modern communication client than a collection of separate utility windows.
 
-<img width="2032" height="1281" alt="image" src="https://github.com/user-attachments/assets/1e3d2341-d638-48ac-b913-2e05d1698cf8" />
-
+<img width="2032" height="1281" alt="image" src="https://github.com/user-attachments/assets/6d7823bf-1637-4d93-a586-09626635de77" />
 
 <details>
 <summary><strong>Server bookmarks and connections</strong></summary>
