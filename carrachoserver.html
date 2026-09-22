@@ -25,6 +25,16 @@
     <body>
         
 
+        <p><span class="header" lang="en">New in 1.0.6</span></p>
+        <ul>
+            <span class="newstext">
+                <li>Improved interoperability with original Carracho Trackers. Modern servers now register using the historical UDP CTT transport, while tracker queries continue to use TCP, and modern trackers emit the Classic list-record layout expected by original clients and servers.</li>
+                <li>Improved Tracker administration persistence on the native Linux server. Remote changes now preserve the complete Tracker list, including secondary trackers, and a missing carracho-server.json mirror can be recreated from the active server state.</li>
+                <li>Improved Classic banner compatibility. Legacy sessions receive a compact 350x45 version of the built-in Carracho banner while modern clients continue to receive the full-resolution artwork.</li>
+                <li>Added server-side media scoping for modern Private Messages. Image attachments are bound to the sender and recipient accounts, persist across reconnects, and cannot be fetched by unrelated accounts.</li>
+                <li>Kept Classic Private Messages isolated from modern media syntax: image messages are not delivered to Classic clients, normal text continues to use the historical MacRoman path, and token-like Classic text remains literal text.</li>
+        </ul></span>
+
         <p><span class="header" lang="en">New in 1.0.5</span></p>
         <ul>
             <span class="newstext">

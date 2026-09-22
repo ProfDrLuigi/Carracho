@@ -234,6 +234,10 @@ final class LegacyControlClient {
     private static let connectTimeout: TimeInterval = 12
     private static let handshakeTimeout: TimeInterval = 12
     private static let requestTimeout: TimeInterval = 15
+    // Classic Client 1.0b10r4 sends its empty command -1 from TClientThread::DoIdle
+    // after 0x1c20 TickCount ticks. Classic Mac OS TickCount runs at 60 Hz:
+    // 0x1c20 / 60 = 120 seconds.
+    private static let classicIdleKeepAliveInterval: TimeInterval = 120
 
     private static func runtimeCPUArchitecture() -> String {
         var info = utsname()
@@ -298,6 +302,7 @@ final class LegacyControlClient {
     private var nextTransactionID: UInt32 = 1
     private var pendingRequests: [UInt32: PendingRequest] = [:]
     private var connectTimeoutWorkItem: DispatchWorkItem?
+    private var classicIdleKeepAliveTimer: DispatchSourceTimer?
     private var expectedDisconnect = false
 
     var isConnected: Bool {
@@ -326,6 +331,7 @@ final class LegacyControlClient {
             modernControlChannel = nil
             negotiatedLegacyCrypto = false
             transferSession = nil
+            stopClassicIdleKeepAlive()
             expectedDisconnect = false
             loginCompletion = completion
             state = .connecting
@@ -363,6 +369,7 @@ final class LegacyControlClient {
         state = .disconnecting
         connectTimeoutWorkItem?.cancel()
         connectTimeoutWorkItem = nil
+        stopClassicIdleKeepAlive()
         self.connection = nil
         sessionKey = nil
         modernControlChannel = nil
@@ -1985,6 +1992,7 @@ final class LegacyControlClient {
             }
             transferSession = LegacyTransferSession(userID: loginResult.session.userID, key: transportKey, modernSalt: modernSalt)
             state = .connected
+            startClassicIdleKeepAliveIfNeeded()
             let completion = loginCompletion
             loginCompletion = nil
             completion?(.success(loginResult))
@@ -2421,6 +2429,37 @@ final class LegacyControlClient {
         })
     }
 
+    private func startClassicIdleKeepAliveIfNeeded() {
+        stopClassicIdleKeepAlive()
+        guard isConnected, negotiatedLegacyCrypto, modernControlChannel == nil else { return }
+
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        timer.schedule(
+            deadline: .now() + Self.classicIdleKeepAliveInterval,
+            repeating: Self.classicIdleKeepAliveInterval,
+            leeway: .seconds(1)
+        )
+        timer.setEventHandler { [weak self] in
+            guard let self,
+                  self.isConnected,
+                  self.negotiatedLegacyCrypto,
+                  self.modernControlChannel == nil else { return }
+            self.sendOneWay(command: LegacyCommand.idleKeepAlive, fields: []) { [weak self] result in
+                guard let self, case let .failure(error) = result,
+                      self.connection != nil, self.isConnected else { return }
+                self.fail(error)
+            }
+        }
+        classicIdleKeepAliveTimer = timer
+        timer.resume()
+    }
+
+    private func stopClassicIdleKeepAlive() {
+        classicIdleKeepAliveTimer?.setEventHandler {}
+        classicIdleKeepAliveTimer?.cancel()
+        classicIdleKeepAliveTimer = nil
+    }
+
     private func allocateTransactionID() -> UInt32 {
         while nextTransactionID == 0 || pendingRequests[nextTransactionID] != nil {
             nextTransactionID &+= 1
@@ -2434,6 +2473,7 @@ final class LegacyControlClient {
     private func fail(_ error: Error) {
         connectTimeoutWorkItem?.cancel()
         connectTimeoutWorkItem = nil
+        stopClassicIdleKeepAlive()
         let message = (error as? LocalizedError)?.errorDescription ?? String(describing: error)
         state = .failed(message)
         let completion = loginCompletion
@@ -2462,6 +2502,7 @@ final class LegacyControlClient {
     private func handleTransportClosed() {
         guard connection != nil else { return }
         if expectedDisconnect {
+            stopClassicIdleKeepAlive()
             connection = nil
             sessionKey = nil
             modernControlChannel = nil
