@@ -740,6 +740,8 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
     var autoReconnectBookmarkID: UUID?
     var autoReconnectWorkItem: DispatchWorkItem?
     var autoReconnectAttempt = 0
+    var startupBookmarkConnectionQueue: [UUID] = []
+    var startupBookmarkConnectionInProgress: UUID?
     let bookmarkStack = NSStackView()
     let serverBookmarkStore = ServerBookmarkStore()
     let trackerBookmarkStore = TrackerBookmarkStore()
@@ -1444,8 +1446,8 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
             }
             if arguments.contains("--autoconnect") {
                 DispatchQueue.main.async { [weak self] in self?.connectPressed(nil) }
-            } else if let startupBookmark = serverBookmarks.first(where: \.connectAtLaunch) {
-                DispatchQueue.main.async { [weak self] in self?.connect(to: startupBookmark) }
+            } else if serverBookmarks.contains(where: \.connectAtLaunch) {
+                DispatchQueue.main.async { [weak self] in self?.connectBookmarksAtLaunch() }
             }
             if arguments.contains("--start-server"),
                serverBackend != nil,
@@ -4427,6 +4429,50 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: item)
     }
 
+    func connectBookmarksAtLaunch() {
+        startupBookmarkConnectionQueue = serverBookmarks
+            .filter { $0.connectAtLaunch && !temporaryServerBookmarkIDs.contains($0.id) }
+            .map(\.id)
+        startupBookmarkConnectionInProgress = nil
+        connectNextBookmarkAtLaunch()
+    }
+
+    func connectNextBookmarkAtLaunch() {
+        guard startupBookmarkConnectionInProgress == nil else { return }
+
+        while !startupBookmarkConnectionQueue.isEmpty {
+            let bookmarkID = startupBookmarkConnectionQueue.removeFirst()
+            guard let bookmark = serverBookmarks.first(where: {
+                $0.id == bookmarkID && $0.connectAtLaunch
+            }) else {
+                continue
+            }
+            if bookmarkConnections[bookmarkID]?.client.isConnected == true {
+                continue
+            }
+
+            startupBookmarkConnectionInProgress = bookmarkID
+            connect(to: bookmark)
+
+            // connect(to:) can be rejected before a socket attempt starts, for example
+            // while another modal operation owns the current session. Do not wedge the
+            // entire launch queue in that case.
+            if activeBookmarkConnectionID != bookmarkID {
+                startupBookmarkConnectionInProgress = nil
+                continue
+            }
+            return
+        }
+    }
+
+    func finishStartupBookmarkConnection(_ bookmarkID: UUID?) {
+        guard let bookmarkID, startupBookmarkConnectionInProgress == bookmarkID else { return }
+        startupBookmarkConnectionInProgress = nil
+        DispatchQueue.main.async { [weak self] in
+            self?.connectNextBookmarkAtLaunch()
+        }
+    }
+
     func connect(to bookmark: ServerBookmark) {
         activate(bookmark: bookmark)
         guard activeBookmarkConnectionID == bookmark.id else { return }
@@ -4575,9 +4621,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
                             self.connectingBookmarkID = nil
                             self.clearPresentationForBookmarkSwitch()
                         }
-                        let importedLaunchID = document.bookmarks.first(where: { $0.connectAtLaunch })?.id
                         self.normalizeBookmarkIdentityInheritance()
-                        self.normalizeLaunchBookmarks(preferredID: importedLaunchID)
                         if let reconnectID = self.autoReconnectBookmarkID,
                            self.serverBookmarks.first(where: { $0.id == reconnectID })?.autoReconnect != true {
                             self.cancelAutoReconnect()
@@ -4605,8 +4649,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         // them in one pass so future app updates require access to one item only.
         try? serverBookmarkKeychain.migrateLegacyPasswords(for: serverBookmarks.map(\.id))
         let identityChanged = normalizeBookmarkIdentityInheritance()
-        let launchChanged = normalizeLaunchBookmarks()
-        if identityChanged || launchChanged { saveServerBookmarks() }
+        if identityChanged { saveServerBookmarks() }
     }
 
     /// Older builds copied the then-current global nickname/status into new bookmarks even
@@ -4631,28 +4674,6 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
             }
         }
         return changed
-    }
-
-    @discardableResult
-    func normalizeLaunchBookmarks(preferredID: UUID? = nil) -> Bool {
-        let winner = preferredID.flatMap { preferred in
-            serverBookmarks.first(where: { $0.id == preferred && $0.connectAtLaunch })?.id
-        } ?? serverBookmarks.first(where: { $0.connectAtLaunch })?.id
-        var changed = false
-        for index in serverBookmarks.indices {
-            let shouldLaunch = serverBookmarks[index].id == winner
-            if serverBookmarks[index].connectAtLaunch != shouldLaunch {
-                serverBookmarks[index].connectAtLaunch = shouldLaunch
-                changed = true
-            }
-        }
-        return changed
-    }
-
-    func makeExclusiveLaunchBookmark(_ bookmarkID: UUID) {
-        for index in serverBookmarks.indices {
-            serverBookmarks[index].connectAtLaunch = serverBookmarks[index].id == bookmarkID
-        }
     }
 
     func saveServerBookmarks() {
@@ -5130,7 +5151,6 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         } else {
             serverBookmarks.append(updated)
         }
-        if updated.connectAtLaunch { makeExclusiveLaunchBookmark(updated.id) }
         if !updated.autoReconnect, autoReconnectBookmarkID == updated.id { cancelAutoReconnect() }
         selectedBookmarkID = updated.id
         saveServerBookmarks()
@@ -5440,6 +5460,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
             switch result {
             case let .failure(error):
                 if self.connectionSetupBookmarkID == setupBookmarkID { self.connectionSetupBookmarkID = nil }
+                self.finishStartupBookmarkConnection(setupBookmarkID)
                 if case .failed = self.client.state { return }
                 self.clearBookmarkConnectingIndicatorAfterRejectedAttempt()
                 self.showError(Self.displayMessage(for: error))
@@ -5457,6 +5478,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
                         if self.connectionSetupBookmarkID == setupBookmarkID { self.connectionSetupBookmarkID = nil }
                         self.deferredInteractiveEvents.removeAll()
                         self.disconnectByUser()
+                        self.finishStartupBookmarkConnection(setupBookmarkID)
                         return
                     }
                     guard self.client.isConnected, self.lastLoginResult?.session.userID == login.session.userID else { return }
@@ -5645,10 +5667,12 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
             }
             self.loadInitialCatalogs { [weak self] in
                 guard let self else { return }
+                let completedBookmarkID = self.connectionSetupBookmarkID
                 self.connectionSetupBookmarkID = nil
                 self.startChannelCatalogPolling()
                 self.replayDeferredInteractiveEvents()
                 self.activatePendingBookmarkIfPossible()
+                self.finishStartupBookmarkConnection(completedBookmarkID)
             }
         }
     }
