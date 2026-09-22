@@ -2168,7 +2168,7 @@ static void *bot_thread_main(void*opaque){
 
 static int handle_server_info(cr_session*s,const cr_packet*p){
     uint8_t a[1024],b[1024],c[1024],d[CR_MAX_IDENTITY_TEXT+1],uptime[4],max_total[2],active_total[2],max_user[2],active_user[2];
-    const uint8_t version[]="Carracho Server 1.0.6";
+    const uint8_t version[]="Carracho Server 1.0.7";
     size_t an=0,bn=0,cn=0,dn=0;uint16_t limit_total=0,limit_user=0;
     pthread_mutex_lock(&s->server->state.mutex);
     int fail=cr_utf8_to_macroman(s->server->state.identity.name,a,sizeof(a),&an)||
@@ -5617,7 +5617,7 @@ static json_object *http_status_json(cr_server *s) {
     time_t now = time(NULL);
     int64_t uptime = now > s->started_at ? (int64_t)(now - s->started_at) : 0;
     json_object_object_add(root, "serverName", json_object_new_string(server_name));
-    json_object_object_add(root, "software", json_object_new_string("Carracho Server 1.0.6"));
+    json_object_object_add(root, "software", json_object_new_string("Carracho Server 1.0.7"));
     json_object_object_add(root, "uptimeSeconds", json_object_new_int64(uptime));
     json_object_object_add(root, "usersOnline", json_object_new_int64((int64_t)online));
     json_object_object_add(root, "maxConnections", json_object_new_int(max_connections));

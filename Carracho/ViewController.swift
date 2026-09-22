@@ -2584,7 +2584,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
             navigation.bottomAnchor.constraint(equalTo: scrollContent.bottomAnchor),
             scrollContent.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
         ])
-        let version = infoLabel(L("Carracho 1.0.6"))
+        let version = infoLabel(L("Carracho 1.0.7"))
         version.font = .systemFont(ofSize: 10)
         appearancePopup.removeAllItems()
         appearancePopup.addItems(withTitles: [L("System Appearance"), L("Light"), L("Dark")])
