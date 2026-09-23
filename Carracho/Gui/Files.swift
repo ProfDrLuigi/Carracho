@@ -677,72 +677,27 @@ extension ViewController {
         return "remote:\(hostField.stringValue.lowercased()):\(portField.stringValue):\(loginField.stringValue.lowercased())"
     }
 
-    /// Folder navigation must always start with a fully visible first row. AppKit can carry the
-    /// old clip origin across `reloadData()` and then re-apply it while the table/header layout is
-    /// being tiled, which is why row 0 could end up partially (or completely) above the viewport.
-    /// Reset the scroll view itself, not merely the row visibility, after forcing that layout.
+    /// AppKit places the table header inside the clip view's top inset. The first row
+    /// is fully visible at -contentInsets.top, not at row 0's document coordinate.
     private func scrollFileTableToTop() {
         guard let scrollView = fileTable.enclosingScrollView else { return }
         scrollView.layoutSubtreeIfNeeded()
         fileTable.layoutSubtreeIfNeeded()
         let clipView = scrollView.contentView
-        let topY: CGFloat
-        if fileTable.numberOfRows > 0 {
-            topY = fileTable.rect(ofRow: 0).minY
-        } else {
-            topY = fileTable.bounds.minY
-        }
-        clipView.setBoundsOrigin(NSPoint(x: 0, y: topY))
-        scrollView.reflectScrolledClipView(clipView)
+        restoreFileTableScrollOrigin(NSPoint(x: 0, y: -clipView.contentInsets.top))
     }
 
-    /// Re-assert the top after the shared Files card reaches its final host size. This is used
-    /// only for initial/near-top states; real user scroll positions farther down the list are kept.
-    func alignFilesToTopAfterFinalLayout() {
-        view.layoutSubtreeIfNeeded()
-        scrollFileTableToTop()
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            self.view.layoutSubtreeIfNeeded()
-            self.scrollFileTableToTop()
-        }
-    }
-
-    func scheduleOverviewFilesTopAlignmentAfterLayout() {
-        guard currentWorkspace == .overview,
-              !fileDirectoryLoading, fileSearchResults == nil, lastDirectory != nil else { return }
-        pendingFileScrollRestoreY = nil
-        fileNeedsOverviewTopAlignmentAfterLayout = true
-        view.needsLayout = true
-    }
-
-    /// Runs from ViewController.viewDidLayout(), not from reloadData(). This distinction matters
-    /// for long Overview lists: NSScrollView only knows its final clip geometry after deciding
-    /// that the autohiding vertical scroller is needed. Tiling here prevents that late scroller
-    /// pass from resurrecting the previous vertical origin.
-    func alignOverviewFilesToTopAfterLayoutIfNeeded() {
-        guard fileNeedsOverviewTopAlignmentAfterLayout, currentWorkspace == .overview,
-              !fileDirectoryLoading, fileSearchResults == nil, lastDirectory != nil,
-              let scrollView = fileTable.enclosingScrollView else { return }
-
-        scrollView.tile()
+    func restoreFileTableScrollOrigin(_ origin: NSPoint) {
+        guard let scrollView = fileTable.enclosingScrollView else { return }
         scrollView.layoutSubtreeIfNeeded()
         fileTable.layoutSubtreeIfNeeded()
-        scrollFileTableToTop()
-        fileNeedsOverviewTopAlignmentAfterLayout = false
-    }
-
-    func alignInitialFilesWorkspaceToTopIfNeeded() {
-        guard fileNeedsInitialWorkspaceTopAlignment,
-              currentWorkspace == .files || currentWorkspace == .overview,
-              !fileDirectoryLoading, fileSearchResults == nil, lastDirectory != nil else { return }
-        fileNeedsInitialWorkspaceTopAlignment = false
-        pendingFileScrollRestoreY = nil
-        if currentWorkspace == .overview {
-            scheduleOverviewFilesTopAlignmentAfterLayout()
-        } else {
-            alignFilesToTopAfterFinalLayout()
-        }
+        let clipView = scrollView.contentView
+        var bounds = clipView.bounds
+        bounds.origin = origin
+        // Let AppKit clamp against the document AND its insets, including negative top
+        // origins and short folders. Clamping to zero hides the first row on every reload.
+        clipView.scroll(to: clipView.constrainBoundsRect(bounds).origin)
+        scrollView.reflectScrolledClipView(clipView)
     }
 
     func reloadFileTablePreservingState() {
@@ -751,7 +706,6 @@ extension ViewController {
         let selectedPaths: Set<Data> = preserve ? selectedFilePaths : []
         let clipView = fileTable.enclosingScrollView?.contentView
         let oldOrigin = clipView?.bounds.origin ?? .zero
-        let resetPath = shouldResetScroll ? lastDirectory?.currentPath : nil
 
         // A navigation reset is authoritative. A delayed workspace-state restoration must never
         // win over it and resurrect the old folder's vertical offset.
@@ -770,32 +724,17 @@ extension ViewController {
             fileTable.deselectAll(nil)
             selectedFilePaths.removeAll()
         }
+        // Workspace changes reparent this card and resize its viewport. Resolve the host
+        // geometry before restoring the origin captured before that change.
+        view.layoutSubtreeIfNeeded()
         if shouldResetScroll {
             scrollFileTableToTop()
-        } else if let clipView {
-            let documentHeight = fileTable.bounds.height
-            let viewportHeight = clipView.bounds.height
-            let maxY = max(0, documentHeight - viewportHeight)
-            if let restoredY = pendingFileScrollRestoreY {
-                clipView.scroll(to: NSPoint(x: 0, y: min(max(0, restoredY), maxY)))
-                pendingFileScrollRestoreY = nil
-            } else {
-                clipView.scroll(to: NSPoint(x: oldOrigin.x, y: min(oldOrigin.y, maxY)))
-            }
-            fileTable.enclosingScrollView?.reflectScrolledClipView(clipView)
+        } else {
+            let origin = pendingFileScrollRestoreY.map { NSPoint(x: oldOrigin.x, y: $0) } ?? oldOrigin
+            restoreFileTableScrollOrigin(origin)
         }
+        pendingFileScrollRestoreY = nil
         fileShouldResetScrollOnNextReload = false
-
-        if shouldResetScroll {
-            // `reloadData()` can trigger one more table/header tiling pass after this method returns.
-            // Re-assert the top position on the next run-loop turn, but only for the directory that
-            // requested this reset so an older navigation cannot move a newer folder unexpectedly.
-            DispatchQueue.main.async { [weak self] in
-                guard let self, !self.fileDirectoryLoading, self.fileSearchResults == nil,
-                      self.lastDirectory?.currentPath == resetPath else { return }
-                self.scrollFileTableToTop()
-            }
-        }
     }
 
     func updateFileBreadcrumb() {

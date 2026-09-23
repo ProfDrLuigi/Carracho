@@ -1183,14 +1183,6 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
     var fileBreadcrumbVisiblePaths: [Data] = []
     var fileShouldResetScrollOnNextReload = false
     var pendingFileScrollRestoreY: CGFloat?
-    /// The shared Files card initially lives in Overview. Its first move into the full Files
-    /// workspace needs one final top alignment after Auto Layout has resized the scroll view.
-    var fileNeedsInitialWorkspaceTopAlignment = false
-    /// Overview uses the same NSScrollView as the standalone Files workspace. With enough rows
-    /// for the vertical scroller to appear, AppKit tiles that scroll view after the normal table
-    /// reload and can re-apply the previous clip origin. Keep this one-shot flag until the parent
-    /// view has completed layout, then align row 0 against the final scroller geometry.
-    var fileNeedsOverviewTopAlignmentAfterLayout = false
     var selectedFilePaths: Set<Data> = []
     /// Stable snapshot consumed by NSTableView while it asks for visible cells.
     /// Rebuilding/sorting the complete directory tree from every data-source callback makes
@@ -1462,7 +1454,6 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         if currentWorkspace == .conferences || currentWorkspace == .overview {
             updateChannelComposerHeight()
         }
-        alignOverviewFilesToTopAfterLayoutIfNeeded()
     }
 
     func buildInterface() {
@@ -3590,6 +3581,10 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
            !confirmTrackerChangesCanBeAbandoned() { return }
         if administrativePermission(for: workspace) != nil, !canAccessAdministrativeWorkspace(workspace) { return }
         if workspace == .transfers, !canAccessTransferWorkspace { return }
+        // Capture before selecting a tab or reparenting the shared Files card: AppKit may
+        // clamp the origin while its viewport temporarily has a different size.
+        var fileScrollOrigin = fileTable.enclosingScrollView?.contentView.bounds.origin
+        if let restoredY = pendingFileScrollRestoreY { fileScrollOrigin?.y = restoredY }
         currentWorkspace = workspace
         updateWorkspaceTransferBarVisibility()
         if workspace != .trackerBrowser { serverWorkspaceBeforeTracker = nil }
@@ -3602,14 +3597,9 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         updateInspectorContext()
         switch workspace {
         case .overview:
-            // The shared Files card is reparented into the compact Overview pane. Its scroll view
-            // may not know yet whether it needs a vertical scroller, so defer the one-shot top
-            // alignment to viewDidLayout(), after NSScrollView has tiled its final geometry.
-            scheduleOverviewFilesTopAlignmentAfterLayout()
-            alignInitialFilesWorkspaceToTopIfNeeded()
+            break
         case .files:
             view.window?.makeFirstResponder(fileTable)
-            alignInitialFilesWorkspaceToTopIfNeeded()
         case .transfers:
             view.window?.makeFirstResponder(transferTable)
         case .conferences:
@@ -3663,6 +3653,9 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         reloadTrackerStack()
         updateTransferMonitorPolling()
         updateAdvancedSearchIndexStatusPolling()
+        view.layoutSubtreeIfNeeded()
+        if let fileScrollOrigin { restoreFileTableScrollOrigin(fileScrollOrigin) }
+        pendingFileScrollRestoreY = nil
     }
 
     var usesRemoteTrackerAdministration: Bool { client.isConnected }
@@ -3963,8 +3956,6 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         selectedFilePaths.removeAll()
         pendingFileScrollRestoreY = nil
         fileShouldResetScrollOnNextReload = true
-        fileNeedsInitialWorkspaceTopAlignment = false
-        fileNeedsOverviewTopAlignmentAfterLayout = false
         resetInlineFileExpansion()
         transferMonitorItems = [:]
         transferMonitorOrder = []
@@ -4095,9 +4086,8 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         expandedDirectoryListings = snapshot.expandedDirectoryListings
         loadingExpandedFilePaths = []
         selectedFilePaths = snapshot.selectedFilePaths
-        let fileScrollWasNearTop = snapshot.fileTableScrollY <= max(2, fileTable.rowHeight * 1.5)
-        pendingFileScrollRestoreY = fileScrollWasNearTop ? nil : snapshot.fileTableScrollY
-        fileShouldResetScrollOnNextReload = fileScrollWasNearTop
+        pendingFileScrollRestoreY = snapshot.fileTableScrollY
+        fileShouldResetScrollOnNextReload = false
         fileDirectoryLoading = false
         filePendingDirectoryPath = nil
         fileDirectoryError = nil
@@ -4181,8 +4171,10 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         }
         renderSession()
         refreshAdministrativeNavigationVisibility()
+        // The snapshot may have been rendered in the previous bookmark's taller host.
+        // Restore its exact origin again after mounting the destination workspace.
+        pendingFileScrollRestoreY = snapshot.fileTableScrollY
         selectWorkspace(snapshot.workspace)
-        if fileScrollWasNearTop { alignFilesToTopAfterFinalLayout() }
         if client.isConnected {
             startNewsBadgePolling()
             startChannelCatalogPolling()
@@ -5733,8 +5725,6 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         selectedFilePaths.removeAll()
         pendingFileScrollRestoreY = nil
         fileShouldResetScrollOnNextReload = true
-        fileNeedsInitialWorkspaceTopAlignment = false
-        fileNeedsOverviewTopAlignmentAfterLayout = false
         resetInlineFileExpansion()
         fileSearchField.stringValue = ""
         fileTransferLabel.stringValue = ""
@@ -5859,7 +5849,6 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         fileNavigationHistory = []
         fileNavigationIndex = -1
         fileShouldResetScrollOnNextReload = true
-        fileNeedsInitialWorkspaceTopAlignment = true
         updateFileBrowserPresentation()
         target.requestDirectory { [weak self, weak target] directoryResult in
             guard let self, let target, self.client === target,
@@ -5873,12 +5862,9 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
                 self.fileDirectoryError = nil
                 self.lastDirectory = listing
                 self.commitFileNavigation(listing.currentPath, mode: .initialize)
+                self.fileShouldResetScrollOnNextReload = true
                 self.renderSession()
-                if self.currentWorkspace == .files || self.currentWorkspace == .overview {
-                    self.alignInitialFilesWorkspaceToTopIfNeeded()
-                }
             case let .failure(error):
-                self.fileNeedsInitialWorkspaceTopAlignment = false
                 self.fileDirectoryError = LF("Could not load the file root: %@", Self.displayMessage(for: error))
                 self.fileTransferLabel.stringValue = self.fileDirectoryError ?? L("File root load failed")
                 self.fileTransferLabel.toolTip = self.fileTransferLabel.stringValue
