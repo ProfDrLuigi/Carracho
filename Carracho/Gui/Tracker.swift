@@ -1590,7 +1590,14 @@ extension ViewController {
             open.isBordered = false
             open.toolTip = LF("Open Tracker %@", tracker.address)
             open.translatesAutoresizingMaskIntoConstraints = false
-            let icon = symbolView("point.3.connected.trianglepath.dotted", size: 16, tint: CarrachoTheme.secondaryText)
+            let icon = NSImageView()
+            icon.image = sizedAssetImage(named: "Trackers", size: 16)
+            icon.imageScaling = .scaleProportionallyUpOrDown
+            icon.translatesAutoresizingMaskIntoConstraints = false
+            NSLayoutConstraint.activate([
+                icon.widthAnchor.constraint(equalToConstant: 16),
+                icon.heightAnchor.constraint(equalToConstant: 16),
+            ])
             let address = NSTextField(labelWithString: tracker.address)
             address.font = .systemFont(ofSize: 11.5, weight: .medium)
             address.lineBreakMode = .byTruncatingMiddle

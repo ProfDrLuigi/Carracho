@@ -1264,7 +1264,9 @@ extension ViewController {
         session.transcript.append(ChannelTranscriptEntry(
             timestamp: message.sentAt ?? Date(),
             kind: .message(senderUserID: message.senderUserID, message: message.message, attribute: message.attribute),
-            messageID: message.messageID
+            messageID: message.messageID,
+            senderSnapshot: liveUsers[message.senderUserID],
+            senderColorRGB: userGroupColors[message.senderUserID]
         ))
         if session.transcript.count > 1000 { session.transcript.removeFirst(session.transcript.count - 1000) }
         if activeChannel?.channelID != message.channelID || currentWorkspace != .conferences {
@@ -1321,6 +1323,30 @@ extension ViewController {
         if channelDiscoverySheet != nil { channelTable.reloadData() }
         reloadJoinedChannelSidebar()
         if activeChannel?.channelID == channelID { updateInspectorContext() }
+    }
+
+    func freezeChannelTranscriptIdentity(for userID: UInt32) {
+        let user = liveUsers[userID]
+        let color = userGroupColors[userID]
+        guard user != nil || color != nil else { return }
+
+        for channelID in Array(joinedChannels.keys) {
+            guard var session = joinedChannels[channelID] else { continue }
+            var changed = false
+            for index in session.transcript.indices {
+                guard case let .message(senderUserID, _, _) = session.transcript[index].kind,
+                      senderUserID == userID else { continue }
+                if session.transcript[index].senderSnapshot == nil, let user {
+                    session.transcript[index].senderSnapshot = user
+                    changed = true
+                }
+                if session.transcript[index].senderColorRGB == nil, let color {
+                    session.transcript[index].senderColorRGB = color
+                    changed = true
+                }
+            }
+            if changed { joinedChannels[channelID] = session }
+        }
     }
 
     func removeDisconnectedUserFromChannels(_ userID: UInt32) {
@@ -1506,9 +1532,10 @@ extension ViewController {
         }
     }
 
-    func channelAvatarAttachment(userID: UInt32, size: CGFloat = 28) -> NSAttributedString {
+    func channelAvatarAttachment(userID: UInt32, userSnapshot: LegacyUserListEntry? = nil,
+                                 size: CGFloat = 28) -> NSAttributedString {
         let image: NSImage?
-        if let user = liveUsers[userID] {
+        if let user = userSnapshot ?? liveUsers[userID] {
             image = AvatarArtwork.userImage(picture: user.picture,
                                             isLegacyTransport: user.isLegacyTransport)
         } else {
@@ -1620,8 +1647,14 @@ extension ViewController {
                     ))
 
                 case let .message(senderUserID, message, attribute):
-                    let sender = liveUsers[senderUserID].map { Self.macRomanString($0.nickname) } ?? L("Unknown User")
-                    let authorColor = userGroupColors[senderUserID].map(Self.colorFromRGB) ?? CarrachoTheme.accent
+                    let senderUser = entry.senderSnapshot ?? liveUsers[senderUserID]
+                    let sender = senderUser.map { Self.macRomanString($0.nickname) } ?? L("Unknown User")
+                    let authorColor: NSColor
+                    if let rgb = entry.senderColorRGB ?? userGroupColors[senderUserID] {
+                        authorColor = Self.colorFromRGB(rgb)
+                    } else {
+                        authorColor = CarrachoTheme.accent
+                    }
 
                     let headerParagraph = NSMutableParagraphStyle()
                     headerParagraph.firstLineHeadIndent = 0
@@ -1629,7 +1662,9 @@ extension ViewController {
                     headerParagraph.tailIndent = -12
                     headerParagraph.paragraphSpacing = 0
 
-                    output.append(channelAvatarAttachment(userID: senderUserID, size: avatarSize))
+                    output.append(channelAvatarAttachment(userID: senderUserID,
+                                                          userSnapshot: senderUser,
+                                                          size: avatarSize))
                     output.append(NSAttributedString(
                         string: "  \(sender)",
                         attributes: [

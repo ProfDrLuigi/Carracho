@@ -346,6 +346,10 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         var kind: Kind
         var messageID: UUID? = nil
         var edited: Bool = false
+        /// Chat history must not depend on the current online-user table. Keep the sender
+        /// presentation that belonged to the row when it arrived.
+        var senderSnapshot: LegacyUserListEntry? = nil
+        var senderColorRGB: UInt32? = nil
     }
 
     struct JoinedChannelSession {
@@ -3317,19 +3321,6 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         button.contentTintColor = CarrachoTheme.secondaryText
         button.imagePosition = .imageLeading
         button.image = sidebarSectionHeaderImage(title: title, collapsed: collapsed)
-        if title == "TRACKERS", let trackers = sizedAssetImage(named: "Trackers", size: 16) {
-            let attachment = NSTextAttachment()
-            attachment.attachmentCell = NSTextAttachmentCell(imageCell: trackers)
-            let label = NSMutableAttributedString(attachment: attachment)
-            label.append(NSAttributedString(
-                string: " " + L(title),
-                attributes: [
-                    .font: NSFont.systemFont(ofSize: 10, weight: .bold),
-                    .foregroundColor: CarrachoTheme.secondaryText,
-                ]
-            ))
-            button.attributedTitle = label
-        }
         button.toolTip = collapsed ? LF("Expand %@", L(title).capitalized) : LF("Collapse %@", L(title).capitalized)
         button.heightAnchor.constraint(equalToConstant: 22).isActive = true
         return button
@@ -6687,6 +6678,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
             emitClientEvent(.userSignedOut,
                             notificationTitle: L("User signed out"),
                             notificationBody: LF("%@ went offline.", departedName))
+            freezeChannelTranscriptIdentity(for: userID)
             removeDisconnectedUserFromChannels(userID)
             liveUsers.removeValue(forKey: userID)
             sleepingUsers.remove(userID)
