@@ -25,6 +25,18 @@
     <body>
         
 
+        <p><span class="header" lang="en">New in 1.0.8</span></p>
+        <ul>
+            <span class="newstext">
+                <li>Updated Carracho Server for macOS to version 1.0.8 (build 9).</li>
+                <li>Added modern message editing on both the Swift/macOS and native Linux server runtimes. The server assigns and forwards edit metadata for Conference and Private Messages and enforces the five-minute edit window using server-side timing.</li>
+                <li>Message edits are restricted to the original sender and to text-only modern messages. Media-bearing messages are not editable, and edit events are never sent to Classic/Legacy clients, preserving the historical packet layouts.</li>
+                <li>Added persistent Bot File Watchers on macOS and native Linux. Watchers monitor configured folders recursively below the normal Files root, can use <code>.</code> for the Files root itself, detect newly created files and folders, coalesce bursts of changes, and rate-limit repeated announcements.</li>
+                <li>File Watcher announcement templates support <code>{folder}</code> for a clickable Carracho Files link and <code>{file}</code> for the detected file or folder name. Watcher paths are validated to remain inside the Files root.</li>
+                <li>Added remote Bot File Watcher administration through the Carracho client protocol and the HTTP Administration API, including persistent configuration, target-Conference validation, hot configuration reloads, and support for up to 32 watchers. The native Linux implementation uses inotify for filesystem events.</li>
+                <li>Removed the duplicate Automatic Greeting editor from the macOS Server window. Bot greetings remain fully supported and are configured centrally from the Carracho client's Administration interface.</li>
+        </ul></span>
+
         <p><span class="header" lang="en">New in 1.0.7</span></p>
         <ul>
             <span class="newstext">

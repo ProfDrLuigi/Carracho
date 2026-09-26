@@ -771,9 +771,6 @@ final class CarrachoServerWindowController: NSWindowController, NSTextFieldDeleg
     private let botAvatarChooseButton = NSButton(title: L("Choose PNG…"), target: nil, action: nil)
     private let botAvatarRemoveButton = NSButton(title: L("Remove"), target: nil, action: nil)
     private let botAvatarDetailLabel = NSTextField(labelWithString: L("No custom Bot avatar"))
-    private let botGreetingEnabledButton = NSButton(checkboxWithTitle: L("Greet new users in Public"), target: nil, action: nil)
-    private let botGreetingTemplateField = NSTextField(string: LegacyBotAdminStatus.defaultGreetingTemplate)
-    private let botGreetingSaveButton = NSButton(title: L("Save Greeting"), target: nil, action: nil)
     private let botPipeValue = NSTextField(labelWithString: "~/Bot")
     private let botCommandValue = NSTextField(labelWithString: "echo \"Ich schreibe das hier in den Chat\" > Bot")
     private let botErrorLabel = NSTextField(wrappingLabelWithString: "")
@@ -991,10 +988,6 @@ final class CarrachoServerWindowController: NSWindowController, NSTextFieldDeleg
         botAvatarChooseButton.action = #selector(chooseBotAvatar(_:))
         botAvatarRemoveButton.target = self
         botAvatarRemoveButton.action = #selector(removeBotAvatar(_:))
-        botGreetingSaveButton.target = self
-        botGreetingSaveButton.action = #selector(saveBotGreeting(_:))
-        botGreetingSaveButton.font = .systemFont(ofSize: 12, weight: .semibold)
-        applyServerPrimaryButtonStyle(botGreetingSaveButton)
 
         serverDaemonInstallButton.target = self
         serverDaemonInstallButton.action = #selector(installServerDaemon(_:))
@@ -1446,16 +1439,6 @@ final class CarrachoServerWindowController: NSWindowController, NSTextFieldDeleg
         avatarNote.font = .systemFont(ofSize: 11)
         avatarNote.textColor = .secondaryLabelColor
 
-        let greetingTitle = settingsLabel(L("Automatic greeting"))
-        botGreetingTemplateField.placeholderString = LegacyBotAdminStatus.defaultGreetingTemplate
-        botGreetingTemplateField.font = .systemFont(ofSize: 12)
-        botGreetingTemplateField.lineBreakMode = .byTruncatingTail
-        botGreetingTemplateField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        let greetingTextRow = stack([botGreetingTemplateField, botGreetingSaveButton], spacing: 8)
-        let greetingNote = NSTextField(wrappingLabelWithString: L("When enabled, the Bot greets each newly connected user once when they first join Public. Use {name} for the visible nickname and {login} for the account login."))
-        greetingNote.font = .systemFont(ofSize: 11)
-        greetingNote.textColor = .secondaryLabelColor
-
         let pipeTitle = settingsLabel(L("Terminal interface"))
         botPipeValue.font = .monospacedSystemFont(ofSize: 12, weight: .medium)
         botPipeValue.isSelectable = true
@@ -1488,11 +1471,6 @@ final class CarrachoServerWindowController: NSWindowController, NSTextFieldDeleg
             separator(),
             avatarRow,
             avatarNote,
-            separator(),
-            greetingTitle,
-            botGreetingEnabledButton,
-            greetingTextRow,
-            greetingNote,
             separator(),
             stack([pipeTitle, botPipeValue], vertical: true, spacing: 4),
             pipeNote,
@@ -1742,7 +1720,6 @@ final class CarrachoServerWindowController: NSWindowController, NSTextFieldDeleg
         refreshHTTPAdminSettings()
         refreshRuntimeStatus()
         refreshBotAvatar()
-        refreshBotGreetingConfiguration()
         refreshBotStatus()
         let trackerDaemon = cachedTrackerDaemonStatus
         if service.trackerConfiguration.enabled && !trackerDaemon.installed {
@@ -2320,30 +2297,6 @@ final class CarrachoServerWindowController: NSWindowController, NSTextFieldDeleg
             refreshBotStatus()
         } catch {
             presentError(title: L("Bot Avatar Could Not Be Removed"), error: error)
-        }
-    }
-
-    private func refreshBotGreetingConfiguration() {
-        guard let service else {
-            botGreetingEnabledButton.state = .off
-            botGreetingTemplateField.stringValue = LegacyBotAdminStatus.defaultGreetingTemplate
-            botGreetingSaveButton.isEnabled = false
-            return
-        }
-        let greeting = service.botGreetingConfiguration
-        botGreetingEnabledButton.state = greeting.enabled ? .on : .off
-        botGreetingTemplateField.stringValue = greeting.template
-        botGreetingSaveButton.isEnabled = true
-    }
-
-    @objc private func saveBotGreeting(_ sender: Any?) {
-        guard let service else { return }
-        do {
-            try service.setBotGreeting(enabled: botGreetingEnabledButton.state == .on,
-                                       template: botGreetingTemplateField.stringValue)
-            refreshBotGreetingConfiguration()
-        } catch {
-            presentError(title: L("Bot Greeting Could Not Be Saved"), error: error)
         }
     }
 

@@ -29,6 +29,8 @@ struct MessageCenterStoredPrivateMessage: Equatable {
     var timestamp: Date
     var outgoing: Bool
     var message: Data
+    var edited: Bool = false
+    var editable: Bool = false
 }
 
 struct MessageCenterStoredConversation: Equatable {
@@ -113,7 +115,7 @@ final class MessageCenterStore {
             }
 
             let messageSQL = """
-                SELECT id, peer_user_id, sent_at, outgoing, body
+                SELECT id, peer_user_id, sent_at, outgoing, body, edited, editable
                 FROM private_messages
                 WHERE server_host=? AND server_port=? AND account_login=?
                 ORDER BY sent_at ASC, id ASC
@@ -134,7 +136,9 @@ final class MessageCenterStore {
                     userID: userID,
                     timestamp: Date(timeIntervalSince1970: sqlite3_column_double(messageStatement, 2)),
                     outgoing: sqlite3_column_int(messageStatement, 3) != 0,
-                    message: columnBlob(messageStatement!, 4)
+                    message: columnBlob(messageStatement!, 4),
+                    edited: sqlite3_column_int(messageStatement, 5) != 0,
+                    editable: sqlite3_column_int(messageStatement, 6) != 0
                 ))
                 conversations[userID] = conversation
             }
@@ -193,8 +197,8 @@ final class MessageCenterStore {
                 try upsertConversation(conversation, scope: scope, db: db)
                 let sql = """
                     INSERT OR REPLACE INTO private_messages
-                    (id, server_host, server_port, account_login, peer_user_id, sent_at, outgoing, body)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    (id, server_host, server_port, account_login, peer_user_id, sent_at, outgoing, body, edited, editable)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """
                 var statement: OpaquePointer?
                 try prepare(db, sql, &statement)
@@ -205,6 +209,12 @@ final class MessageCenterStore {
                 guard sqlite3_bind_double(statement, 6, message.timestamp.timeIntervalSince1970) == SQLITE_OK,
                       sqlite3_bind_int(statement, 7, message.outgoing ? 1 : 0) == SQLITE_OK else { throw databaseError(db) }
                 try bindBlob(statement!, 8, message.message)
+                guard sqlite3_bind_int(statement, 9, message.edited ? 1 : 0) == SQLITE_OK else {
+                    throw databaseError(db)
+                }
+                guard sqlite3_bind_int(statement, 10, message.editable ? 1 : 0) == SQLITE_OK else {
+                    throw databaseError(db)
+                }
                 try stepDone(statement!, db: db)
 
                 // The UI intentionally caps a conversation at 500 rows. Keep disk usage in lock-step.
@@ -423,11 +433,27 @@ final class MessageCenterStore {
                     sent_at REAL NOT NULL,
                     outgoing INTEGER NOT NULL,
                     body BLOB NOT NULL,
+                    edited INTEGER NOT NULL DEFAULT 0,
+                    editable INTEGER NOT NULL DEFAULT 0,
                     FOREIGN KEY (server_host, server_port, account_login, peer_user_id)
                         REFERENCES conversations(server_host, server_port, account_login, peer_user_id)
                         ON DELETE CASCADE
                 )
                 """)
+            // Existing installations have no edited column. Migrate in place.
+            var schema: OpaquePointer?
+            try prepare(db, "PRAGMA table_info(private_messages)", &schema)
+            var columns = Set<String>()
+            while sqlite3_step(schema) == SQLITE_ROW {
+                columns.insert(columnText(schema!, 1))
+            }
+            sqlite3_finalize(schema)
+            if !columns.contains("edited") {
+                try exec(db, "ALTER TABLE private_messages ADD COLUMN edited INTEGER NOT NULL DEFAULT 0")
+            }
+            if !columns.contains("editable") {
+                try exec(db, "ALTER TABLE private_messages ADD COLUMN editable INTEGER NOT NULL DEFAULT 0")
+            }
             try exec(db, "CREATE INDEX IF NOT EXISTS private_messages_conversation_idx ON private_messages(server_host, server_port, account_login, peer_user_id, sent_at)")
             try exec(db, """
                 CREATE TABLE IF NOT EXISTS offline_messages (

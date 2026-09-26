@@ -390,6 +390,10 @@ extension ViewController {
             remoteBotRSSFeedsDirty = false
             remoteBotRSSFeedDraft = []
             adminBotRSSTable.reloadData()
+            remoteBotFileWatcherMutationInProgress = false
+            remoteBotFileWatchersDirty = false
+            remoteBotFileWatcherDraft = []
+            adminBotFileWatcherTable.reloadData()
             remoteBotRefreshGeneration &+= 1
             updateBotAdministrationUI()
             adminAccountStatusLabel.stringValue = localServerState.accounts.count == 1 ? LF("%@ local account", String(localServerState.accounts.count)) : LF("%@ local accounts", String(localServerState.accounts.count))
@@ -558,6 +562,7 @@ extension ViewController {
         let commandNote = infoLabel(L("In conferences, address the Bot with “#<command>”. In a private message to the Bot, <command> is enough. Responses can use {name} and {login}."))
         commandNote.maximumNumberOfLines = 3
         let rssSection = makeBotRSSAdministrationSection()
+        let fileWatcherSection = makeBotFileWatcherAdministrationSection()
 
         adminBotLoadingIndicator.style = .spinning
         adminBotLoadingIndicator.controlSize = .small
@@ -607,9 +612,11 @@ extension ViewController {
             greetingTitle, greetingToggleRow, greetingTextRow, greetingNote, botDivider(),
             commandsTitle, commandScroll, commandActions, commandNote, botDivider(),
         ] + rssSection + [
+            botDivider(),
+        ] + fileWatcherSection + [
             botDivider(), accountRow, localhostNote, profileNote, flexibleSpace, botDivider(), actions,
         ]
-        appendAdminContent(botContent, to: page, minimumBodyHeight: 920)
+        appendAdminContent(botContent, to: page, minimumBodyHeight: 1160)
         updateBotAdministrationUI()
         return page
     }
@@ -645,6 +652,10 @@ extension ViewController {
                     if !self.remoteBotRSSFeedsDirty && !self.remoteBotRSSMutationInProgress && !self.remoteBotRSSTestInProgress {
                         self.remoteBotRSSFeedDraft = status.rssFeeds
                         self.adminBotRSSTable.reloadData()
+                    }
+                    if !self.remoteBotFileWatchersDirty && !self.remoteBotFileWatcherMutationInProgress {
+                        self.remoteBotFileWatcherDraft = status.fileWatchers
+                        self.adminBotFileWatcherTable.reloadData()
                     }
                 case let .failure(error):
                     self.remoteBotStatus = nil
@@ -724,6 +735,7 @@ extension ViewController {
             && !remoteBotLoading && !remoteBotMutationInProgress
             && !remoteBotGreetingMutationInProgress && !remoteBotCommandMutationInProgress
             && !remoteBotRSSMutationInProgress && !remoteBotRSSTestInProgress
+            && !remoteBotFileWatcherMutationInProgress
     }
 
     func botCommandRuleCell(identifier: String, row: Int) -> NSView? {
@@ -901,7 +913,7 @@ extension ViewController {
         else { adminBotLoadingIndicator.stopAnimation(nil) }
 
         let busy = remoteBotMutationInProgress || remoteBotGreetingMutationInProgress || remoteBotCommandMutationInProgress
-            || remoteBotRSSMutationInProgress || remoteBotRSSTestInProgress
+            || remoteBotRSSMutationInProgress || remoteBotRSSTestInProgress || remoteBotFileWatcherMutationInProgress
         adminBotReloadButton.isEnabled = supported && !remoteBotLoading && !busy
         adminBotAccountsButton.isEnabled = canAccessAdministrativeWorkspace(.accounts) && !busy
         adminBotToggleButton.isEnabled = supported && remoteBotStatus != nil && !remoteBotLoading && !busy
@@ -911,6 +923,7 @@ extension ViewController {
         adminBotGreetingSaveButton.isEnabled = greetingSupported && !remoteBotLoading && !busy
         updateBotCommandRuleButtons()
         updateBotRSSButtons()
+        updateBotFileWatcherButtons()
 
         guard supported else {
             adminBotRuntimeLabel.stringValue = L("Unavailable")
@@ -926,6 +939,7 @@ extension ViewController {
             adminBotGreetingTemplateField.stringValue = LegacyBotAdminStatus.defaultGreetingTemplate
             adminBotCommandSaveButton.toolTip = L("Bot command rules require a modern Carracho server.")
             adminBotRSSSaveButton.toolTip = L("Bot RSS feeds require a modern Carracho server.")
+            adminBotFileWatcherSaveButton.toolTip = L("Bot File Watchers require a modern Carracho server.")
             return
         }
 
@@ -945,6 +959,7 @@ extension ViewController {
             adminBotGreetingTemplateField.stringValue = LegacyBotAdminStatus.defaultGreetingTemplate
             adminBotCommandSaveButton.toolTip = nil
             adminBotRSSSaveButton.toolTip = nil
+            adminBotFileWatcherSaveButton.toolTip = nil
             if !preserveExplicitError {
                 adminBotStatusLabel.stringValue = remoteBotLoading ? L("Loading Bot status…") : L("Bot status has not been loaded yet.")
                 adminBotStatusLabel.textColor = CarrachoTheme.secondaryText
@@ -967,6 +982,7 @@ extension ViewController {
         }
         adminBotCommandSaveButton.toolTip = status.commandRulesSupported ? nil : L("This server does not support Bot command rules.")
         adminBotRSSSaveButton.toolTip = status.rssFeedsSupported ? nil : L("This server does not support Bot RSS feeds.")
+        adminBotFileWatcherSaveButton.toolTip = status.fileWatchersSupported ? nil : L("This server does not support Bot File Watchers.")
         if status.connected {
             adminBotRuntimeLabel.stringValue = L("Connected")
             adminBotRuntimeLabel.textColor = .systemGreen

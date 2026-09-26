@@ -220,7 +220,11 @@ enum LegacyCommand {
     static let botSetRSSFeeds: UInt32 = 0xf0000705
     static let botTestRSSFeed: UInt32 = 0xf0000706
     static let botRSSFeedTestReply: UInt32 = 0xf0000707
+    static let botSetFileWatchers: UInt32 = 0xf0000708
     /// Modern-only administrator request to permanently remove a non-Public room.
+    /// Modern-only message editing (Classic packet layouts are never modified).
+    static let messageEdit: UInt32 = 0xf0000901
+    static let messageEdited: UInt32 = 0xf0000904
     static let channelDelete: UInt32 = 0xf0000800
     /// Modern-only asynchronous notification that a room was deleted by an administrator.
     static let channelDeleted: UInt32 = 0xf0000801
@@ -237,6 +241,7 @@ enum LegacyBotAdminField {
     static let commandRules: UInt32 = 8
     static let rssFeeds: UInt32 = 9
     static let rssPreview: UInt32 = 10
+    static let fileWatchers: UInt32 = 11
 }
 
 struct LegacyBotRSSFeed: Equatable, Codable, Identifiable {
@@ -344,6 +349,96 @@ struct LegacyBotRSSPreview: Equatable {
     }
 }
 
+
+struct LegacyBotFileWatcher: Equatable, Codable, Identifiable {
+    static let maximumCount = 32
+    static let maximumPathBytes = 1024
+    static let maximumTemplateBytes = 1024
+
+    var id: UUID
+    var enabled: Bool
+    var path: String
+    var channelID: UInt32
+    var messageTemplate: String
+
+    func validated() throws -> LegacyBotFileWatcher {
+        let normalized = path.trimmingCharacters(in: CharacterSet(charactersIn: "/").union(.whitespacesAndNewlines))
+        let components = normalized.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
+        let template = messageTemplate.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty,
+              normalized.utf8.count <= Self.maximumPathBytes,
+              (normalized == "." || !components.contains(where: { $0.isEmpty || $0 == "." || $0 == ".." || $0.contains("\\") || $0.utf8.contains(0) })),
+              channelID > 0,
+              !template.isEmpty,
+              template.utf8.count <= Self.maximumTemplateBytes,
+              !template.contains("\n"), !template.contains("\r"),
+              (template.contains("{folder}") || template.contains("{file}")) else {
+            throw LegacyProtocolError.invalidRecord("invalid Bot File Watcher")
+        }
+        return LegacyBotFileWatcher(id: id, enabled: enabled, path: normalized,
+                                    channelID: channelID, messageTemplate: template)
+    }
+
+    static func encodeList(_ watchers: [LegacyBotFileWatcher]) throws -> Data {
+        guard watchers.count <= maximumCount else {
+            throw LegacyProtocolError.invalidLength("too many Bot File Watchers")
+        }
+        var data = LegacyWire.uint16BE(UInt16(watchers.count))
+        var ids = Set<UUID>()
+        for watcher in watchers {
+            let watcher = try watcher.validated()
+            guard ids.insert(watcher.id).inserted else {
+                throw LegacyProtocolError.invalidRecord("duplicate Bot File Watcher id")
+            }
+            data.append(watcher.enabled ? 1 : 0)
+            data.append(LegacyWire.uint32BE(watcher.channelID))
+            data.append(try LegacyWire.string16(Data(watcher.id.uuidString.lowercased().utf8)))
+            data.append(try LegacyWire.string16(Data(watcher.path.utf8)))
+            data.append(try LegacyWire.string16(Data(watcher.messageTemplate.utf8)))
+        }
+        return data
+    }
+
+    static func decodeList(_ data: Data) throws -> [LegacyBotFileWatcher] {
+        var cursor = LegacyByteCursor(data)
+        let count = Int(try cursor.readUInt16BE())
+        guard count <= maximumCount else {
+            throw LegacyProtocolError.invalidRecord("too many Bot File Watchers")
+        }
+        var watchers: [LegacyBotFileWatcher] = []
+        watchers.reserveCapacity(count)
+        var ids = Set<UUID>()
+        for _ in 0..<count {
+            let rawEnabled = try cursor.readUInt8()
+            guard rawEnabled <= 1 else {
+                throw LegacyProtocolError.invalidRecord("invalid Bot File Watcher enabled flag")
+            }
+            let channelID = try cursor.readUInt32BE()
+            let idData = try cursor.readString16()
+            let pathData = try cursor.readString16()
+            let templateData = try cursor.readString16()
+            guard idData.count <= 36,
+                  pathData.count <= maximumPathBytes,
+                  templateData.count <= maximumTemplateBytes,
+                  let idText = String(data: idData, encoding: .utf8),
+                  let id = UUID(uuidString: idText),
+                  let path = String(data: pathData, encoding: .utf8),
+                  let messageTemplate = String(data: templateData, encoding: .utf8) else {
+                throw LegacyProtocolError.invalidRecord("invalid Bot File Watcher text")
+            }
+            let watcher = try LegacyBotFileWatcher(id: id, enabled: rawEnabled == 1, path: path,
+                                                   channelID: channelID,
+                                                   messageTemplate: messageTemplate).validated()
+            guard ids.insert(watcher.id).inserted else {
+                throw LegacyProtocolError.invalidRecord("duplicate Bot File Watcher id")
+            }
+            watchers.append(watcher)
+        }
+        try cursor.requireEnd()
+        return watchers
+    }
+}
+
 struct LegacyBotCommandRule: Equatable, Codable {
     static let maximumCount = 64
     static let maximumCommandBytes = 128
@@ -420,6 +515,8 @@ struct LegacyBotAdminStatus: Equatable {
     var commandRules: [LegacyBotCommandRule]
     var rssFeedsSupported: Bool
     var rssFeeds: [LegacyBotRSSFeed]
+    var fileWatchersSupported: Bool
+    var fileWatchers: [LegacyBotFileWatcher]
 }
 
 enum LegacyUserInfoField {
@@ -537,6 +634,26 @@ enum LegacyPresenceState {
     static let sleeping: UInt8 = 1
 }
 
+
+enum LegacyMessageEdit {
+    static let messageID: UInt32 = 0xf0000900
+    static let capability: UInt32 = 0xf0000902
+    static let sentAt: UInt32 = 0xf0000903
+    static let maximumAge: TimeInterval = 300
+    static let channel: UInt8 = 1
+    static let privateMessage: UInt8 = 2
+
+    static func identifier(_ id: UUID) -> Data {
+        Data(id.uuidString.lowercased().utf8)
+    }
+
+    static func parseIdentifier(_ data: Data?) -> UUID? {
+        guard let data, data.count == 36,
+              let text = String(data: data, encoding: .ascii),
+              text == text.lowercased() else { return nil }
+        return UUID(uuidString: text)
+    }
+}
 
 enum LegacyChannelField {
     static let channelID: UInt32 = 0

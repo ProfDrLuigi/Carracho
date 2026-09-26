@@ -1,4 +1,5 @@
 import Foundation
+import Dispatch
 import SQLite3
 #if canImport(Darwin)
 import Darwin
@@ -531,3 +532,287 @@ private final class LegacyBotRSSParser: NSObject, XMLParserDelegate {
         return value
     }
 }
+
+
+#if canImport(Darwin)
+extension LegacyBotFileWatcher {
+    func validated(filesRootURL: URL, requireDirectory: Bool = true) throws -> LegacyBotFileWatcher {
+        let watcher = try validated()
+        var target = filesRootURL.standardizedFileURL
+        if watcher.path != "." {
+            for component in watcher.path.split(separator: "/") {
+                target.appendPathComponent(String(component), isDirectory: true)
+            }
+        }
+        let resolvedRoot = filesRootURL.resolvingSymlinksInPath().standardizedFileURL.path
+        let resolvedTarget = target.resolvingSymlinksInPath().standardizedFileURL.path
+        guard resolvedTarget == resolvedRoot || resolvedTarget.hasPrefix(resolvedRoot + "/") else {
+            throw LegacyProtocolError.invalidRecord("Bot File Watcher path escapes Files root")
+        }
+        if requireDirectory {
+            var isDirectory: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: target.path, isDirectory: &isDirectory),
+                  isDirectory.boolValue else {
+                throw LegacyProtocolError.invalidRecord("Bot File Watcher folder does not exist: \(watcher.path)")
+            }
+        }
+        return watcher
+    }
+
+    func directoryURL(filesRootURL: URL) -> URL {
+        if path == "." { return filesRootURL.standardizedFileURL }
+        return path.split(separator: "/").reduce(filesRootURL.standardizedFileURL) {
+            $0.appendingPathComponent(String($1), isDirectory: true)
+        }
+    }
+}
+
+struct LegacyBotFileWatcherAnnouncement: Equatable {
+    var watcher: LegacyBotFileWatcher
+    var folderPath: String
+    var folderName: String
+    var fileName: String
+}
+
+final class LegacyBotFileWatcherService {
+    private struct SourceEntry {
+        var source: DispatchSourceFileSystemObject
+        var fd: Int32
+    }
+
+    private let configURL: URL
+    private let filesRootURL: URL
+    private let canPublish: () -> Bool
+    private let announcementHandler: (LegacyBotFileWatcherAnnouncement) -> Bool
+    private let logHandler: (String) -> Void
+    private let queue = DispatchQueue(label: "com.carracho.server.bot-file-watcher", qos: .utility)
+    private var configTimer: DispatchSourceTimer?
+    private var sources: [String: SourceEntry] = [:]
+    private var watchers: [UUID: LegacyBotFileWatcher] = [:]
+    private var fileSnapshots: [UUID: Set<String>] = [:]
+    private var rescanItems: [UUID: DispatchWorkItem] = [:]
+    private var lastPublished: [String: Date] = [:]
+    private var configStamp: Date?
+    private var running = false
+
+    init(configURL: URL, filesRootURL: URL,
+         canPublish: @escaping () -> Bool,
+         announcementHandler: @escaping (LegacyBotFileWatcherAnnouncement) -> Bool,
+         logHandler: @escaping (String) -> Void) {
+        self.configURL = configURL
+        self.filesRootURL = filesRootURL.standardizedFileURL
+        self.canPublish = canPublish
+        self.announcementHandler = announcementHandler
+        self.logHandler = logHandler
+    }
+
+    deinit { stop() }
+
+    func start() {
+        queue.async { [weak self] in
+            guard let self, !running else { return }
+            running = true
+            reloadConfiguration(force: true)
+            let timer = DispatchSource.makeTimerSource(queue: queue)
+            timer.schedule(deadline: .now() + 1, repeating: 1, leeway: .milliseconds(150))
+            timer.setEventHandler { [weak self] in self?.reloadConfiguration(force: false) }
+            configTimer = timer
+            timer.resume()
+        }
+    }
+
+    func stop() {
+        queue.sync {
+            guard running || configTimer != nil || !sources.isEmpty else { return }
+            running = false
+            configTimer?.cancel()
+            configTimer = nil
+            rescanItems.values.forEach { $0.cancel() }
+            rescanItems.removeAll()
+            cancelSources()
+            watchers.removeAll()
+            fileSnapshots.removeAll()
+            lastPublished.removeAll()
+        }
+    }
+
+    func configurationDidChange() {
+        queue.async { [weak self] in self?.reloadConfiguration(force: true) }
+    }
+
+    private func configurationModificationDate() -> Date? {
+        (try? FileManager.default.attributesOfItem(atPath: configURL.path)[.modificationDate]) as? Date
+    }
+
+    private func loadWatchers() throws -> [LegacyBotFileWatcher] {
+        guard FileManager.default.fileExists(atPath: configURL.path) else { return [] }
+        let data = try Data(contentsOf: configURL)
+        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw LegacyProtocolError.invalidRecord("invalid Bot configuration")
+        }
+        guard let raw = root["fileWatchers"] else { return [] }
+        guard let rows = raw as? [[String: Any]], rows.count <= LegacyBotFileWatcher.maximumCount else {
+            throw LegacyProtocolError.invalidRecord("invalid Bot File Watcher list")
+        }
+        var result: [LegacyBotFileWatcher] = []
+        var ids = Set<UUID>()
+        for row in rows {
+            guard let idText = row["id"] as? String, let id = UUID(uuidString: idText),
+                  let enabled = row["enabled"] as? Bool,
+                  let path = row["path"] as? String,
+                  let channel = row["channelID"] as? NSNumber,
+                  let message = row["messageTemplate"] as? String,
+                  channel.uint64Value > 0, channel.uint64Value <= UInt64(UInt32.max) else {
+                throw LegacyProtocolError.invalidRecord("invalid Bot File Watcher configuration")
+            }
+            let watcher = try LegacyBotFileWatcher(id: id, enabled: enabled, path: path,
+                                                   channelID: channel.uint32Value,
+                                                   messageTemplate: message)
+                .validated(filesRootURL: filesRootURL, requireDirectory: enabled)
+            guard ids.insert(watcher.id).inserted else {
+                throw LegacyProtocolError.invalidRecord("duplicate Bot File Watcher id")
+            }
+            result.append(watcher)
+        }
+        return result
+    }
+
+    private func reloadConfiguration(force: Bool) {
+        guard running else { return }
+        let stamp = configurationModificationDate()
+        if !force, stamp == configStamp { return }
+        configStamp = stamp
+        do {
+            let loaded = try loadWatchers()
+            watchers = Dictionary(uniqueKeysWithValues: loaded.filter(\.enabled).map { ($0.id, $0) })
+            fileSnapshots.removeAll()
+            for watcher in watchers.values { fileSnapshots[watcher.id] = scanFiles(for: watcher) }
+            installSources()
+        } catch {
+            logHandler("Bot File Watcher configuration is invalid: \(error.localizedDescription)")
+        }
+    }
+
+    private func scanFiles(for watcher: LegacyBotFileWatcher) -> Set<String> {
+        let root = watcher.directoryURL(filesRootURL: filesRootURL)
+        guard let enumerator = FileManager.default.enumerator(
+            at: root, includingPropertiesForKeys: [.isRegularFileKey, .isDirectoryKey],
+            options: [.skipsHiddenFiles], errorHandler: { _, _ in true }
+        ) else { return [] }
+        var result = Set<String>()
+        let rootPath = root.standardizedFileURL.path
+        let prefix = rootPath.hasSuffix("/") ? rootPath : rootPath + "/"
+        for case let url as URL in enumerator {
+            guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .isDirectoryKey]),
+                  values.isRegularFile == true || values.isDirectory == true else { continue }
+            let full = url.standardizedFileURL.path
+            guard full.hasPrefix(prefix) else { continue }
+            result.insert(String(full.dropFirst(prefix.count)))
+        }
+        return result
+    }
+
+    private func directories(for watcher: LegacyBotFileWatcher) -> [URL] {
+        let root = watcher.directoryURL(filesRootURL: filesRootURL)
+        var result = [root]
+        guard let enumerator = FileManager.default.enumerator(
+            at: root, includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles], errorHandler: { _, _ in true }
+        ) else { return result }
+        for case let url as URL in enumerator {
+            if (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true { result.append(url) }
+        }
+        return result
+    }
+
+    private func cancelSources() {
+        let existing = sources
+        sources.removeAll()
+        for entry in existing.values { entry.source.cancel() }
+    }
+
+    private func installSources() {
+        cancelSources()
+        guard running else { return }
+        for watcher in watchers.values {
+            for directory in directories(for: watcher) {
+                let fd = directory.path.withCString { open($0, O_EVTONLY) }
+                guard fd >= 0 else { continue }
+                let source = DispatchSource.makeFileSystemObjectSource(
+                    fileDescriptor: fd,
+                    eventMask: [.write, .extend, .attrib, .rename, .delete, .link],
+                    queue: queue
+                )
+                let key = watcher.id.uuidString + ":" + directory.path
+                source.setEventHandler { [weak self] in self?.scheduleRescan(watcherID: watcher.id) }
+                source.setCancelHandler { Darwin.close(fd) }
+                sources[key] = SourceEntry(source: source, fd: fd)
+                source.resume()
+            }
+        }
+    }
+
+    private func scheduleRescan(watcherID: UUID) {
+        rescanItems[watcherID]?.cancel()
+        let item = DispatchWorkItem { [weak self] in self?.rescan(watcherID: watcherID) }
+        rescanItems[watcherID] = item
+        queue.asyncAfter(deadline: .now() + 2, execute: item)
+    }
+
+    private func rescan(watcherID: UUID) {
+        rescanItems[watcherID] = nil
+        guard running, let watcher = watchers[watcherID] else { return }
+        let prior = fileSnapshots[watcherID] ?? []
+        let current = scanFiles(for: watcher)
+        fileSnapshots[watcherID] = current
+        let added = current.subtracting(prior)
+        installSources()
+        guard !added.isEmpty, canPublish() else { return }
+
+        var folders: [String: (folderName: String, fileName: String)] = [:]
+        let watchesRoot = watcher.path == "."
+        for relativeFile in added.sorted() {
+            let components = relativeFile.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
+            guard !components.isEmpty else { continue }
+            let fileName = components.last ?? relativeFile
+            if components.count >= 2 {
+                let folderName = components[0]
+                let folderPath = watchesRoot ? folderName : watcher.path + "/" + folderName
+                folders[folderPath] = (folderName, fileName)
+            } else {
+                let entryURL = watcher.directoryURL(filesRootURL: filesRootURL)
+                    .appendingPathComponent(relativeFile)
+                let isDirectory = (try? entryURL.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
+                let folderPath: String
+                let folderName: String
+                if isDirectory {
+                    folderPath = watchesRoot ? relativeFile : watcher.path + "/" + relativeFile
+                    folderName = relativeFile
+                } else {
+                    folderPath = watcher.path
+                    folderName = watchesRoot
+                        ? filesRootURL.lastPathComponent
+                        : URL(fileURLWithPath: watcher.path).lastPathComponent
+                }
+                if !folderName.isEmpty { folders[folderPath] = (folderName, fileName) }
+            }
+        }
+
+        let now = Date()
+        for folderPath in folders.keys.sorted() {
+            guard let values = folders[folderPath] else { continue }
+            let folderName = values.folderName
+            let cooldownKey = watcher.id.uuidString + ":" + folderPath
+            if let last = lastPublished[cooldownKey], now.timeIntervalSince(last) < 60 { continue }
+            let announcement = LegacyBotFileWatcherAnnouncement(
+                watcher: watcher, folderPath: folderPath, folderName: folderName,
+                fileName: values.fileName
+            )
+            if announcementHandler(announcement) {
+                lastPublished[cooldownKey] = now
+                logHandler("Bot File Watcher \(watcher.path) announced \(folderPath)")
+            }
+        }
+    }
+}
+#endif

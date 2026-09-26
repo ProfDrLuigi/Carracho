@@ -584,15 +584,6 @@ final class CarrachoServerService {
         botController.desiredStateChanged()
     }
 
-    var botGreetingConfiguration: (enabled: Bool, template: String) {
-        CarrachoServerBotController.greetingConfiguration(rootURL: rootURL)
-    }
-
-    func setBotGreeting(enabled: Bool, template: String) throws {
-        try CarrachoServerBotController.setGreeting(enabled: enabled, template: template, rootURL: rootURL)
-        botController.desiredStateChanged()
-    }
-
     var botStatus: CarrachoServerBotStatus? {
         CarrachoServerBotController.currentStatus(rootURL: rootURL)
     }

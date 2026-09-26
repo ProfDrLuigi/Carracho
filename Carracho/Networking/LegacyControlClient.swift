@@ -116,6 +116,8 @@ struct LegacyChannelMessage: Equatable {
     var senderUserID: UInt32
     var message: Data
     var attribute: UInt8
+    var messageID: UUID? = nil
+    var sentAt: Date? = nil
 }
 
 struct LegacyChannelInvitation: Equatable {
@@ -133,6 +135,15 @@ struct LegacyPrivateMessage: Equatable {
     var senderUserID: UInt32
     var message: Data
     var secondaryPayload: Data
+    var messageID: UUID? = nil
+    var sentAt: Date? = nil
+}
+
+struct LegacyMessageEdited: Equatable {
+    var id: UUID
+    var kind: UInt8
+    var scope: UInt32
+    var message: Data
 }
 
 struct LegacyUserInfoReply: Equatable {
@@ -175,6 +186,7 @@ enum LegacyControlEvent {
     case userDisconnected(UInt32)
     case presence(userID: UInt32, sleeping: Bool)
     case privateMessage(LegacyPrivateMessage)
+    case messageEdited(LegacyMessageEdited)
     case offlineMessagesAvailable(Int)
     case broadcastMessage(LegacyBroadcastMessage)
     case userUpdated(userID: UInt32, nickname: Data, picture: Data, statusMessage: Data?)
@@ -238,6 +250,7 @@ final class LegacyControlClient {
     // after 0x1c20 TickCount ticks. Classic Mac OS TickCount runs at 60 Hz:
     // 0x1c20 / 60 = 120 seconds.
     private static let classicIdleKeepAliveInterval: TimeInterval = 120
+    private(set) var supportsMessageEditing = false
 
     private static func runtimeCPUArchitecture() -> String {
         var info = utsname()
@@ -370,6 +383,7 @@ final class LegacyControlClient {
         connectTimeoutWorkItem?.cancel()
         connectTimeoutWorkItem = nil
         stopClassicIdleKeepAlive()
+        supportsMessageEditing = false
         self.connection = nil
         sessionKey = nil
         modernControlChannel = nil
@@ -567,6 +581,7 @@ final class LegacyControlClient {
     func sendChannelMessage(channelID: UInt32,
                             message: Data,
                             attribute: UInt8 = 0,
+                            messageID: UUID? = nil,
                             completion: @escaping (Result<Void, Error>) -> Void) {
         guard !message.isEmpty,
               let wireMessage = textForCurrentServer(message, maximumBytes: 0x800),
@@ -576,11 +591,20 @@ final class LegacyControlClient {
             )))
             return
         }
-        sendOneWay(command: LegacyCommand.channelChat, fields: [
+        var fields = [
             LegacyTLV(type: LegacyChannelField.channelID, value: LegacyWire.uint32BE(channelID)),
             LegacyTLV(type: LegacyChannelField.message, value: wireMessage),
             LegacyTLV(type: LegacyChannelField.chatAttribute, value: Data([attribute])),
-        ], completion: completion)
+        ]
+        if supportsMessageEditing, let messageID {
+            fields.append(LegacyTLV(type: LegacyMessageEdit.messageID, value: LegacyMessageEdit.identifier(messageID)))
+        }
+        // An acknowledged send lets the sender know whether the server actually accepted it.
+        if supportsMessageEditing {
+            sendTaskCompleteRequest(command: LegacyCommand.channelChat, fields: fields, completion: completion)
+        } else {
+            sendOneWay(command: LegacyCommand.channelChat, fields: fields, completion: completion)
+        }
     }
 
     func setChannelSettings(channelID: UInt32, topic: Data, flags: UInt16,
@@ -947,6 +971,7 @@ final class LegacyControlClient {
     // MARK: - Users / presence
 
     func sendPrivateMessage(to userID: UInt32, message: Data, secondaryPayload: Data = Data(),
+                            messageID: UUID? = nil,
                             completion: @escaping (Result<Void, Error>) -> Void) {
         guard !message.isEmpty,
               let wireMessage = textForCurrentServer(message, maximumBytes: 0x8000),
@@ -956,7 +981,27 @@ final class LegacyControlClient {
         }
         var fields = [LegacyTLV(type: 1, value: LegacyWire.uint32BE(userID)), LegacyTLV(type: 2, value: wireMessage)]
         if !secondaryPayload.isEmpty { fields.append(LegacyTLV(type: 3, value: secondaryPayload)) }
-        sendOneWay(command: LegacyCommand.privateMessage, fields: fields, completion: completion)
+        if supportsMessageEditing, let messageID {
+            fields.append(LegacyTLV(type: LegacyMessageEdit.messageID, value: LegacyMessageEdit.identifier(messageID)))
+        }
+        if supportsMessageEditing {
+            sendTaskCompleteRequest(command: LegacyCommand.privateMessage, fields: fields, completion: completion)
+        } else {
+            sendOneWay(command: LegacyCommand.privateMessage, fields: fields, completion: completion)
+        }
+    }
+
+    func editMessage(id: UUID, message: Data,
+                     completion: @escaping (Result<Void, Error>) -> Void) {
+        guard supportsMessageEditing,
+              !message.isEmpty, message.count <= 0x8000 else {
+            completion(.failure(LegacyControlClientError.invalidInput("Message editing is not supported by this server.")))
+            return
+        }
+        sendTaskCompleteRequest(command: LegacyCommand.messageEdit, fields: [
+            LegacyTLV(type: 1, value: LegacyMessageEdit.identifier(id)),
+            LegacyTLV(type: 2, value: message),
+        ], completion: completion)
     }
 
     func sendOfflineCapableMessage(toLogin login: Data, message: Data,
@@ -1682,6 +1727,9 @@ final class LegacyControlClient {
                 let rssFeedsField = packet.firstField(type: LegacyBotAdminField.rssFeeds)
                 let rssFeedsSupported = rssFeedsField != nil
                 let rssFeeds = try rssFeedsField.map { try LegacyBotRSSFeed.decodeList($0.value) } ?? []
+                let fileWatchersField = packet.firstField(type: LegacyBotAdminField.fileWatchers)
+                let fileWatchersSupported = fileWatchersField != nil
+                let fileWatchers = try fileWatchersField.map { try LegacyBotFileWatcher.decodeList($0.value) } ?? []
                 completion(.success(LegacyBotAdminStatus(
                     desiredEnabled: try flag(LegacyBotAdminField.desiredEnabled),
                     connected: try flag(LegacyBotAdminField.connected),
@@ -1694,7 +1742,9 @@ final class LegacyControlClient {
                     commandRulesSupported: commandRulesSupported,
                     commandRules: commandRules,
                     rssFeedsSupported: rssFeedsSupported,
-                    rssFeeds: rssFeeds)))
+                    rssFeeds: rssFeeds,
+                    fileWatchersSupported: fileWatchersSupported,
+                    fileWatchers: fileWatchers)))
             } catch { completion(.failure(error)) }
         }
     }
@@ -1738,6 +1788,16 @@ final class LegacyControlClient {
             let encoded = try LegacyBotRSSFeed.encodeList(feeds)
             sendTaskCompleteRequest(command: LegacyCommand.botSetRSSFeeds,
                                     fields: [LegacyTLV(type: LegacyBotAdminField.rssFeeds, value: encoded)],
+                                    completion: completion)
+        } catch { completion(.failure(error)) }
+    }
+
+    func setBotAdministrationFileWatchers(_ watchers: [LegacyBotFileWatcher],
+                                             completion: @escaping (Result<Void, Error>) -> Void) {
+        do {
+            let encoded = try LegacyBotFileWatcher.encodeList(watchers)
+            sendTaskCompleteRequest(command: LegacyCommand.botSetFileWatchers,
+                                    fields: [LegacyTLV(type: LegacyBotAdminField.fileWatchers, value: encoded)],
                                     completion: completion)
         } catch { completion(.failure(error)) }
     }
@@ -1967,6 +2027,8 @@ final class LegacyControlClient {
                                                                  actual: packet.command)
             }
             let loginResult = try parseLoginSuccess(packet)
+            supportsMessageEditing = !negotiatedLegacyCrypto &&
+                packet.firstField(type: LegacyMessageEdit.capability)?.value == Data([1])
             let modernSalt = packet.firstField(type: 6)?.value
             let transportKey: Data
             if negotiatedLegacyCrypto {
@@ -2096,9 +2158,21 @@ final class LegacyControlClient {
                 guard let sender = packet.firstField(type: 1), let message = packet.firstField(type: 2) else {
                     throw LegacyControlClientError.protocolFailure("unvollständige private Nachricht")
                 }
+                let sentAt = try packet.firstField(type: LegacyMessageEdit.sentAt)?.uint64BE()
                 onEvent?(.privateMessage(LegacyPrivateMessage(senderUserID: try sender.uint32BE(),
                                                               message: message.value,
-                                                              secondaryPayload: packet.firstField(type: 3)?.value ?? Data())))
+                                                              secondaryPayload: packet.firstField(type: 3)?.value ?? Data(),
+                                                              messageID: LegacyMessageEdit.parseIdentifier(
+                                                                  packet.firstField(type: LegacyMessageEdit.messageID)?.value),
+                                                              sentAt: sentAt.map { Date(timeIntervalSince1970: TimeInterval($0)) })))
+            case LegacyCommand.messageEdited:
+                guard let id = LegacyMessageEdit.parseIdentifier(packet.firstField(type: 1)?.value),
+                      let kind = packet.firstField(type: 2)?.value.first,
+                      let scope = try packet.firstField(type: 3)?.uint32BE(),
+                      let message = packet.firstField(type: 4)?.value else {
+                    throw LegacyControlClientError.protocolFailure("invalid edited-message event")
+                }
+                onEvent?(.messageEdited(LegacyMessageEdited(id: id, kind: kind, scope: scope, message: message)))
             case LegacyCommand.broadcastMessage:
                 guard let message = packet.firstField(type: 1), let sender = packet.firstField(type: 2) else {
                     throw LegacyControlClientError.protocolFailure("unvollständiger Broadcast")
@@ -2204,11 +2278,14 @@ final class LegacyControlClient {
                       attributeField.value.count == 1, let attribute = attributeField.value.first else {
                     throw LegacyControlClientError.protocolFailure("unvollständiges Channel-Chat-Event")
                 }
+                let sentAt = try packet.firstField(type: LegacyMessageEdit.sentAt)?.uint64BE()
                 onEvent?(.channelMessage(LegacyChannelMessage(
                     channelID: try channelField.uint32BE(),
                     senderUserID: try senderField.uint32BE(),
                     message: messageField.value,
-                    attribute: attribute
+                    attribute: attribute,
+                    messageID: LegacyMessageEdit.parseIdentifier(packet.firstField(type: LegacyMessageEdit.messageID)?.value),
+                    sentAt: sentAt.map { Date(timeIntervalSince1970: TimeInterval($0)) }
                 )))
             case LegacyCommand.channelSettings:
                 guard let channelField = packet.firstField(type: LegacyChannelField.channelID),

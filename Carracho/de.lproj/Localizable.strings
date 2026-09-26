@@ -2006,6 +2006,22 @@
 "This server does not support Bot RSS feeds." = "Dieser Server unterstützt keine Bot-RSS-Feeds.";
 "RSS test article posted to Public." = "RSS-Testartikel wurde in Public gepostet.";
 
+// Bot File Watchers
+"File Watchers" = "Datei-Wächter";
+"Add Watcher" = "Wächter hinzufügen";
+"Remove Watcher" = "Wächter entfernen";
+"Save Watchers" = "Wächter speichern";
+"Folder relative to Files root, or . for root" = "Ordner relativ zum Datei-Stammverzeichnis oder . für das Stammverzeichnis";
+"New {file} in {folder}" = "Neue Datei/Ordner {file} in {folder}";
+"Watch a folder below the server Files root, or use . to watch the Files root itself. When new files arrive, the Bot posts one coalesced message to the selected conference. Use {folder} for a clickable folder link and {file} for the detected file or folder name." = "Überwacht einen Ordner unterhalb des Datei-Stammverzeichnisses des Servers oder mit . das Datei-Stammverzeichnis selbst. Wenn neue Dateien eintreffen, sendet der Bot eine zusammengefasste Meldung in die ausgewählte Conference. {folder} erzeugt einen anklickbaren Ordner-Link, {file} wird durch den erkannten Datei- oder Ordnernamen ersetzt.";
+"Too many Bot File Watchers." = "Zu viele Bot-Datei-Wächter.";
+"File Watcher %@ has invalid settings. Paths are relative to Files and the message must contain {folder} or {file}." = "Datei-Wächter %@ hat ungültige Einstellungen. Pfade sind relativ zu Files und die Meldung muss {folder} oder {file} enthalten.";
+"Each File Watcher needs a unique identifier." = "Jeder Datei-Wächter benötigt eine eindeutige Kennung.";
+"The folder “%@” is watched more than once." = "Der Ordner „%@“ wird mehrfach überwacht.";
+"Bot File Watchers saved." = "Bot-Datei-Wächter gespeichert.";
+"Bot File Watchers require a modern Carracho server." = "Bot-Datei-Wächter erfordern einen modernen Carracho-Server.";
+"This server does not support Bot File Watchers." = "Dieser Server unterstützt keine Bot-Datei-Wächter.";
+
 // Account transfer statistics
 "Download data" = "Download-Daten";
 "Uploads" = "Uploads";
@@ -2043,3 +2059,10 @@
 "Images in private messages require a modern Carracho peer." = "Bilder in privaten Nachrichten erfordern einen modernen Carracho-Client.";
 "Open image preview" = "Bildvorschau öffnen";
 "Uploading image…" = "Bild wird hochgeladen…";
+
+"Edited" = "Bearbeitet";
+"Edit message" = "Nachricht bearbeiten";
+"You can edit your own message for five minutes after sending it." = "Sie können Ihre eigene Nachricht innerhalb von fünf Minuten nach dem Senden bearbeiten.";
+"A message cannot be empty." = "Eine Nachricht darf nicht leer sein.";
+"Image attachments cannot be changed when editing a message." = "Bildanhänge können beim Bearbeiten einer Nachricht nicht geändert werden.";
+"Message could not be edited: %@" = "Nachricht konnte nicht bearbeitet werden: %@";

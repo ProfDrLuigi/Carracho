@@ -1,6 +1,7 @@
 #if CARRACHO_SERVER
 import AppKit
 import Foundation
+import Dispatch
 import Darwin
 
 struct CarrachoServerBotStatus: Codable, Equatable {
@@ -22,6 +23,8 @@ private struct CarrachoServerBotConfiguration: Codable {
     var commandRules: [LegacyBotCommandRule]? = nil
     /// Optional for compatibility with configuration files created before RSS support.
     var rssFeeds: [LegacyBotRSSFeed]? = nil
+    /// Optional for compatibility with configuration files created before File Watcher support.
+    var fileWatchers: [LegacyBotFileWatcher]? = nil
 }
 
 enum CarrachoServerBotError: LocalizedError {
@@ -168,30 +171,35 @@ final class CarrachoServerBotController {
         (try? configuration(rootURL: rootURL).enabled) ?? false
     }
 
-    static func setDesiredEnabled(_ enabled: Bool, rootURL: URL) throws {
+    static func fileWatchers(rootURL: URL, filesRootURL: URL) throws -> [LegacyBotFileWatcher] {
+        let values = try configuration(rootURL: rootURL).fileWatchers ?? []
+        guard values.count <= LegacyBotFileWatcher.maximumCount else {
+            throw ServerStateError.invalidValue("At most 32 Bot File Watchers are supported.")
+        }
+        return try values.map { try $0.validated(filesRootURL: filesRootURL, requireDirectory: false) }
+    }
+
+    static func setFileWatchers(_ watchers: [LegacyBotFileWatcher],
+                                rootURL: URL,
+                                filesRootURL: URL) throws {
+        guard watchers.count <= LegacyBotFileWatcher.maximumCount else {
+            throw ServerStateError.invalidValue("At most 32 Bot File Watchers are supported.")
+        }
+        var seen = Set<UUID>()
+        let validated = try watchers.map { watcher -> LegacyBotFileWatcher in
+            guard seen.insert(watcher.id).inserted else {
+                throw ServerStateError.invalidValue("Bot File Watcher IDs must be unique.")
+            }
+            return try watcher.validated(filesRootURL: filesRootURL, requireDirectory: watcher.enabled)
+        }
         var value = try configuration(rootURL: rootURL)
-        value.enabled = enabled
+        value.fileWatchers = validated
         try writeConfiguration(value, rootURL: rootURL)
     }
 
-    static func greetingConfiguration(rootURL: URL) -> (enabled: Bool, template: String) {
-        guard let value = try? configuration(rootURL: rootURL) else {
-            return (false, LegacyBotAdminStatus.defaultGreetingTemplate)
-        }
-        let template = value.greetingTemplate?.trimmingCharacters(in: .whitespacesAndNewlines)
-        return (value.greetNewUsers ?? false,
-                template?.isEmpty == false ? template! : LegacyBotAdminStatus.defaultGreetingTemplate)
-    }
-
-    static func setGreeting(enabled: Bool, template: String, rootURL: URL) throws {
-        let normalized = template.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !normalized.isEmpty, normalized.utf8.count <= 512,
-              !normalized.contains("\n"), !normalized.contains("\r") else {
-            throw ServerStateError.invalidValue(L("The Bot greeting must be one non-empty line of at most 512 UTF-8 bytes."))
-        }
+    static func setDesiredEnabled(_ enabled: Bool, rootURL: URL) throws {
         var value = try configuration(rootURL: rootURL)
-        value.greetNewUsers = enabled
-        value.greetingTemplate = normalized
+        value.enabled = enabled
         try writeConfiguration(value, rootURL: rootURL)
     }
 

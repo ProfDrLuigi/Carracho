@@ -311,7 +311,8 @@ extension ViewController {
             picture: conversation.picture,
             isLegacyTransport: conversation.isLegacyTransport,
             entries: conversation.messages.map {
-                PrivateMessageEntry(id: $0.id, timestamp: $0.timestamp, outgoing: $0.outgoing, message: $0.message)
+                PrivateMessageEntry(id: $0.id, timestamp: $0.timestamp, outgoing: $0.outgoing,
+                                    message: $0.message, edited: $0.edited, editable: $0.editable)
             },
             unreadCount: conversation.unreadCount,
             draftText: conversation.draftText,
@@ -363,7 +364,7 @@ extension ViewController {
         guard let scope = messageCenterPersistenceScope else { return }
         let stored = MessageCenterStoredPrivateMessage(id: entry.id, userID: conversation.userID,
                                                        timestamp: entry.timestamp, outgoing: entry.outgoing,
-                                                       message: entry.message)
+                                                       message: entry.message, edited: entry.edited, editable: entry.editable)
         do {
             try messageCenterStore.insertPrivateMessage(stored, conversation: storedConversation(conversation), scope: scope)
         } catch {
@@ -866,9 +867,11 @@ extension ViewController {
         return privateMessageConversations[userID]!
     }
 
-    func appendPrivateMessage(userID: UInt32, message: Data, outgoing: Bool, timestamp: Date = Date()) {
+    func appendPrivateMessage(userID: UInt32, message: Data, outgoing: Bool, timestamp: Date = Date(),
+                              id: UUID = UUID(), editable: Bool = false) {
         var conversation = ensurePrivateConversation(userID: userID)
-        let entry = PrivateMessageEntry(timestamp: timestamp, outgoing: outgoing, message: message)
+        let entry = PrivateMessageEntry(id: id, timestamp: timestamp, outgoing: outgoing, message: message,
+                                        editable: editable)
         conversation.entries.append(entry)
         if conversation.entries.count > 500 { conversation.entries.removeFirst(conversation.entries.count - 500) }
         conversation.lastActivity = timestamp
@@ -880,6 +883,70 @@ extension ViewController {
         privateMessageConversations[userID] = conversation
         persistPrivateMessage(entry, conversation: conversation)
         refreshPrivateMessageCenter(scrollToBottom: selectedPrivateConversationID == userID)
+        if outgoing && editable {
+            let remaining = entry.timestamp.addingTimeInterval(LegacyMessageEdit.maximumAge).timeIntervalSinceNow
+            if remaining > 0 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + remaining + 0.1) { [weak self] in
+                    guard let self, self.selectedPrivateConversationID == userID else { return }
+                    self.refreshPrivateMessageCenter(scrollToBottom: false)
+                }
+            }
+        }
+    }
+
+    func applyPrivateMessageEdit(_ edit: LegacyMessageEdited) {
+        guard var conversation = privateMessageConversations[edit.scope],
+              let index = conversation.entries.firstIndex(where: { $0.id == edit.id }) else { return }
+        conversation.entries[index].message = edit.message
+        conversation.entries[index].edited = true
+        let changed = conversation.entries[index]
+        privateMessageConversations[edit.scope] = conversation
+        persistPrivateMessage(changed, conversation: conversation)
+        refreshPrivateMessageCenter(scrollToBottom: false)
+    }
+
+    @objc func editPrivateMessageFromButton(_ sender: NSButton) {
+        guard let parts = sender.identifier?.rawValue.split(separator: ":"), parts.count == 2,
+              let userID = UInt32(parts[0]), let messageID = UUID(uuidString: String(parts[1])),
+              let conversation = privateMessageConversations[userID], !conversation.isLegacyTransport,
+              let entry = conversation.entries.first(where: { $0.id == messageID && $0.outgoing && $0.editable }),
+              client.supportsMessageEditing,
+              Date().timeIntervalSince(entry.timestamp) >= 0,
+              Date().timeIntervalSince(entry.timestamp) < LegacyMessageEdit.maximumAge,
+              LegacyMediaReference.references(inWire: entry.message).isEmpty else { return }
+        presentMessageEdit(original: entry.message, maximumBytes: 0x8000, id: messageID)
+    }
+
+    func presentMessageEdit(original: Data, maximumBytes: Int, id: UUID) {
+        let alert = NSAlert()
+        alert.messageText = L("Edit message")
+        alert.informativeText = L("You can edit your own message for five minutes after sending it.")
+        alert.addButton(withTitle: L("Save"))
+        alert.addButton(withTitle: L("Cancel"))
+        let editor = NSTextView(frame: NSRect(x: 0, y: 0, width: 410, height: 108))
+        editor.font = NSFont.systemFont(ofSize: 13)
+        editor.isRichText = false
+        editor.string = CarrachoTextWire.string(from: original)
+        let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 410, height: 108))
+        scroll.hasVerticalScroller = true
+        scroll.documentView = editor
+        alert.accessoryView = scroll
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let text = editor.string.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { showError(L("A message cannot be empty.")); return }
+        do {
+            let data = try CarrachoTextWire.encode(text, maximumBytes: maximumBytes)
+            guard LegacyMediaReference.references(inWire: data).isEmpty else {
+                showError(L("Image attachments cannot be changed when editing a message.")); return
+            }
+            client.editMessage(id: id, message: data) { [weak self] result in
+                if case let .failure(error) = result {
+                    self?.showError(LF("Message could not be edited: %@", Self.displayMessage(for: error)))
+                }
+            }
+        } catch {
+            showError(LF("Message could not be edited: %@", Self.displayMessage(for: error)))
+        }
     }
 
     func selectPrivateConversation(_ userID: UInt32, focusComposer: Bool) {
@@ -996,7 +1063,25 @@ extension ViewController {
         time.font = .systemFont(ofSize: 9.5)
         time.textColor = CarrachoTheme.tertiaryText
         time.setContentHuggingPriority(.required, for: .horizontal)
-        let header = horizontalStack([sender, NSView(), time], spacing: 8)
+        var headerViews: [NSView] = [sender, NSView(), time]
+        if entry.edited {
+            let badge = NSTextField(labelWithString: L("Edited"))
+            badge.font = .systemFont(ofSize: 9.5)
+            badge.textColor = CarrachoTheme.tertiaryText
+            headerViews.append(badge)
+        }
+        if entry.outgoing, entry.editable, !conversation.isLegacyTransport, client.supportsMessageEditing,
+           Date().timeIntervalSince(entry.timestamp) >= 0,
+           Date().timeIntervalSince(entry.timestamp) < LegacyMessageEdit.maximumAge,
+           LegacyMediaReference.references(inWire: entry.message).isEmpty {
+            let edit = NSButton(title: L("Edit"), target: self, action: #selector(editPrivateMessageFromButton(_:)))
+            edit.bezelStyle = .inline
+            edit.controlSize = .small
+            edit.font = .systemFont(ofSize: 10)
+            edit.identifier = NSUserInterfaceItemIdentifier(String(conversation.userID) + ":" + entry.id.uuidString)
+            headerViews.append(edit)
+        }
+        let header = horizontalStack(headerViews, spacing: 8)
 
         let body = messageCenterBodyView(fromWire: entry.message, allowMedia: !conversation.isLegacyTransport)
         let stack = verticalStack([header, body], spacing: 5)
@@ -1363,7 +1448,10 @@ extension ViewController {
         }
         guard !data.isEmpty else { return }
         privateMessageSendButton.isEnabled = false
-        client.sendPrivateMessage(to: userID, message: data) { [weak self] result in
+        let messageID = client.supportsMessageEditing &&
+            privateMessageConversations[userID]?.isLegacyTransport == false &&
+            LegacyMediaReference.references(inWire: data).isEmpty ? UUID() : nil
+        client.sendPrivateMessage(to: userID, message: data, messageID: messageID) { [weak self] result in
             guard let self else { return }
             switch result {
             case .success:
@@ -1376,7 +1464,8 @@ extension ViewController {
                     self.privateMessageAttachments.clear()
                 }
                 self.privateMessageComposerStatusLabel.textColor = CarrachoTheme.secondaryText
-                self.appendPrivateMessage(userID: userID, message: data, outgoing: true)
+                self.appendPrivateMessage(userID: userID, message: data, outgoing: true,
+                                          id: messageID ?? UUID(), editable: messageID != nil)
             case let .failure(error):
                 self.privateMessageComposerStatusLabel.stringValue = LF("Message could not be sent: %@", Self.displayMessage(for: error))
                 self.privateMessageComposerStatusLabel.textColor = .systemRed

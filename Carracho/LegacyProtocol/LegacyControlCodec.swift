@@ -35,6 +35,16 @@ extension LegacyTLV {
         return result
     }
 
+    func uint64BE() throws -> UInt64 {
+        guard value.count == 8 else {
+            throw LegacyProtocolError.invalidLength("TLV \(type) must contain one UInt64")
+        }
+        var cursor = LegacyByteCursor(value)
+        let result = try cursor.readUInt64BE()
+        try cursor.requireEnd()
+        return result
+    }
+
     func uint32BE() throws -> UInt32 {
         guard value.count == 4 else {
             throw LegacyProtocolError.invalidLength("TLV \(type) must contain one UInt32")

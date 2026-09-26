@@ -70,6 +70,7 @@ extension ViewController {
             && !remoteBotLoading && !remoteBotMutationInProgress
             && !remoteBotGreetingMutationInProgress && !remoteBotCommandMutationInProgress
             && !remoteBotRSSMutationInProgress && !remoteBotRSSTestInProgress
+            && !remoteBotFileWatcherMutationInProgress
     }
 
     func botRSSFeedCell(identifier: String, row: Int) -> NSView? {
@@ -335,5 +336,7 @@ extension ViewController {
             }
         }
     }
+
+
 }
 #endif

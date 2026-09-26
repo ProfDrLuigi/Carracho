@@ -1262,14 +1262,24 @@ extension ViewController {
     func appendChannelMessage(_ message: LegacyChannelMessage) {
         guard var session = joinedChannels[message.channelID] else { return }
         session.transcript.append(ChannelTranscriptEntry(
-            timestamp: Date(),
-            kind: .message(senderUserID: message.senderUserID, message: message.message, attribute: message.attribute)
+            timestamp: message.sentAt ?? Date(),
+            kind: .message(senderUserID: message.senderUserID, message: message.message, attribute: message.attribute),
+            messageID: message.messageID
         ))
         if session.transcript.count > 1000 { session.transcript.removeFirst(session.transcript.count - 1000) }
         if activeChannel?.channelID != message.channelID || currentWorkspace != .conferences {
             session.unreadCount += 1
         }
         joinedChannels[message.channelID] = session
+        if message.senderUserID == lastLoginResult?.session.userID, message.messageID != nil {
+            let remaining = (message.sentAt ?? Date()).addingTimeInterval(LegacyMessageEdit.maximumAge).timeIntervalSinceNow
+            if remaining > 0 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + remaining + 0.1) { [weak self] in
+                    guard let self, self.activeChannel?.channelID == message.channelID else { return }
+                    self.renderActiveChannelTranscript()
+                }
+            }
+        }
         reloadJoinedChannelSidebar()
         if activeChannel?.channelID == message.channelID {
             reloadChannelView(reloadTables: false)
@@ -1277,6 +1287,30 @@ extension ViewController {
             channelTable.reloadData()
         }
         writeChatSmokeSnapshotIfReady()
+    }
+
+    func applyChannelMessageEdit(_ edit: LegacyMessageEdited) {
+        guard var session = joinedChannels[edit.scope],
+              let index = session.transcript.firstIndex(where: { $0.messageID == edit.id }),
+              case let .message(sender, _, attribute) = session.transcript[index].kind else { return }
+        session.transcript[index].kind = .message(senderUserID: sender, message: edit.message, attribute: attribute)
+        session.transcript[index].edited = true
+        joinedChannels[edit.scope] = session
+        if activeChannel?.channelID == edit.scope { renderActiveChannelTranscript() }
+    }
+
+    func editChannelMessage(_ id: UUID) {
+        guard client.supportsMessageEditing,
+              let active = activeChannel,
+              let entry = joinedChannels[active.channelID]?.transcript.first(where: {
+                  $0.messageID == id
+              }),
+              case let .message(sender, original, _) = entry.kind,
+              sender == lastLoginResult?.session.userID,
+              Date().timeIntervalSince(entry.timestamp) >= 0,
+              Date().timeIntervalSince(entry.timestamp) < LegacyMessageEdit.maximumAge,
+              LegacyMediaReference.references(inWire: original).isEmpty else { return }
+        presentMessageEdit(original: original, maximumBytes: 0x800, id: id)
     }
 
     func syncChannelMemberCount(_ channelID: UInt32) {
@@ -1618,6 +1652,33 @@ extension ViewController {
                             attributes: [
                                 .font: metaFont,
                                 .foregroundColor: CarrachoTheme.tertiaryText,
+                                .paragraphStyle: headerParagraph,
+                            ]
+                        ))
+                    }
+                    if entry.edited {
+                        output.append(NSAttributedString(
+                            string: "  · " + L("Edited"),
+                            attributes: [
+                                .font: metaFont,
+                                .foregroundColor: CarrachoTheme.tertiaryText,
+                                .paragraphStyle: headerParagraph,
+                            ]
+                        ))
+                    }
+                    if senderUserID == lastLoginResult?.session.userID,
+                       let id = entry.messageID,
+                       client.supportsMessageEditing,
+                       Date().timeIntervalSince(entry.timestamp) >= 0,
+                       Date().timeIntervalSince(entry.timestamp) < LegacyMessageEdit.maximumAge,
+                       LegacyMediaReference.references(inWire: message).isEmpty,
+                       let url = URL(string: "carracho-edit://" + id.uuidString.lowercased()) {
+                        output.append(NSAttributedString(
+                            string: "  · " + L("Edit"),
+                            attributes: [
+                                .link: url,
+                                .font: metaFont,
+                                .foregroundColor: CarrachoTheme.accent,
                                 .paragraphStyle: headerParagraph,
                             ]
                         ))
@@ -2127,7 +2188,10 @@ extension ViewController {
         channelComposerStatusLabel.stringValue = L("Sending…")
         channelComposerStatusLabel.textColor = CarrachoTheme.secondaryText
         updateChannelComposerPresentation()
-        client.sendChannelMessage(channelID: expectedChannelID, message: message) { [weak self] result in
+        let messageID = client.supportsMessageEditing &&
+            LegacyMediaReference.references(inWire: message).isEmpty ? UUID() : nil
+        client.sendChannelMessage(channelID: expectedChannelID, message: message,
+                                  messageID: messageID) { [weak self] result in
             guard let self else { return }
             self.channelSendInFlight = false
             switch result {

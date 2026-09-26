@@ -344,6 +344,8 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         }
         var timestamp: Date
         var kind: Kind
+        var messageID: UUID? = nil
+        var edited: Bool = false
     }
 
     struct JoinedChannelSession {
@@ -363,6 +365,8 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         var timestamp: Date
         var outgoing: Bool
         var message: Data
+        var edited: Bool = false
+        var editable: Bool = false
     }
 
     struct PrivateMessageConversation {
@@ -879,6 +883,10 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
     let adminBotRSSDeleteButton = NSButton(title: L("Remove Feed"), target: nil, action: nil)
     let adminBotRSSTestButton = NSButton(title: L("Test Feed"), target: nil, action: nil)
     let adminBotRSSSaveButton = NSButton(title: L("Save Feeds"), target: nil, action: nil)
+    let adminBotFileWatcherTable = NSTableView()
+    let adminBotFileWatcherAddButton = NSButton(title: L("Add Watcher"), target: nil, action: nil)
+    let adminBotFileWatcherDeleteButton = NSButton(title: L("Remove Watcher"), target: nil, action: nil)
+    let adminBotFileWatcherSaveButton = NSButton(title: L("Save Watchers"), target: nil, action: nil)
     let adminBotLoadingIndicator = NSProgressIndicator()
     var remoteBotStatus: LegacyBotAdminStatus?
     var remoteBotLoading = false
@@ -891,6 +899,9 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
     var remoteBotRSSTestInProgress = false
     var remoteBotRSSFeedsDirty = false
     var remoteBotRSSFeedDraft: [LegacyBotRSSFeed] = []
+    var remoteBotFileWatcherMutationInProgress = false
+    var remoteBotFileWatchersDirty = false
+    var remoteBotFileWatcherDraft: [LegacyBotFileWatcher] = []
     var remoteBotRefreshGeneration: UInt64 = 0
     var remoteAccountSummaries: [LegacyCompactAccountSummary] = []
     var remoteAccountGroups: [ServerAccountGroup] = []
@@ -1919,6 +1930,33 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         channelAttachmentStrip.onRemoveImage = { [weak self] id in self?.deletePendingMedia(id) }
         channelChatTextView.mediaDeleteHandler = { [weak self] id in self?.confirmDeletePostedMedia(id) }
         channelChatTextView.mediaOpenHandler = { [weak self] id in self?.showMediaPreview(id) }
+        channelChatTextView.appLinkHandler = { [weak self] link in
+            guard let self, let url = link as? URL, let scheme = url.scheme?.lowercased() else { return false }
+            if scheme == "carracho-edit" {
+                guard let host = url.host, let id = UUID(uuidString: host) else { return false }
+                editChannelMessage(id)
+                return true
+            }
+            if scheme == "carracho-file" {
+                guard url.host == nil || url.host?.isEmpty == true else { return false }
+                let components = url.path.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
+                guard !components.contains(where: { $0 == "." || $0 == ".." || $0.contains("\\") || $0.utf8.contains(0) }) else { return false }
+                do {
+                    var wirePath = Data()
+                    for component in components {
+                        let name = try CarrachoTextWire.encode(component, maximumBytes: 255)
+                        wirePath = try LegacyPath.child(parent: wirePath, name: name)
+                    }
+                    selectWorkspace(.files)
+                    navigate(to: wirePath)
+                    return true
+                } catch {
+                    appendLine("\n" + LF("Could not open linked folder: %@", Self.displayMessage(for: error)))
+                    return true
+                }
+            }
+            return false
+        }
 
         channelComposerPlaceholderLabel.font = .systemFont(ofSize: 13)
         channelComposerPlaceholderLabel.textColor = CarrachoTheme.tertiaryText
@@ -3533,7 +3571,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
             conferencesSidebarHeader, title: "Conferences",
             collapsed: conferencesSidebarContent?.isHidden ?? false
         )
-        for table in [fileTable, transferTable, trackerBrowserTable, privateMessageConversationTable, userTable, channelTable, channelMemberTable, newsTable, newsArticleTable, adminAccountTable, adminNewsgroupTable, adminTrackerTable, adminBotCommandTable, adminBotRSSTable] {
+        for table in [fileTable, transferTable, trackerBrowserTable, privateMessageConversationTable, userTable, channelTable, channelMemberTable, newsTable, newsArticleTable, adminAccountTable, adminNewsgroupTable, adminTrackerTable, adminBotCommandTable, adminBotRSSTable, adminBotFileWatcherTable] {
             table.backgroundColor = CarrachoTheme.tableBackground
             table.gridColor = NSColor.separatorColor.withAlphaComponent(0.35)
         }
@@ -3542,7 +3580,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         userTable.backgroundColor = .clear
         channelMemberTable.backgroundColor = .clear
         for table in [fileTable, transferTable, newsTable, newsArticleTable, privateMessageConversationTable,
-                      adminAccountTable, adminNewsgroupTable, adminBotCommandTable, adminBotRSSTable] {
+                      adminAccountTable, adminNewsgroupTable, adminBotCommandTable, adminBotRSSTable, adminBotFileWatcherTable] {
             table.backgroundColor = CarrachoTheme.conferenceTranscriptBackground
             table.enclosingScrollView?.backgroundColor = CarrachoTheme.conferenceTranscriptBackground
             table.enclosingScrollView?.drawsBackground = true
@@ -6663,6 +6701,12 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
             updateUserActionButtons()
         case let .offlineMessagesAvailable(count):
             presentOfflineMessageNotice(count: count)
+        case let .messageEdited(edit):
+            if edit.kind == LegacyMessageEdit.channel {
+                applyChannelMessageEdit(edit)
+            } else if edit.kind == LegacyMessageEdit.privateMessage {
+                applyPrivateMessageEdit(edit)
+            }
         case let .privateMessage(message):
             let sender = liveUsers[message.senderUserID].map { Self.macRomanString($0.nickname) }
                 ?? L("Unknown User")
@@ -6671,7 +6715,9 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
                             notificationTitle: LF("New message from %@", sender),
                             notificationBody: clientNotificationSnippet(privateText, fallback: L("New private message")))
             appendLine("\n[" + L("Private") + "] <\(sender)> \(privateText)")
-            appendPrivateMessage(userID: message.senderUserID, message: message.message, outgoing: false)
+            appendPrivateMessage(userID: message.senderUserID, message: message.message,
+                                 outgoing: false, timestamp: message.sentAt ?? Date(),
+                                 id: message.messageID ?? UUID())
         case let .userUpdated(userID, nickname, picture, statusMessage):
             if var user = liveUsers[userID] {
                 user.nickname = nickname
@@ -6939,6 +6985,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         if tableView === adminTrackerTable { return displayedTrackers.count }
         if tableView === adminBotCommandTable { return remoteBotCommandRuleDraft.count }
         if tableView === adminBotRSSTable { return remoteBotRSSFeedDraft.count }
+        if tableView === adminBotFileWatcherTable { return remoteBotFileWatcherDraft.count }
         return 0
     }
 
@@ -6949,6 +6996,9 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         }
         if tableView === adminBotRSSTable {
             return botRSSFeedCell(identifier: identifier, row: row)
+        }
+        if tableView === adminBotFileWatcherTable {
+            return botFileWatcherCell(identifier: identifier, row: row)
         }
         if tableView === privateMessageConversationTable, identifier == "conversation", row < displayedMessageCenterRows.count {
             let content: NSView
@@ -7257,12 +7307,12 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         if tableView === channelTable { return RoomDiscoveryTableRowView() }
         if tableView === fileTable || tableView === transferTable || tableView === newsArticleTable
             || tableView === adminAccountTable || tableView === adminNewsgroupTable
-            || tableView === adminBotCommandTable || tableView === adminBotRSSTable {
+            || tableView === adminBotCommandTable || tableView === adminBotRSSTable || tableView === adminBotFileWatcherTable {
             let rowView = CarrachoStripedTableRowView()
             rowView.alternate = row % 2 != 0
             if tableView === fileTable || tableView === transferTable || tableView === newsArticleTable
                 || tableView === adminAccountTable || tableView === adminNewsgroupTable
-                || tableView === adminBotCommandTable || tableView === adminBotRSSTable {
+                || tableView === adminBotCommandTable || tableView === adminBotRSSTable || tableView === adminBotFileWatcherTable {
                 rowView.baseBackgroundColor = CarrachoTheme.conferenceTranscriptBackground
                 rowView.alternateBackgroundColor = CarrachoTheme.conferenceTranscriptAlternateBackground
             }
@@ -7314,6 +7364,10 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         }
         if table === adminBotRSSTable {
             updateBotRSSButtons()
+            return
+        }
+        if table === adminBotFileWatcherTable {
+            updateBotFileWatcherButtons()
             return
         }
         if table === fileTable {

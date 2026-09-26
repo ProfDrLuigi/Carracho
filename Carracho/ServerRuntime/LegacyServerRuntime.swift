@@ -175,6 +175,27 @@ final class LegacyServerRuntime {
     /// collections as a network session, but has no socket and cannot access files or admin APIs.
     private var localBotSession: LegacyServerSession?
     private var channels: [UInt32: RuntimeChannel] = [:]
+    private struct EditableMessage {
+        let senderID: UInt32
+        let kind: UInt8
+        let scope: UInt32
+        let createdAt: Date
+        let sentUptime: TimeInterval
+    }
+    /// Only recent text messages are retained. Edits require the original live sender.
+    private var editableMessages: [UUID: EditableMessage] = [:]
+
+    private func registerEditableMessage(id: UUID, senderID: UInt32, kind: UInt8, scope: UInt32, createdAt: Date) -> Bool {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        let uptime = ProcessInfo.processInfo.systemUptime
+        editableMessages = editableMessages.filter {
+            uptime - $0.value.sentUptime <= LegacyMessageEdit.maximumAge
+        }
+        guard editableMessages[id] == nil else { return false }
+        editableMessages[id] = EditableMessage(senderID: senderID, kind: kind, scope: scope, createdAt: createdAt, sentUptime: uptime)
+        return true
+    }
     private var nextChannelID: UInt32 = 2
     private var nextUserID: UInt32 = 0x1000
     private var activeFileTransfers = 0
@@ -212,6 +233,15 @@ final class LegacyServerRuntime {
         databaseURL: fileMetadataDatabaseURL.deletingLastPathComponent().appendingPathComponent("bot-rss.db"),
         canPublish: { [weak self] in self?.isLocalBotConnected == true },
         articleHandler: { [weak self] feed, article in self?.publishLocalBotRSSArticle(feed: feed, article: article) ?? false },
+        logHandler: { [weak self] message in self?.log(message) }
+    )
+    private lazy var botFileWatcherService = LegacyBotFileWatcherService(
+        configURL: localBotConfigurationURL,
+        filesRootURL: storageRoot,
+        canPublish: { [weak self] in self?.isLocalBotConnected == true },
+        announcementHandler: { [weak self] announcement in
+            self?.publishLocalBotFileWatcherAnnouncement(announcement) ?? false
+        },
         logHandler: { [weak self] message in self?.log(message) }
     )
 
@@ -572,10 +602,12 @@ final class LegacyServerRuntime {
         refreshSearchIndexRebuildSchedule()
         scheduleAutomaticSleepMonitor()
         botRSSService.start()
+        botFileWatcherService.start()
         return pair.controlPort
     }
 
     func stop() {
+        botFileWatcherService.stop()
         botRSSService.stop()
         disconnectLocalBot()
         let clients: [LegacyServerSession]
@@ -871,6 +903,22 @@ final class LegacyServerRuntime {
                 return (200, httpAdminAccountsJSON())
             case ("GET", "/api/v1/conferences"):
                 return (200, httpAdminConferencesJSON())
+            case ("GET", "/api/v1/bot/file-watchers"):
+                do { return (200, try httpAdminBotFileWatchersJSON()) }
+                catch {
+                    return (500, httpAdminError(code: "bot_file_watchers_failed", message: error.localizedDescription))
+                }
+            case ("PUT", "/api/v1/bot/file-watchers"):
+                guard let object = body as? [String: Any] else {
+                    return (400, httpAdminError(code: "invalid_bot_file_watchers",
+                                                message: "File Watcher payload must be a JSON object"))
+                }
+                do {
+                    try httpAdminSetBotFileWatchers(object)
+                    return (200, try httpAdminBotFileWatchersJSON())
+                } catch {
+                    return (400, httpAdminError(code: "invalid_bot_file_watchers", message: error.localizedDescription))
+                }
             case ("GET", "/api/v1/settings"):
                 return (200, httpAdminSettingsJSON())
             case ("GET", "/api/v1/search-index/status"):
@@ -1212,6 +1260,60 @@ final class LegacyServerRuntime {
         return result.sorted {
             (($0["id"] as? NSNumber)?.uint32Value ?? 0) < (($1["id"] as? NSNumber)?.uint32Value ?? 0)
         }
+    }
+
+    private func httpAdminBotFileWatchersJSON() throws -> [String: Any] {
+        let watchers = localBotFileWatchers()
+        return ["watchers": watchers.map { watcher in
+            [
+                "id": watcher.id.uuidString.lowercased(),
+                "enabled": watcher.enabled,
+                "path": watcher.path,
+                "channelID": NSNumber(value: watcher.channelID),
+                "messageTemplate": watcher.messageTemplate,
+            ] as [String: Any]
+        }]
+    }
+
+    private func httpAdminSetBotFileWatchers(_ object: [String: Any]) throws {
+        guard let rawWatchers = object["watchers"] as? [[String: Any]],
+              rawWatchers.count <= LegacyBotFileWatcher.maximumCount else {
+            throw ServerStateError.invalidValue("watchers must be an array with at most 32 entries.")
+        }
+
+        stateLock.lock()
+        let conferenceIDs = Set(channels.keys)
+        stateLock.unlock()
+
+        var watchers: [LegacyBotFileWatcher] = []
+        watchers.reserveCapacity(rawWatchers.count)
+        for raw in rawWatchers {
+            let id: UUID
+            if let rawID = raw["id"] as? String, let parsed = UUID(uuidString: rawID) {
+                id = parsed
+            } else if raw["id"] == nil {
+                id = UUID()
+            } else {
+                throw ServerStateError.invalidValue("Each Bot File Watcher id must be a UUID.")
+            }
+            guard let enabled = raw["enabled"] as? Bool,
+                  let path = raw["path"] as? String,
+                  let messageTemplate = raw["messageTemplate"] as? String,
+                  let channelNumber = raw["channelID"] as? NSNumber,
+                  CFGetTypeID(channelNumber) != CFBooleanGetTypeID(),
+                  !CFNumberIsFloatType(channelNumber),
+                  channelNumber.int64Value > 0, channelNumber.int64Value <= Int64(UInt32.max) else {
+                throw ServerStateError.invalidValue("Each Bot File Watcher needs enabled, path, channelID and messageTemplate.")
+            }
+            let channelID = UInt32(channelNumber.uint32Value)
+            guard conferenceIDs.contains(channelID) else {
+                throw ServerStateError.invalidValue("Bot File Watcher Conference \(channelID) does not exist.")
+            }
+            watchers.append(LegacyBotFileWatcher(id: id, enabled: enabled, path: path,
+                                                 channelID: channelID, messageTemplate: messageTemplate))
+        }
+        try setLocalBotFileWatchers(watchers)
+        log("Bot File Watcher configuration updated through HTTP administration API")
     }
 
     private func httpAdminSettingsJSON() -> [String: Any] {
@@ -1815,6 +1917,7 @@ final class LegacyServerRuntime {
             LegacyTLV(type: LegacyFilesRootCapability.loginFieldType, value: Data(filesRootName.utf8)),
         ]
         if modernSalt != nil {
+            fields.append(LegacyTLV(type: LegacyMessageEdit.capability, value: Data([1])))
             fields.append(LegacyTLV(type: LegacyUserTransportCapability.loginFieldType,
                                     value: LegacyUserTransportCapability.encodeLegacyUserIDs(registration.legacyUserIDs)))
         }
@@ -1898,6 +2001,8 @@ final class LegacyServerRuntime {
             try handleBanUser(packet: packet, session: session)
         case LegacyCommand.privateMessage:
             try handlePrivateMessage(packet: packet, session: session)
+        case LegacyCommand.messageEdit:
+            try handleMessageEdit(packet: packet, session: session)
         case LegacyCommand.offlineMessageSend:
             try handleOfflineMessageSend(packet: packet, session: session)
         case LegacyCommand.offlineMessageFetch:
@@ -2004,6 +2109,8 @@ final class LegacyServerRuntime {
             try handleBotSetRSSFeeds(packet: packet, session: session)
         case LegacyCommand.botTestRSSFeed:
             try handleBotTestRSSFeed(packet: packet, session: session)
+        case LegacyCommand.botSetFileWatchers:
+            try handleBotSetFileWatchers(packet: packet, session: session)
 
         case LegacyCommand.requestServerSettings:
             try handleServerSettingsRequest(packet: packet, session: session)
@@ -2071,6 +2178,7 @@ final class LegacyServerRuntime {
              LegacyCommand.privateMessage, LegacyCommand.offlineMessageSend,
              LegacyCommand.extendedOwnUserInfo, LegacyCommand.userUpdate,
              LegacyCommand.channelJoin, LegacyCommand.channelLeave, LegacyCommand.channelChat,
+             LegacyCommand.messageEdit,
              LegacyCommand.channelSettings, LegacyCommand.channelUserMode, LegacyCommand.channelInvite,
              LegacyCommand.channelDeclineInvitation, LegacyCommand.channelDelete, LegacyCommand.forumArticleDelete,
              LegacyCommand.articleRead, LegacyCommand.forumThreadEntries,
@@ -2253,11 +2361,26 @@ final class LegacyServerRuntime {
             } else {
                 wireMessage = message
             }
+            let editableID = !session.isLegacyTransport && !target.isLegacyTransport &&
+                mediaReferences.isEmpty && extra.isEmpty
+                ? LegacyMessageEdit.parseIdentifier(packet.firstField(type: LegacyMessageEdit.messageID)?.value)
+                : nil
+            let sentAt = Date()
+            if let editableID, !registerEditableMessage(id: editableID, senderID: senderID,
+                                                        kind: LegacyMessageEdit.privateMessage,
+                                                        scope: userID, createdAt: sentAt) {
+                throw LegacyServerRuntimeError.protocolFailure("duplicate private-message identifier")
+            }
             var fields = [
                 LegacyTLV(type: 1, value: LegacyWire.uint32BE(senderID)),
                 LegacyTLV(type: 2, value: wireMessage),
             ]
             if !extra.isEmpty { fields.append(LegacyTLV(type: 3, value: extra)) }
+            if let editableID {
+                fields.append(LegacyTLV(type: LegacyMessageEdit.messageID, value: LegacyMessageEdit.identifier(editableID)))
+                fields.append(LegacyTLV(type: LegacyMessageEdit.sentAt,
+                                        value: LegacyWire.uint64BE(UInt64(sentAt.timeIntervalSince1970))))
+            }
             let targetsLocalBot = target.isLocalOnly
             try target.sendAuthenticated(LegacyPacket(command: LegacyCommand.privateMessage,
                                                        transactionID: 0, fields: fields))
@@ -3513,6 +3636,71 @@ final class LegacyServerRuntime {
         try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
     }
 
+    private func localBotFileWatchers() -> [LegacyBotFileWatcher] {
+        guard let data = try? Data(contentsOf: localBotConfigurationURL),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let rows = object["fileWatchers"] as? [[String: Any]] else { return [] }
+        var watchers: [LegacyBotFileWatcher] = []
+        var ids = Set<UUID>()
+        for row in rows.prefix(LegacyBotFileWatcher.maximumCount) {
+            guard let idText = row["id"] as? String, let id = UUID(uuidString: idText),
+                  let enabled = row["enabled"] as? Bool,
+                  let path = row["path"] as? String,
+                  let channel = row["channelID"] as? NSNumber,
+                  let message = row["messageTemplate"] as? String,
+                  channel.uint64Value > 0, channel.uint64Value <= UInt64(UInt32.max),
+                  let watcher = try? LegacyBotFileWatcher(id: id, enabled: enabled, path: path,
+                                                          channelID: channel.uint32Value,
+                                                          messageTemplate: message)
+                    .validated(filesRootURL: storageRoot, requireDirectory: false),
+                  ids.insert(watcher.id).inserted else { continue }
+            watchers.append(watcher)
+        }
+        return watchers
+    }
+
+    private func setLocalBotFileWatchers(_ watchers: [LegacyBotFileWatcher]) throws {
+        guard watchers.count <= LegacyBotFileWatcher.maximumCount else {
+            throw ServerStateError.invalidValue("Too many Bot File Watchers.")
+        }
+        stateLock.lock()
+        let conferenceIDs = Set(channels.keys)
+        stateLock.unlock()
+        var ids = Set<UUID>()
+        var paths = Set<String>()
+        let validated = try watchers.map { watcher -> LegacyBotFileWatcher in
+            guard ids.insert(watcher.id).inserted else {
+                throw ServerStateError.invalidValue("Bot File Watcher IDs must be unique.")
+            }
+            let value = try watcher.validated(filesRootURL: storageRoot, requireDirectory: watcher.enabled)
+            guard conferenceIDs.contains(value.channelID) else {
+                throw ServerStateError.invalidValue("Bot File Watcher Conference \(value.channelID) does not exist.")
+            }
+            guard paths.insert(value.path.lowercased()).inserted else {
+                throw ServerStateError.invalidValue("Bot File Watcher paths must be unique.")
+            }
+            return value
+        }
+        let url = localBotConfigurationURL
+        var object: [String: Any] = [:]
+        if let data = try? Data(contentsOf: url),
+           let existing = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            object = existing
+        }
+        object["fileWatchers"] = validated.map { [
+            "id": $0.id.uuidString.lowercased(),
+            "enabled": $0.enabled,
+            "path": $0.path,
+            "channelID": $0.channelID,
+            "messageTemplate": $0.messageTemplate,
+        ] as [String: Any] }
+        let data = try JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys])
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try data.write(to: url, options: .atomic)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        botFileWatcherService.configurationDidChange()
+    }
+
     private func botCommandText(from wire: Data, addressed: Bool) -> String? {
         let raw = CarrachoTextWire.string(from: wire).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !raw.isEmpty else { return nil }
@@ -3622,6 +3810,46 @@ final class LegacyServerRuntime {
         return false
     }
 
+    private static let botFileLinkAllowedCharacters = CharacterSet.alphanumerics
+        .union(CharacterSet(charactersIn: "-._~"))
+
+    private static func botFileLink(for relativePath: String) -> String? {
+        if relativePath == "." { return "carracho-file:///" }
+        let components = relativePath.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
+        guard !components.isEmpty,
+              !components.contains(where: { $0.isEmpty || $0 == "." || $0 == ".." }) else { return nil }
+        let encoded = components.compactMap {
+            $0.addingPercentEncoding(withAllowedCharacters: botFileLinkAllowedCharacters)
+        }
+        guard encoded.count == components.count else { return nil }
+        return "carracho-file:///" + encoded.joined(separator: "/")
+    }
+
+    private func publishLocalBotFileWatcherAnnouncement(_ announcement: LegacyBotFileWatcherAnnouncement) -> Bool {
+        guard isLocalBotConnected,
+              let href = Self.botFileLink(for: announcement.folderPath) else { return false }
+
+        let template = announcement.watcher.messageTemplate
+        guard template.contains("{folder}") || template.contains("{file}") else { return false }
+        let folderLink = "<a href=\"\(Self.escapeBotRSSHTMLAttribute(href))\">" +
+            Self.escapeBotRSSHTML(announcement.folderName) + "</a>"
+        let body = Self.escapeBotRSSHTML(template)
+            .replacingOccurrences(of: "{folder}", with: folderLink)
+            .replacingOccurrences(of: "{file}", with: Self.escapeBotRSSHTML(announcement.fileName))
+        guard (try? CarrachoTextWire.encode(body, maximumBytes: 0x800)) != nil else {
+            log("Bot File Watcher message for \(announcement.folderPath) exceeds the conference message limit")
+            return false
+        }
+        do {
+            try postLocalBotMessage(body, channelID: announcement.watcher.channelID,
+                                    source: "file-watcher:\(announcement.watcher.path)")
+            return true
+        } catch {
+            log("Bot File Watcher could not post \(announcement.folderPath): \(error.localizedDescription)")
+            return false
+        }
+    }
+
     private static func escapeBotRSSHTML(_ value: String) -> String {
         value.replacingOccurrences(of: "&", with: "&amp;")
             .replacingOccurrences(of: "<", with: "&lt;")
@@ -3647,6 +3875,7 @@ final class LegacyServerRuntime {
         let greeting = localBotGreetingConfiguration()
         let commandRules = localBotCommandRules()
         let rssFeeds = botRSSService.loadFeeds()
+        let fileWatchers = localBotFileWatchers()
         var fields = [
             LegacyTLV(type: LegacyBotAdminField.desiredEnabled, value: Data([localBotDesiredEnabled() ? 1 : 0])),
             LegacyTLV(type: LegacyBotAdminField.connected, value: Data([isLocalBotConnected ? 1 : 0])),
@@ -3656,6 +3885,7 @@ final class LegacyServerRuntime {
             LegacyTLV(type: LegacyBotAdminField.greetingTemplate, value: Data(greeting.template.utf8)),
             LegacyTLV(type: LegacyBotAdminField.commandRules, value: try LegacyBotCommandRule.encodeList(commandRules)),
             LegacyTLV(type: LegacyBotAdminField.rssFeeds, value: try LegacyBotRSSFeed.encodeList(rssFeeds)),
+            LegacyTLV(type: LegacyBotAdminField.fileWatchers, value: try LegacyBotFileWatcher.encodeList(fileWatchers)),
         ]
         if let error = localBotLastError() {
             fields.append(LegacyTLV(type: LegacyBotAdminField.lastError, value: Data(error.utf8)))
@@ -3729,6 +3959,23 @@ final class LegacyServerRuntime {
             log("Remote Bot RSS feed configuration updated: \(feeds.count) feed(s)")
         } catch {
             log("Remote Bot RSS feed update failed: \(error.localizedDescription)")
+            try session.sendAuthenticated(Self.errorPacket(transactionID: packet.transactionID, code: 1))
+        }
+    }
+
+    private func handleBotSetFileWatchers(packet: LegacyPacket, session: LegacyServerSession) throws {
+        guard !session.isLegacyTransport, has(.manageAccounts, session: session),
+              let field = packet.firstField(type: LegacyBotAdminField.fileWatchers) else {
+            try session.sendAuthenticated(Self.errorPacket(transactionID: packet.transactionID, code: 1)); return
+        }
+        do {
+            let watchers = try LegacyBotFileWatcher.decodeList(field.value)
+            try setLocalBotFileWatchers(watchers)
+            try session.sendAuthenticated(LegacyPacket(command: LegacyCommand.taskComplete,
+                                                        transactionID: packet.transactionID, fields: []))
+            log("Remote Bot File Watcher configuration updated: \(watchers.count) watcher(s)")
+        } catch {
+            log("Remote Bot File Watcher update failed: \(error.localizedDescription)")
             try session.sendAuthenticated(Self.errorPacket(transactionID: packet.transactionID, code: 1))
         }
     }
@@ -4864,6 +5111,19 @@ final class LegacyServerRuntime {
             log("Channel media reference rejected for user \(userID): \(error.localizedDescription)")
             return
         }
+        let editableID = !session.isLegacyTransport &&
+            LegacyMediaReference.references(inWire: message).isEmpty
+            ? LegacyMessageEdit.parseIdentifier(packet.firstField(type: LegacyMessageEdit.messageID)?.value)
+            : nil
+        let sentAt = Date()
+        if let editableID, !registerEditableMessage(id: editableID, senderID: userID,
+                                                    kind: LegacyMessageEdit.channel,
+                                                    scope: id, createdAt: sentAt) {
+            if packet.transactionID != 0 {
+                try session.sendAuthenticated(Self.errorPacket(transactionID: packet.transactionID, code: 1))
+            }
+            return
+        }
         for recipient in recipients {
             let wireMessage: Data
             if recipient.isLegacyTransport, CarrachoTextWire.isTaggedUTF8(message) {
@@ -4873,16 +5133,78 @@ final class LegacyServerRuntime {
             } else {
                 wireMessage = message
             }
-            let broadcast = LegacyPacket(command: LegacyCommand.channelChat, transactionID: 0, fields: [
+            var fields = [
                 LegacyTLV(type: LegacyChannelField.channelID, value: LegacyWire.uint32BE(id)),
                 LegacyTLV(type: LegacyChannelField.userID, value: LegacyWire.uint32BE(userID)),
                 LegacyTLV(type: LegacyChannelField.message, value: wireMessage),
                 LegacyTLV(type: LegacyChannelField.chatAttribute, value: Data([attribute])),
-            ])
-            try? recipient.sendAuthenticated(broadcast)
+            ]
+            if !recipient.isLegacyTransport, let editableID {
+                fields.append(LegacyTLV(type: LegacyMessageEdit.messageID, value: LegacyMessageEdit.identifier(editableID)))
+                fields.append(LegacyTLV(type: LegacyMessageEdit.sentAt,
+                                        value: LegacyWire.uint64BE(UInt64(sentAt.timeIntervalSince1970))))
+            }
+            try? recipient.sendAuthenticated(LegacyPacket(command: LegacyCommand.channelChat,
+                                                         transactionID: 0, fields: fields))
         }
+        try sendTaskCompleteIfRequested(packet, to: session)
         recordMessage()
         respondToLocalBotChannelCommandIfNeeded(message, from: session, channelID: id)
+    }
+
+    private func handleMessageEdit(packet: LegacyPacket, session: LegacyServerSession) throws {
+        func reject() throws {
+            if packet.transactionID != 0 {
+                try session.sendAuthenticated(Self.errorPacket(transactionID: packet.transactionID, code: 1))
+            }
+        }
+        guard !session.isLegacyTransport, let senderID = session.userID,
+              let id = LegacyMessageEdit.parseIdentifier(packet.firstField(type: 1)?.value),
+              let body = packet.firstField(type: 2)?.value,
+              !body.isEmpty, body.count <= 0x8000,
+              CarrachoTextWire.validatedString(from: body) != nil,
+              LegacyMediaReference.references(inWire: body).isEmpty,
+              LegacyYouTubeReference.hasOnlyValidTokens(inWire: body,
+                  maximum: LegacyMediaTransfer.maximumYouTubeLinksPerChatMessage) else {
+            try reject(); return
+        }
+
+        stateLock.lock()
+        let record = editableMessages[id]
+        let uptime = ProcessInfo.processInfo.systemUptime
+        let valid = record != nil && record!.senderID == senderID &&
+            uptime >= record!.sentUptime &&
+            uptime - record!.sentUptime <= LegacyMessageEdit.maximumAge &&
+            (record!.kind != LegacyMessageEdit.channel || body.count <= 0x800)
+        var recipients: [(LegacyServerSession, UInt32)] = []
+        if valid, let record {
+            if record.kind == LegacyMessageEdit.channel,
+               let room = channels[record.scope], room.members[senderID] != nil {
+                recipients = room.members.keys.compactMap { userID in
+                    guard let peer = authenticatedByUserID[userID], !peer.isLegacyTransport else { return nil }
+                    return (peer, record.scope)
+                }
+            } else if record.kind == LegacyMessageEdit.privateMessage,
+                      let target = authenticatedByUserID[record.scope],
+                      !target.isLegacyTransport {
+                recipients = [(target, senderID), (session, record.scope)]
+            }
+        }
+        stateLock.unlock()
+        guard valid, !recipients.isEmpty else { try reject(); return }
+
+        // The server, not the client's clock, decides when the edit window closes.
+        // The original packet is never resent to Classic peers, which cannot process edits.
+        for (recipient, scope) in recipients {
+            let event = LegacyPacket(command: LegacyCommand.messageEdited, transactionID: 0, fields: [
+                LegacyTLV(type: 1, value: LegacyMessageEdit.identifier(id)),
+                LegacyTLV(type: 2, value: Data([record!.kind])),
+                LegacyTLV(type: 3, value: LegacyWire.uint32BE(scope)),
+                LegacyTLV(type: 4, value: body),
+            ])
+            try? recipient.sendAuthenticated(event)
+        }
+        try sendTaskCompleteIfRequested(packet, to: session)
     }
 
     private func handleChannelSettings(packet: LegacyPacket, session: LegacyServerSession) throws {
@@ -5225,6 +5547,7 @@ final class LegacyServerRuntime {
         case LegacyCommand.botSetCommandRules: event = ("administration", "configure-bot-commands", "")
         case LegacyCommand.botSetRSSFeeds: event = ("administration", "configure-bot-rss", "")
         case LegacyCommand.botTestRSSFeed: event = ("administration", "test-bot-rss", "")
+        case LegacyCommand.botSetFileWatchers: event = ("administration", "configure-bot-file-watchers", "")
         case LegacyCommand.rebuildSearchIndex: event = ("administration", "rebuild-search-index", "")
         case LegacyCommand.changeOwnPassword: event = ("account", "change-password", "")
         default: break

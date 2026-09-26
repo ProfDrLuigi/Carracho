@@ -299,7 +299,7 @@ enum CarrachoHTMLText {
     private static func isAllowedLink(_ raw: String) -> Bool {
         guard let components = URLComponents(string: raw),
               let scheme = components.scheme?.lowercased() else { return false }
-        return scheme == "http" || scheme == "https" || scheme == "mailto"
+        return scheme == "http" || scheme == "https" || scheme == "mailto" || scheme == "carracho-file"
     }
 
     private static func escapeAttribute(_ value: String) -> String {

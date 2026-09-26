@@ -2006,6 +2006,22 @@
 "This server does not support Bot RSS feeds." = "This server does not support Bot RSS feeds.";
 "RSS test article posted to Public." = "RSS test article posted to Public.";
 
+// Bot File Watchers
+"File Watchers" = "File Watchers";
+"Add Watcher" = "Add Watcher";
+"Remove Watcher" = "Remove Watcher";
+"Save Watchers" = "Save Watchers";
+"Folder relative to Files root, or . for root" = "Folder relative to Files root, or . for root";
+"New {file} in {folder}" = "New {file} in {folder}";
+"Watch a folder below the server Files root, or use . to watch the Files root itself. When new files arrive, the Bot posts one coalesced message to the selected conference. Use {folder} for a clickable folder link and {file} for the detected file or folder name." = "Watch a folder below the server Files root, or use . to watch the Files root itself. When new files arrive, the Bot posts one coalesced message to the selected conference. Use {folder} for a clickable folder link and {file} for the detected file or folder name.";
+"Too many Bot File Watchers." = "Too many Bot File Watchers.";
+"File Watcher %@ has invalid settings. Paths are relative to Files and the message must contain {folder} or {file}." = "File Watcher %@ has invalid settings. Paths are relative to Files and the message must contain {folder} or {file}.";
+"Each File Watcher needs a unique identifier." = "Each File Watcher needs a unique identifier.";
+"The folder “%@” is watched more than once." = "The folder “%@” is watched more than once.";
+"Bot File Watchers saved." = "Bot File Watchers saved.";
+"Bot File Watchers require a modern Carracho server." = "Bot File Watchers require a modern Carracho server.";
+"This server does not support Bot File Watchers." = "This server does not support Bot File Watchers.";
+
 // Account transfer statistics
 "Download data" = "Download data";
 "Uploads" = "Uploads";
@@ -2043,3 +2059,10 @@
 "Images in private messages require a modern Carracho peer." = "Images in private messages require a modern Carracho peer.";
 "Open image preview" = "Open image preview";
 "Uploading image…" = "Uploading image…";
+
+"Edited" = "Edited";
+"Edit message" = "Edit message";
+"You can edit your own message for five minutes after sending it." = "You can edit your own message for five minutes after sending it.";
+"A message cannot be empty." = "A message cannot be empty.";
+"Image attachments cannot be changed when editing a message." = "Image attachments cannot be changed when editing a message.";
+"Message could not be edited: %@" = "Message could not be edited: %@";
