@@ -693,6 +693,16 @@ final class LegacyBotFileWatcherService {
         }
     }
 
+    private static func isTransferStagingName(_ name: String) -> Bool {
+        let lower = name.lowercased()
+        return lower.hasSuffix(".carracho") || lower.hasPrefix(".carracho.")
+    }
+
+    private static func containsTransferStagingComponent(_ relativePath: String) -> Bool {
+        relativePath.split(separator: "/", omittingEmptySubsequences: true)
+            .contains { isTransferStagingName(String($0)) }
+    }
+
     private func scanFiles(for watcher: LegacyBotFileWatcher) -> Set<String> {
         let root = watcher.directoryURL(filesRootURL: filesRootURL)
         guard let enumerator = FileManager.default.enumerator(
@@ -707,7 +717,12 @@ final class LegacyBotFileWatcherService {
                   values.isRegularFile == true || values.isDirectory == true else { continue }
             let full = url.standardizedFileURL.path
             guard full.hasPrefix(prefix) else { continue }
-            result.insert(String(full.dropFirst(prefix.count)))
+            let relative = String(full.dropFirst(prefix.count))
+            if Self.containsTransferStagingComponent(relative) {
+                if values.isDirectory == true { enumerator.skipDescendants() }
+                continue
+            }
+            result.insert(relative)
         }
         return result
     }
@@ -719,8 +734,18 @@ final class LegacyBotFileWatcherService {
             at: root, includingPropertiesForKeys: [.isDirectoryKey],
             options: [.skipsHiddenFiles], errorHandler: { _, _ in true }
         ) else { return result }
+        let rootPath = root.standardizedFileURL.path
+        let prefix = rootPath.hasSuffix("/") ? rootPath : rootPath + "/"
         for case let url as URL in enumerator {
-            if (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true { result.append(url) }
+            guard (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else { continue }
+            let full = url.standardizedFileURL.path
+            guard full.hasPrefix(prefix) else { continue }
+            let relative = String(full.dropFirst(prefix.count))
+            if Self.containsTransferStagingComponent(relative) {
+                enumerator.skipDescendants()
+                continue
+            }
+            result.append(url)
         }
         return result
     }

@@ -21,6 +21,7 @@
       "size" : "32x32"
     },
     {
+      "filename" : "AppIcon 1.png",
       "idiom" : "mac",
       "scale" : "1x",
       "size" : "128x128"
@@ -46,7 +47,7 @@
       "size" : "512x512"
     },
     {
-      "filename" : "ServerAppIcon512x512@2x.png",
+      "filename" : "AppIcon.png",
       "idiom" : "mac",
       "scale" : "2x",
       "size" : "512x512"

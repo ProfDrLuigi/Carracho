@@ -292,6 +292,32 @@ static int state_add_dir(watcher_state *state, const char *full, const char *rel
 
 static int is_hidden_component(const char *name) { return name && name[0] == '.' && strcmp(name, ".") && strcmp(name, ".."); }
 
+static int is_transfer_staging_name(const char *name) {
+    if (!name || !*name) return 0;
+    size_t n = strlen(name);
+    return (n >= 9 && !strcasecmp(name + n - 9, ".carracho")) ||
+           (n >= 10 && !strncasecmp(name, ".carracho.", 10));
+}
+
+static int relative_has_transfer_staging_component(const char *relative) {
+    if (!relative || !*relative) return 0;
+    const char *p = relative;
+    while (*p) {
+        const char *slash = strchr(p, '/');
+        size_t n = slash ? (size_t)(slash - p) : strlen(p);
+        if (n) {
+            char component[NAME_MAX + 1];
+            if (n > NAME_MAX) return 1;
+            memcpy(component, p, n);
+            component[n] = 0;
+            if (is_transfer_staging_name(component)) return 1;
+        }
+        if (!slash) break;
+        p = slash + 1;
+    }
+    return 0;
+}
+
 static int copy_name_component(char dst[NAME_MAX + 1], const char *src) {
     if (!dst || !src) return -1;
     size_t n = strlen(src);
@@ -303,7 +329,8 @@ static int copy_name_component(char dst[NAME_MAX + 1], const char *src) {
 static int state_add_tree(watcher_state *state, const char *full, const char *relative, int queue_existing);
 
 static void state_queue_relative(watcher_state *state, const char *relative_file, int is_directory) {
-    if (!state || !relative_file || !*relative_file || is_hidden_component(relative_file)) return;
+    if (!state || !relative_file || !*relative_file || is_hidden_component(relative_file) ||
+        relative_has_transfer_staging_component(relative_file)) return;
     const char *slash = strchr(relative_file, '/');
     const char *last_slash = strrchr(relative_file, '/');
     const char *file_name = last_slash ? last_slash + 1 : relative_file;
@@ -363,7 +390,8 @@ static int state_add_tree(watcher_state *state, const char *full, const char *re
     if (!dir) return -1;
     struct dirent *entry;
     while ((entry = readdir(dir)) != NULL) {
-        if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..") || is_hidden_component(entry->d_name)) continue;
+        if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..") ||
+            is_hidden_component(entry->d_name) || is_transfer_staging_name(entry->d_name)) continue;
         char child_full[PATH_MAX], child_relative[CR_BOT_FILE_WATCH_PATH_MAX + 1];
         if (path_join(child_full, sizeof(child_full), full, entry->d_name)) continue;
         if (relative && *relative) {
@@ -409,7 +437,8 @@ static void state_process_events(watcher_state *state) {
         for (size_t off = 0; off + sizeof(struct inotify_event) <= (size_t)n;) {
             struct inotify_event *ev = (struct inotify_event *)(buffer + off);
             const char *dir_relative = relative_for_wd(state, ev->wd);
-            if (dir_relative && ev->len && ev->name[0] && !is_hidden_component(ev->name)) {
+            if (dir_relative && ev->len && ev->name[0] &&
+                !is_hidden_component(ev->name) && !is_transfer_staging_name(ev->name)) {
                 char relative[CR_BOT_FILE_WATCH_PATH_MAX + 1], full[PATH_MAX];
                 if (*dir_relative) {
                     if (snprintf(relative, sizeof(relative), "%s/%s", dir_relative, ev->name) >= (int)sizeof(relative)) goto next;
@@ -418,7 +447,7 @@ static void state_process_events(watcher_state *state) {
                 if (ev->mask & IN_ISDIR) {
                     if (ev->mask & (IN_CREATE | IN_MOVED_TO)) {
                         state_queue_relative(state, relative, 1);
-                        (void)state_add_tree(state, full, relative, (ev->mask & IN_MOVED_TO) != 0);
+                        (void)state_add_tree(state, full, relative, 0);
                     }
                 } else if (ev->mask & (IN_CLOSE_WRITE | IN_MOVED_TO)) {
                     struct stat st;
