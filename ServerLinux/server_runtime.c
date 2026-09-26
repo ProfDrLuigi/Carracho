@@ -1961,7 +1961,7 @@ static int bot_encode_wire_text(const uint8_t*utf8,size_t utf8_len,uint8_t*wire,
     return 0;
 }
 
-static int bot_post_channel_message(cr_server*s,uint32_t channel_id,const uint8_t*utf8,size_t utf8_len,const char*source){
+static int bot_post_channel_message(cr_server*s,uint32_t channel_id,const uint8_t*utf8,size_t utf8_len,const char*source,int account_holders_and_admins_only){
     if(!s||utf8_len>0x800) return -1;
 
     char text[0x801];
@@ -2021,6 +2021,8 @@ static int bot_post_channel_message(cr_server*s,uint32_t channel_id,const uint8_
     for(size_t i=0;i<c->member_count;i++){
         cr_session*x=find_session_locked(s,c->members[i].user_id);
         if(!x) continue;
+        if(account_holders_and_admins_only &&
+           x->mode!=CR_MODE_ACCOUNT && x->mode!=CR_MODE_ADMIN) continue;
 
         const uint8_t*out=wire;
         size_t out_len=wire_len;
@@ -2044,7 +2046,7 @@ static int bot_post_channel_message(cr_server*s,uint32_t channel_id,const uint8_
 }
 
 static int bot_post_message(cr_server*s,const uint8_t*utf8,size_t utf8_len,const char*source){
-    return bot_post_channel_message(s,1,utf8,utf8_len,source);
+    return bot_post_channel_message(s,1,utf8,utf8_len,source,0);
 }
 
 static int bot_post_private_message(cr_server*s,cr_session*target,const uint8_t*utf8,size_t utf8_len,const char*source){
@@ -2185,7 +2187,7 @@ static void bot_maybe_reply_channel(cr_session*sender,uint32_t channel_id,const 
     char response[0x801];
     size_t n=0;
     if(bot_match_command(sender->server,sender,wire,wire_len,1,response,sizeof(response),&n)==1){
-        int rc=bot_post_channel_message(sender->server,channel_id,(const uint8_t*)response,n,"command");
+        int rc=bot_post_channel_message(sender->server,channel_id,(const uint8_t*)response,n,"command",0);
         if(rc) log_msg("Local Bot command reply failed in channel %u (error %d)",channel_id,rc);
     }
 }
@@ -2375,7 +2377,7 @@ static int bot_publish_rss_article_to_server(cr_server*s,const cr_bot_rss_feed*f
     for(int attempt=0;attempt<10;attempt++){
         char escaped_summary[CR_BOT_RSS_SUMMARY_MAX*8+64];if(bot_rss_html_escape(summary,escaped_summary,sizeof(escaped_summary),0))return-1;
         char message[0x801];int n=snprintf(message,sizeof(message),"%s<b>%s</b>%s%s\n<a href=\"%s\">%s</a>",media_token,title,*escaped_summary?"\n":"",escaped_summary,link_attr,link_text);
-        if(n>0&&n<=0x800){int rc=bot_post_channel_message(s,feed->channel_id,(const uint8_t*)message,(size_t)n,"rss");if(!rc)log_msg("Bot RSS %s posted: %s",feed->name,article->title);return rc;}
+        if(n>0&&n<=0x800){int rc=bot_post_channel_message(s,feed->channel_id,(const uint8_t*)message,(size_t)n,"rss",0);if(!rc)log_msg("Bot RSS %s posted: %s",feed->name,article->title);return rc;}
         if(!*summary) break;
         if(strlen(summary)<=80) summary[0]=0;
         else bot_rss_shorten_utf8(summary);
@@ -2488,7 +2490,7 @@ static int bot_publish_file_watch(void*opaque,const cr_bot_file_watcher*watcher,
         replacements++;
     }
     if(!replacements||used>0x800)return-1;
-    int rc=bot_post_channel_message(s,watcher->channel_id,(const uint8_t*)message,used,"file-watcher");
+    int rc=bot_post_channel_message(s,watcher->channel_id,(const uint8_t*)message,used,"file-watcher",1);
     if(!rc)log_msg("Bot File Watcher %s posted: %s (%s)",watcher->path,folder_path,file_name);
     return rc;
 }

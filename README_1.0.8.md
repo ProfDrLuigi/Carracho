@@ -8,7 +8,7 @@ Both the Swift/macOS server and the native Linux server implement the new modern
 
 - Edit your own **Conference and Private Messages** for up to five minutes after sending.
 - Edited messages are marked in the client and Private Message edit state is preserved locally.
-- New **Bot File Watchers** can announce newly created files and folders in a selected Conference.
+- New **Bot File Watchers** can announce newly created files and folders in a selected Conference; announcements are delivered only to Account Holder and Administrator members.
 - File Watcher templates support **`{folder}`** and **`{file}`** placeholders.
 - Use **`.`** as the watched path to monitor the complete server Files root.
 - Bot folder links can be opened directly in the client's **Files** browser.
@@ -119,7 +119,7 @@ The feature is implemented in both:
 
 Carracho Server now supports persistent **Bot File Watchers**.
 
-A watcher monitors a configured directory below the normal Files root and can post an announcement to a selected Conference when new files or folders appear.
+A watcher monitors a configured directory below the normal Files root and can post an announcement to a selected Conference when new files or folders appear. These announcements are sent only to Account Holder and Administrator members of that Conference; Guest accounts do not receive them.
 
 Watcher configuration includes:
 

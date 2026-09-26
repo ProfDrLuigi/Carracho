@@ -328,7 +328,7 @@ Announcement templates support two placeholders:
 New {file} in {folder}
 ```
 
-The client understands the generated `carracho-file:///` links and opens the referenced location directly in the **Files** workspace. Filesystem event bursts are coalesced before posting, and repeated announcements for the same watcher/folder are rate-limited.
+The client understands the generated `carracho-file:///` links and opens the referenced location directly in the **Files** workspace. File Watcher announcements are delivered only to **Account Holder** and **Administrator** members of the selected Conference; Guest accounts do not receive these Bot messages. Filesystem event bursts are coalesced before posting, and repeated announcements for the same watcher/folder are rate-limited.
 
 The macOS server uses native filesystem event sources. The native Linux server implements the same feature with **inotify**.
 

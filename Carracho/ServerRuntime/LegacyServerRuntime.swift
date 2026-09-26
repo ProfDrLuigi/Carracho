@@ -424,7 +424,8 @@ final class LegacyServerRuntime {
 
     /// Sends one line as the local Bot into a conference. The Bot joins a non-Public room on first
     /// addressed use so its messages have normal conference membership semantics.
-    private func postLocalBotMessage(_ text: String, channelID: UInt32, source: String) throws {
+    private func postLocalBotMessage(_ text: String, channelID: UInt32, source: String,
+                                     accountHoldersAndAdministratorsOnly: Bool = false) throws {
         let normalized = text.replacingOccurrences(of: "\r\n", with: "\n")
             .replacingOccurrences(of: "\r", with: "\n")
         guard !normalized.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
@@ -454,6 +455,12 @@ final class LegacyServerRuntime {
             canSpeak = (channel.flags & Self.channelRestrictedChatFlag) == 0 ||
                 (botMode & (Self.channelOperatorMode | Self.channelSpeechMode)) != 0
             recipients = channel.members.keys.compactMap { authenticatedByUserID[$0] }
+            if accountHoldersAndAdministratorsOnly {
+                recipients = recipients.filter {
+                    guard let mode = $0.account?.mode else { return false }
+                    return mode == .accountHolder || mode == .administrator
+                }
+            }
         }
         stateLock.unlock()
 
@@ -3842,7 +3849,8 @@ final class LegacyServerRuntime {
         }
         do {
             try postLocalBotMessage(body, channelID: announcement.watcher.channelID,
-                                    source: "file-watcher:\(announcement.watcher.path)")
+                                    source: "file-watcher:\(announcement.watcher.path)",
+                                    accountHoldersAndAdministratorsOnly: true)
             return true
         } catch {
             log("Bot File Watcher could not post \(announcement.folderPath): \(error.localizedDescription)")
