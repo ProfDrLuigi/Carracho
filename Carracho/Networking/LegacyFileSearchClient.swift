@@ -111,7 +111,16 @@ final class LegacyFileSearchClient {
                                                                          size: size, timestamp: timestamp, path: path))
                                     guard results.count <= Self.maximumResults else { throw LegacyFileSearchClientError.tooManyResults }
                                     armInactivityTimeout()
-                                    readRecord(remaining - 1, then: then)
+                                    // NWConnection can satisfy reads from already-buffered bytes
+                                    // without unwinding our completion stack first. Large search
+                                    // result sets therefore used to recurse once per record until
+                                    // the worker thread hit its stack guard. Always schedule the
+                                    // next record onto the serial search queue so the current
+                                    // callback chain can return completely.
+                                    queue.async {
+                                        guard !finished else { return }
+                                        readRecord(remaining - 1, then: then)
+                                    }
                                 } catch { finish(.failure(error)) }
                             }
                         } catch { finish(.failure(error)) }
@@ -127,7 +136,15 @@ final class LegacyFileSearchClient {
                         throw LegacyFileSearchClientError.invalidResponse("missing signal byte")
                     }
                     armInactivityTimeout()
-                    if signal == 0 { readFrame(); return } // classic keepalive
+                    if signal == 0 {
+                        // Keepalives may also already be buffered. Yield before reading the
+                        // next frame for the same reason as the record loop above.
+                        queue.async {
+                            guard !finished else { return }
+                            readFrame()
+                        }
+                        return
+                    } // classic keepalive
                     guard signal == 1 else { throw LegacyFileSearchClientError.invalidResponse("unknown signal \(signal)") }
                     stream.readPayload(4) { countResult in
                         do {

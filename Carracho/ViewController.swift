@@ -1199,6 +1199,9 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
     var fileShouldResetScrollOnNextReload = false
     var pendingFileScrollRestoreY: CGFloat?
     var selectedFilePaths: Set<Data> = []
+    /// Search results in the exact order currently shown by the Files table. Sorting a large
+    /// result set from every cell callback made scrolling catastrophically expensive.
+    var sortedFileSearchResultSnapshot: [LegacyFileSearchResult]?
     /// Stable snapshot consumed by NSTableView while it asks for visible cells.
     /// Rebuilding/sorting the complete directory tree from every data-source callback makes
     /// scrolling large listings accidentally O(rows * visibleCells * log(rows)).
@@ -1220,6 +1223,19 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
     var filesIncompleteIconCache: NSImage?
     var filesSystemFileTypeIconCache: [String: NSImage] = [:]
     var filesSystemFileTypeIconMisses: Set<String> = []
+    var filesBundledFileTypeIconCache: [String: NSImage] = [:]
+    var filesBundledFileTypeIconMisses: Set<String> = []
+    var filesKindTitleCache: [String: String] = [:]
+    let filesSizeTextCache: NSCache<NSNumber, NSString> = {
+        let cache = NSCache<NSNumber, NSString>()
+        cache.countLimit = 4096
+        return cache
+    }()
+    let filesDateTextCache: NSCache<NSNumber, NSString> = {
+        let cache = NSCache<NSNumber, NSString>()
+        cache.countLimit = 4096
+        return cache
+    }()
 
     static let quickViewMaximumBytes: UInt64 = 2_000_000
     static let quickViewExtensions: Set<String> = ["txt", "jpg", "png", "pdf", "html", "gif", "sh"]
@@ -1520,6 +1536,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
             ("name", "Name", 360), ("size", "Size / Contents", 100), ("kind", "Type", 90), ("modified", "Modified", 120),
         ])
         fileTable.usesAlternatingRowBackgroundColors = false
+        fileTable.usesAutomaticRowHeights = false
         fileTable.gridStyleMask = []
         fileTable.intercellSpacing = NSSize(width: 0, height: 0)
         fileTable.allowsMultipleSelection = true
@@ -6299,7 +6316,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
     }
 
     var selectedFileSearchResult: LegacyFileSearchResult? {
-        guard let results = sortedFileSearchResults else { return nil }
+        guard let results = sortedFileSearchResultSnapshot else { return nil }
         let row = fileTable.selectedRow
         guard row >= 0, row < results.count else { return nil }
         return results[row]
@@ -7028,15 +7045,20 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
             cell.toolTip = tracker.name.isEmpty ? tracker.address : tracker.name
             return cell
         }
+        if tableView === fileTable, fileSearchResults != nil, row < visibleFileRows.count {
+            return fileSearchResultCell(identifier: identifier, item: visibleFileRows[row])
+        }
         let value: String
         if tableView === fileTable, row < visibleFileRows.count {
             let item = visibleFileRows[row]
             let entry = item.entry
             switch identifier {
-            case "kind": value = Self.fileKindTitle(entry)
+            case "kind": value = cachedFileKindTitle(entry)
             case "name":
-                if let results = sortedFileSearchResults, row < results.count { value = LegacyPath.displayName(results[row].path) }
-                else { value = Self.macRomanString(entry.name) }
+                // The actual name column returns fileNameCell(...) below. Do not touch the
+                // complete search-result array here: NSTableView calls this once per visible
+                // cell while scrolling.
+                value = Self.macRomanString(entry.name)
             case "size":
                 if entry.isFolder {
                     if fileSearchResults != nil {
@@ -7045,9 +7067,9 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
                         value = entry.size == 1 ? L("1 item") : LF("%@ items", String(entry.size))
                     }
                 } else {
-                    value = Self.fileByteCountFormatter.string(fromByteCount: Int64(entry.size))
+                    value = cachedFileSizeString(entry.size)
                 }
-            case "modified": value = entry.timestamp == 0 ? "—" : Self.macDateString(entry.timestamp)
+            case "modified": value = cachedFileDateString(entry.timestamp)
             case "flags": value = String(format: "%04x", entry.flags)
             default: value = ""
             }
@@ -7300,17 +7322,17 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         if tableView === fileTable || tableView === transferTable || tableView === newsArticleTable
             || tableView === adminAccountTable || tableView === adminNewsgroupTable
             || tableView === adminBotCommandTable || tableView === adminBotRSSTable || tableView === adminBotFileWatcherTable {
-            let rowView = CarrachoStripedTableRowView()
+            let identifier = NSUserInterfaceItemIdentifier("carracho.striped-row")
+            let rowView = (tableView.makeView(withIdentifier: identifier, owner: self)
+                as? CarrachoStripedTableRowView) ?? {
+                    let created = CarrachoStripedTableRowView()
+                    created.identifier = identifier
+                    return created
+                }()
             rowView.alternate = row % 2 != 0
-            if tableView === fileTable || tableView === transferTable || tableView === newsArticleTable
-                || tableView === adminAccountTable || tableView === adminNewsgroupTable
-                || tableView === adminBotCommandTable || tableView === adminBotRSSTable || tableView === adminBotFileWatcherTable {
-                rowView.baseBackgroundColor = CarrachoTheme.conferenceTranscriptBackground
-                rowView.alternateBackgroundColor = CarrachoTheme.conferenceTranscriptAlternateBackground
-            }
-            if tableView === fileTable {
-                rowView.rowTintColor = fileRowLabelTint(at: row)
-            }
+            rowView.baseBackgroundColor = CarrachoTheme.conferenceTranscriptBackground
+            rowView.alternateBackgroundColor = CarrachoTheme.conferenceTranscriptAlternateBackground
+            rowView.rowTintColor = tableView === fileTable ? fileRowLabelTint(at: row) : nil
             return rowView
         }
         if tableView === privateMessageConversationTable || tableView === newsTable || tableView === adminTrackerTable {
@@ -7520,12 +7542,15 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
     }
 
     func rebuildVisibleFileRowSnapshot() {
-        if let results = sortedFileSearchResults {
+        if fileSearchResults != nil {
+            let results = sortedFileSearchResults ?? []
+            sortedFileSearchResultSnapshot = results
             visibleFileRowSnapshot = results.map {
                 VisibleFileRow(entry: $0.directoryEntry, path: $0.path, depth: 0)
             }
             return
         }
+        sortedFileSearchResultSnapshot = nil
         guard let root = lastDirectory else {
             visibleFileRowSnapshot = []
             return

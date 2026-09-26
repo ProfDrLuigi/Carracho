@@ -2,6 +2,84 @@ import Cocoa
 import UniformTypeIdentifiers
 import QuickLookUI
 
+/// Lightweight reusable cells for large server-wide search result sets.
+///
+/// The normal Files browser needs a richer hierarchy (disclosure buttons, indentation,
+/// Dropbox badges, etc.). Search results do not. Building that hierarchy plus fresh Auto Layout
+/// constraints for every cell entering the viewport made fast scrolling allocation-heavy.
+final class CarrachoFileSearchTextCellView: NSTableCellView {
+    private let label = NSTextField(labelWithString: "")
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        label.lineBreakMode = .byTruncatingTail
+        label.maximumNumberOfLines = 1
+        label.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(label)
+        NSLayoutConstraint.activate([
+            label.leadingAnchor.constraint(equalTo: leadingAnchor),
+            label.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor),
+            label.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+        textField = label
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    func configure(text: String, fontSize: CGFloat) {
+        label.stringValue = text
+        label.font = .systemFont(ofSize: fontSize, weight: .regular)
+        label.toolTip = text
+    }
+}
+
+final class CarrachoFileSearchNameCellView: NSTableCellView {
+    private let icon = NSImageView()
+    private let label = NSTextField(labelWithString: "")
+    private var iconWidth: NSLayoutConstraint!
+    private var iconHeight: NSLayoutConstraint!
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+
+        icon.imageScaling = .scaleProportionallyUpOrDown
+        icon.translatesAutoresizingMaskIntoConstraints = false
+
+        label.lineBreakMode = .byTruncatingTail
+        label.maximumNumberOfLines = 1
+        label.translatesAutoresizingMaskIntoConstraints = false
+
+        addSubview(icon)
+        addSubview(label)
+
+        iconWidth = icon.widthAnchor.constraint(equalToConstant: 15)
+        iconHeight = icon.heightAnchor.constraint(equalToConstant: 15)
+        NSLayoutConstraint.activate([
+            icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
+            icon.centerYAnchor.constraint(equalTo: centerYAnchor),
+            iconWidth,
+            iconHeight,
+            label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 4),
+            label.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -4),
+            label.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+
+        imageView = icon
+        textField = label
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    func configure(text: String, image: NSImage?, fontSize: CGFloat, iconSize: CGFloat) {
+        label.stringValue = text
+        label.font = .systemFont(ofSize: fontSize, weight: .regular)
+        label.toolTip = text
+        icon.image = image
+        iconWidth.constant = iconSize
+        iconHeight.constant = iconSize
+    }
+}
+
 private extension LegacyFileLabel {
     static let finderDisplayOrder: [LegacyFileLabel] = [.none, .red, .orange, .yellow, .green, .blue, .purple, .gray]
 
@@ -1475,28 +1553,77 @@ extension ViewController {
                 return image
             }
         }
-        let parts = name.split(separator: ".", omittingEmptySubsequences: true)
-        guard parts.count > 1 else { return genericSystemDocumentImage() }
+        let fileExtension = (name as NSString).pathExtension.lowercased()
+        guard !fileExtension.isEmpty else { return genericSystemDocumentImage() }
 
-        // Most-specific suffix first. System/LaunchServices artwork always wins over Carracho
-        // assets, then Generic-<extension> assets are tried, then the plain macOS document icon.
-        let suffixes = (1..<parts.count).map { parts[$0...].joined(separator: ".").lowercased() }
-        for suffix in suffixes {
-            if let image = systemFileTypeImage(forExtension: suffix) { return image }
-        }
-        for suffix in suffixes {
-            let assetName = "Generic-\(suffix)"
-            // Resolve through the app bundle explicitly. This is important for images that live
-            // only in Assets.car (for example Generic-iso) and avoids NSImage's global named-image
-            // cache deciding that an unrelated system image with the same lookup path is enough.
+        // Only ask LaunchServices for the actual final extension. Treating every dotted suffix
+        // as a possible extension (for example "2025.2160p.web-dl.mkv") caused unique, expensive
+        // NSWorkspace lookups for thousands of search rows while scrolling.
+        if let image = systemFileTypeImage(forExtension: fileExtension) { return image }
+
+        if let cached = filesBundledFileTypeIconCache[fileExtension] { return cached }
+        if !filesBundledFileTypeIconMisses.contains(fileExtension) {
+            let assetName = "Generic-\(fileExtension)"
             let source = Bundle.main.image(forResource: NSImage.Name(assetName))
                 ?? NSImage(named: NSImage.Name(assetName))
             if let source, let image = source.copy() as? NSImage {
                 image.isTemplate = false
+                filesBundledFileTypeIconCache[fileExtension] = image
                 return image
             }
+            filesBundledFileTypeIconMisses.insert(fileExtension)
         }
         return genericSystemDocumentImage()
+    }
+
+    func fileSearchResultCell(identifier: String, item: VisibleFileRow) -> NSView? {
+        let entry = item.entry
+        let reuseIdentifier = NSUserInterfaceItemIdentifier("files.search." + identifier)
+
+        if identifier == "name" {
+            let cell = (fileTable.makeView(withIdentifier: reuseIdentifier, owner: self)
+                as? CarrachoFileSearchNameCellView) ?? {
+                    let created = CarrachoFileSearchNameCellView(frame: .zero)
+                    created.identifier = reuseIdentifier
+                    return created
+                }()
+
+            let image: NSImage?
+            if entry.isFolder {
+                image = nativeMacOSFolderImage()
+            } else if entry.isSymbolicLink {
+                image = symbolImage("link", fallback: NSImage.networkName)
+            } else {
+                image = fileTypeImage(for: entry)
+            }
+            let iconSize = 15 * (filesFontSize / 13)
+            cell.configure(text: Self.macRomanString(entry.name),
+                           image: image,
+                           fontSize: filesFontSize,
+                           iconSize: iconSize)
+            return cell
+        }
+
+        let text: String
+        switch identifier {
+        case "size":
+            text = entry.isFolder ? "—" : cachedFileSizeString(entry.size)
+        case "kind":
+            text = cachedFileKindTitle(entry)
+        case "modified":
+            text = cachedFileDateString(entry.timestamp)
+        default:
+            return nil
+        }
+
+        let cell = (fileTable.makeView(withIdentifier: reuseIdentifier, owner: self)
+            as? CarrachoFileSearchTextCellView) ?? {
+                let created = CarrachoFileSearchTextCellView(frame: .zero)
+                created.identifier = reuseIdentifier
+                return created
+            }()
+        cell.configure(text: text, fontSize: filesFontSize)
+        return cell
     }
 
     func fileNameCell(for item: VisibleFileRow, row: Int) -> NSView {
@@ -2918,6 +3045,36 @@ extension ViewController {
         }
 
         return LF("%@ File", fileExtension.uppercased())
+    }
+
+    func cachedFileSizeString(_ size: UInt32) -> String {
+        let key = NSNumber(value: size)
+        if let cached = filesSizeTextCache.object(forKey: key) { return cached as String }
+        let value = Self.fileByteCountFormatter.string(fromByteCount: Int64(size))
+        filesSizeTextCache.setObject(value as NSString, forKey: key)
+        return value
+    }
+
+    func cachedFileDateString(_ timestamp: UInt32) -> String {
+        guard timestamp != 0 else { return "—" }
+        let key = NSNumber(value: timestamp)
+        if let cached = filesDateTextCache.object(forKey: key) { return cached as String }
+        let value = Self.macDateString(timestamp)
+        filesDateTextCache.setObject(value as NSString, forKey: key)
+        return value
+    }
+
+    func cachedFileKindTitle(_ entry: LegacyDirectoryEntry) -> String {
+        if entry.isSymbolicLink || entry.isDropBox || entry.isUploadFolder || entry.isFolder {
+            return Self.fileKindTitle(entry)
+        }
+        let name = Self.macRomanString(entry.name)
+        let fileExtension = (name as NSString).pathExtension.lowercased()
+        let key = fileExtension.isEmpty ? "<none>" : fileExtension
+        if let cached = filesKindTitleCache[key] { return cached }
+        let title = Self.fileKindTitle(entry)
+        filesKindTitleCache[key] = title
+        return title
     }
 
 
