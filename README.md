@@ -18,6 +18,12 @@ The modern transport protects far more than login traffic: chat/control packets,
 
 See the collapsible **Security and modern encryption** section below for the protocol details.
 
+### Current release: 1.0.8
+
+Carracho 1.0.8 adds **five-minute message editing** for modern Conference and Private Messages and introduces configurable **Bot File Watchers** on both the macOS and native Linux servers. File Watchers can monitor individual folders or the complete Files root, publish into a selected Conference, and use `{folder}` and `{file}` placeholders in their announcements.
+
+The full release notes are available in [`README_1.0.8.md`](README_1.0.8.md).
+
 
 ## At a glance
 
@@ -88,6 +94,7 @@ Depending on the connected server and account permissions, the client can:
 - invite users and manage room/member modes;
 - show the room participant list alongside the conversation;
 - send normal messages, emoji and rich media;
+- edit your own modern text messages for up to five minutes after sending, with edited messages marked in the transcript;
 - attach images to modern Carracho conversations;
 - attach YouTube links with an inline preview/player and a separate link to the original YouTube page;
 - keep joined rooms available while switching to another part of the client.
@@ -115,6 +122,7 @@ It includes:
 - drag-and-drop integration;
 - Quick Look preview on macOS;
 - Finder integration for completed local downloads;
+- direct navigation from Bot File Watcher links into the referenced server folder;
 - support for personal directories, Dropbox-style areas and server-side access rules.
 
 The server keeps incomplete uploads separate from published files. A staged upload is exposed under its final name only after the transfer has completed successfully.
@@ -188,7 +196,10 @@ The client keeps conversations locally so they remain useful after switching wor
 - new-message composition;
 - per-conversation cleanup/deletion;
 - online private messages;
-- modern offline messages for users who are currently disconnected.
+- modern offline messages for users who are currently disconnected;
+- five-minute editing of your own modern text Private Messages, with edit state preserved in local conversation history.
+
+Message editing is a modern text-message feature. Messages containing image or other media references are not editable, and Classic/Legacy peers continue to use the historical message protocol unchanged.
 
 Offline messages on the modern server are stored in SQLite with authenticated encryption and are removed from the server after successful delivery/acknowledgement.
 
@@ -245,7 +256,7 @@ The current administration workspaces include:
 - **Trackers** — publication, tracker targets, privacy and advertised bandwidth class;
 - **Server Log** — protocol and runtime activity;
 - **Events** — user activity audit trail;
-- **Bot** — local Bot runtime, automatic greeting, command rules and RSS/Atom feeds;
+- **Bot** — local Bot runtime, automatic greeting, command rules, RSS/Atom feeds and File Watchers;
 - **Advanced** — limits, file/search settings, IP rules, authentication mode and storage-related options;
 - **Agreement** — login agreement text;
 - **Statistics** — server and transfer counters.
@@ -270,6 +281,7 @@ The Bot administration page provides:
 - configurable greeting text with **`{name}`** and **`{login}`** placeholders;
 - persistent command/response rules, each with its own enable/disable switch;
 - RSS/Atom feed management with per-feed target room, polling interval, summary length and image setting;
+- File Watchers with per-watcher folder, target Conference, enable/disable state and announcement template;
 - a feed test action that publishes the fetched article into **Public** using the same rendering path as a normal RSS post.
 
 <img width="1961" height="1378" alt="image" src="https://github.com/user-attachments/assets/946d4e62-f032-45df-84e3-c9a0a8e85a84" />
@@ -291,6 +303,34 @@ Hello
 ```
 
 The Bot replies in the **same Conference** in which it was addressed, or directly to the sender for a Private Message. If necessary it joins the target Conference first and follows the normal speaking permissions of that room. Sending a Bot message also wakes the Bot from its sleeping presence state.
+
+#### File Watchers
+
+File Watchers let the server Bot announce newly created files and folders from the normal published Files tree. Each watcher can independently define:
+
+- enabled/disabled state;
+- a folder relative to the server's normal `filesRoot`;
+- a target Conference;
+- an announcement template.
+
+Use `.` as the watched path to monitor the Files root itself. Watchers are recursive below their configured path and validate that the resolved directory remains inside the Files root.
+
+Announcement templates support two placeholders:
+
+```text
+{folder}
+{file}
+```
+
+`{folder}` becomes a clickable Carracho Files link to the affected folder, while `{file}` expands to the detected file or folder name. For example:
+
+```text
+New {file} in {folder}
+```
+
+The client understands the generated `carracho-file:///` links and opens the referenced location directly in the **Files** workspace. Filesystem event bursts are coalesced before posting, and repeated announcements for the same watcher/folder are rate-limited.
+
+The macOS server uses native filesystem event sources. The native Linux server implements the same feature with **inotify**.
 
 #### RSS and Atom feeds
 
@@ -429,7 +469,7 @@ Server/
 
 ### Native Linux server
 
-`ServerLinux/` contains a native C implementation intended for headless deployment. It does not require a Swift runtime and uses OpenSSL, json-c, SQLite, libcurl and libxml2.
+`ServerLinux/` contains a native C implementation intended for headless deployment. It does not require a Swift runtime and uses OpenSSL, json-c, SQLite, libcurl and libxml2. Modern server features such as message editing and Bot File Watchers are implemented alongside the Swift/macOS runtime; Linux File Watchers use native `inotify` events.
 
 Compilation of the native Linux components is documented in the **Building on Linux** section below.
 
@@ -457,13 +497,14 @@ A minimal configuration looks like this:
   "greetNewUsers": false,
   "greetingTemplate": "Welcome, {name}! Nice to have you here.",
   "commandRules": [],
-  "rssFeeds": []
+  "rssFeeds": [],
+  "fileWatchers": []
 }
 ```
 
 Normal administration should be done through the Carracho client's **Administration → Bot** page. The JSON file remains useful for deployment, backups and headless server provisioning.
 
-Command rules and RSS feed definitions are stored in this Bot configuration. RSS polling state and seen-item tracking are stored separately in `db/bot-rss.db`, so restarting the server does not cause previously seen articles to be published again.
+Command rules, RSS feed definitions and File Watcher definitions are stored in this Bot configuration. File Watcher changes made through the client administration UI are persisted there and reloaded by the running server. RSS polling state and seen-item tracking are stored separately in `db/bot-rss.db`, so restarting the server does not cause previously seen articles to be published again.
 
 The main runtime configuration lives in `etc/carracho-server.json`. A typical configuration contains the server name, description, port, published file roots, authentication mode, connection/transfer limits, search exclusions, news expiration settings and tracker publication settings.
 
@@ -523,7 +564,7 @@ The practical side effect of keeping the protocol lineage intact is useful:
 - when a Classic peer is detected, modern-only capabilities are hidden or mapped to the older behaviour automatically;
 - a server can optionally expose a separate `legacyFilesRoot` to Classic clients while modern clients continue to use the primary `filesRoot`.
 
-Classic connections use the historical transport and the limits of the historical protocol. Features invented for the new platform, such as modern authenticated transport, threaded-News extensions, reactions, rich-media capability negotiation, offline-message extensions and new account permissions, require a modern Carracho peer.
+Classic connections use the historical transport and the limits of the historical protocol. Features invented for the new platform, such as modern authenticated transport, threaded-News extensions, reactions, rich-media capability negotiation, offline-message extensions, message editing, Bot File Watcher administration and new account permissions, require a modern Carracho peer. Modern message-edit packets are never sent to Classic clients, preserving the historical chat and Private Message packet layouts.
 
 Servers can also be configured as `modernOnly`. In that mode the compatibility password material required by original clients is not retained, so Classic authentication is deliberately unavailable.
 

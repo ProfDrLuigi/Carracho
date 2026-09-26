@@ -2248,7 +2248,7 @@ static void *bot_thread_main(void*opaque){
 
 static int handle_server_info(cr_session*s,const cr_packet*p){
     uint8_t a[1024],b[1024],c[1024],d[CR_MAX_IDENTITY_TEXT+1],uptime[4],max_total[2],active_total[2],max_user[2],active_user[2];
-    const uint8_t version[]="Carracho Server 1.0.7";
+    const uint8_t version[]="Carracho Server 1.0.8";
     size_t an=0,bn=0,cn=0,dn=0;uint16_t limit_total=0,limit_user=0;
     pthread_mutex_lock(&s->server->state.mutex);
     int fail=cr_utf8_to_macroman(s->server->state.identity.name,a,sizeof(a),&an)||
@@ -2502,10 +2502,13 @@ static void bot_file_watch_log_callback(void*opaque,const char*message){(void)op
 static void *bot_file_watch_thread_main(void*opaque){
     cr_server*s=opaque;
 #if defined(__linux__)
+    log_msg("Bot File Watcher thread started");
     if(cr_bot_file_watch_run(s->bot_config_path,s->state.storage_root,
                              bot_file_watch_should_stop,bot_file_watch_can_publish,
                              bot_publish_file_watch,bot_file_watch_log_callback,s)&&!s->stop)
         log_msg("Bot File Watcher stopped after an error: %s",strerror(errno));
+    else
+        log_msg("Bot File Watcher thread stopped");
 #else
     (void)s;
 #endif
@@ -5949,7 +5952,7 @@ static json_object *http_status_json(cr_server *s) {
     time_t now = time(NULL);
     int64_t uptime = now > s->started_at ? (int64_t)(now - s->started_at) : 0;
     json_object_object_add(root, "serverName", json_object_new_string(server_name));
-    json_object_object_add(root, "software", json_object_new_string("Carracho Server 1.0.7"));
+    json_object_object_add(root, "software", json_object_new_string("Carracho Server 1.0.8"));
     json_object_object_add(root, "uptimeSeconds", json_object_new_int64(uptime));
     json_object_object_add(root, "usersOnline", json_object_new_int64((int64_t)online));
     json_object_object_add(root, "maxConnections", json_object_new_int(max_connections));

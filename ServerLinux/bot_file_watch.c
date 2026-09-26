@@ -63,7 +63,8 @@ static int valid_uuid_text(const char *s) {
 }
 
 static int path_component_safe(const char *begin, size_t n) {
-    if (!n || (n == 1 && begin[0] == '.') || (n == 2 && begin[0] == '.' && begin[1] == '.')) return 0;
+    if (!n || n > NAME_MAX ||
+        (n == 1 && begin[0] == '.') || (n == 2 && begin[0] == '.' && begin[1] == '.')) return 0;
     for (size_t i = 0; i < n; ++i) {
         unsigned char c = (unsigned char)begin[i];
         if (c == '\\' || c == 0) return 0;
@@ -291,6 +292,14 @@ static int state_add_dir(watcher_state *state, const char *full, const char *rel
 
 static int is_hidden_component(const char *name) { return name && name[0] == '.' && strcmp(name, ".") && strcmp(name, ".."); }
 
+static int copy_name_component(char dst[NAME_MAX + 1], const char *src) {
+    if (!dst || !src) return -1;
+    size_t n = strlen(src);
+    if (!n || n > NAME_MAX) return -1;
+    memcpy(dst, src, n + 1);
+    return 0;
+}
+
 static int state_add_tree(watcher_state *state, const char *full, const char *relative, int queue_existing);
 
 static void state_queue_relative(watcher_state *state, const char *relative_file, int is_directory) {
@@ -311,17 +320,17 @@ static void state_queue_relative(watcher_state *state, const char *relative_file
             if (snprintf(folder_path, sizeof(folder_path), "%s", folder_name) >= (int)sizeof(folder_path)) return;
         } else if (snprintf(folder_path, sizeof(folder_path), "%s/%s", state->config.path, folder_name) >= (int)sizeof(folder_path)) return;
     } else if (is_directory) {
-        snprintf(folder_name, sizeof(folder_name), "%s", relative_file);
+        if (copy_name_component(folder_name, relative_file)) return;
         if (!strcmp(state->config.path, ".")) {
             snprintf(folder_path, sizeof(folder_path), "%s", relative_file);
         } else if (snprintf(folder_path, sizeof(folder_path), "%s/%s", state->config.path, relative_file) >= (int)sizeof(folder_path)) return;
     } else {
         if (!strcmp(state->config.path, ".")) {
             const char *leaf = strrchr(state->root, '/');
-            snprintf(folder_name, sizeof(folder_name), "%s", (leaf && leaf[1]) ? leaf + 1 : "Files");
+            if (copy_name_component(folder_name, (leaf && leaf[1]) ? leaf + 1 : "Files")) return;
         } else {
             const char *leaf = strrchr(state->config.path, '/');
-            snprintf(folder_name, sizeof(folder_name), "%s", leaf ? leaf + 1 : state->config.path);
+            if (copy_name_component(folder_name, leaf ? leaf + 1 : state->config.path)) return;
         }
         snprintf(folder_path, sizeof(folder_path), "%s", state->config.path);
     }
@@ -331,7 +340,7 @@ static void state_queue_relative(watcher_state *state, const char *relative_file
         if (!strcmp(state->pending[i].path, folder_path)) {
             state->pending[i].pending = 1;
             state->pending[i].due = now + CR_BOT_FILE_WATCH_DEBOUNCE_SECONDS;
-            snprintf(state->pending[i].file_name, sizeof(state->pending[i].file_name), "%s", file_name);
+            if (copy_name_component(state->pending[i].file_name, file_name)) return;
             return;
         }
     }
@@ -339,8 +348,11 @@ static void state_queue_relative(watcher_state *state, const char *relative_file
     pending_folder *p = &state->pending[state->pending_count++];
     memset(p, 0, sizeof(*p));
     snprintf(p->path, sizeof(p->path), "%s", folder_path);
-    snprintf(p->name, sizeof(p->name), "%s", folder_name);
-    snprintf(p->file_name, sizeof(p->file_name), "%s", file_name);
+    if (copy_name_component(p->name, folder_name) ||
+        copy_name_component(p->file_name, file_name)) {
+        state->pending_count--;
+        return;
+    }
     p->pending = 1;
     p->due = now + CR_BOT_FILE_WATCH_DEBOUNCE_SECONDS;
 }
@@ -474,8 +486,11 @@ int cr_bot_file_watch_run(const char *config_path,
                           cr_bot_file_watch_log_cb log_cb,
                           void *opaque) {
     if (!config_path || !files_root || !should_stop || !publish) return -1;
-    watcher_state states[CR_BOT_FILE_WATCH_MAX];
-    memset(states, 0, sizeof(states));
+    watcher_state *states = calloc(CR_BOT_FILE_WATCH_MAX, sizeof(*states));
+    if (!states) {
+        watcher_log(log_cb, opaque, "Bot File Watcher could not allocate watcher state");
+        return -1;
+    }
     for (size_t i = 0; i < CR_BOT_FILE_WATCH_MAX; ++i) states[i].fd = -1;
     size_t state_count = 0;
     struct timespec last_stamp = {0, 0};
@@ -505,6 +520,7 @@ int cr_bot_file_watch_run(const char *config_path,
         }
     }
     for (size_t i = 0; i < state_count; ++i) state_close(&states[i]);
+    free(states);
     return 0;
 }
 

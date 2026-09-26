@@ -320,7 +320,7 @@ final class LegacyBotRSSService {
         cfg.httpMaximumConnectionsPerHost = 2
         let session = URLSession(configuration: cfg, delegate: delegate, delegateQueue: nil)
         var request = URLRequest(url: url)
-        request.setValue("Carracho-Bot-RSS/1.0.7", forHTTPHeaderField: "User-Agent")
+        request.setValue("Carracho-Bot-RSS/1.0.8", forHTTPHeaderField: "User-Agent")
         request.setValue("application/rss+xml, application/atom+xml, application/xml, text/xml, image/*;q=0.8",
                          forHTTPHeaderField: "Accept")
         if let etag { request.setValue(etag, forHTTPHeaderField: "If-None-Match") }

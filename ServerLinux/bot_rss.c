@@ -282,7 +282,7 @@ static int http_fetch(const char *url, size_t maximum, const char *etag,
     if (etag && *etag) { snprintf(etag_header, sizeof(etag_header), "If-None-Match: %s", etag); headers = curl_slist_append(headers, etag_header); }
     if (last_modified && *last_modified) { snprintf(modified_header, sizeof(modified_header), "If-Modified-Since: %s", last_modified); headers = curl_slist_append(headers, modified_header); }
     curl_easy_setopt(curl, CURLOPT_URL, url);
-    curl_easy_setopt(curl, CURLOPT_USERAGENT, "Carracho-Bot-RSS/1.0.7");
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, "Carracho-Bot-RSS/1.0.8");
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
     curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 5L);
     curl_easy_setopt(curl, CURLOPT_PROTOCOLS_STR, "http,https");
