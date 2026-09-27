@@ -25,6 +25,18 @@
     <body>
         
 
+        <p><span class="header" lang="en">New in 1.1.0</span></p>
+        <ul>
+            <span class="newstext">
+                <li>Updated Carracho Server for macOS to version 1.1.0 (build 11).</li>
+                <li>Added optional Guest Upload Approval on both macOS and native Linux. Completed Guest uploads can be held in a hidden persistent <code>.carracho-pending</code> area until an Administrator approves or rejects them.</li>
+                <li>Pending payloads are excluded from normal Files listings, downloads, filename search, and Bot File Watchers. Their intended final destination remains reserved while moderation is pending.</li>
+                <li>Approval publishes the payload with no-overwrite semantics and updates normal search/File Watcher visibility only after publication succeeds; rejection permanently removes the pending payload.</li>
+                <li>Pending upload manifests survive server restarts, and the policy is configurable through modern Carracho Administration and the HTTP settings API as <code>guestUploadApprovalEnabled</code>.</li>
+                <li>Modern Guest clients are notified only after the complete upload has been accepted into the pending queue. For folder uploads, that happens once after the entire folder tree and all contained file data have been received and verified.</li>
+                <li>Classic/Legacy Guest clients remain upload-compatible because moderation is enforced server-side; the new uploader notice and moderation controls are modern extensions.</li>
+        </ul></span>
+
         <p><span class="header" lang="en">New in 1.0.9</span></p>
         <ul>
             <span class="newstext">
@@ -34,8 +46,6 @@
                 <li>File Watcher announcements now default to Account Holder and Administrator members of the selected Conference. A new persistent Advanced server setting can additionally allow Guest members to receive them.</li>
                 <li>The Guest-delivery setting is implemented consistently by the Swift/macOS and native Linux servers, is available through remote Carracho Administration, and is exposed through the HTTP Administration API as <code>fileWatcherGuestsEnabled</code>.</li>
                 <li>Older configurations remain compatible: the new Guest setting defaults to disabled when absent, preserving the restricted File Watcher delivery policy until an administrator explicitly enables it.</li>
-                <li>Added optional Guest upload approval on both macOS and native Linux. Completed Guest uploads can be held in a hidden persistent pending area, excluded from Files listings, downloads, search indexing, and File Watchers until an Administrator approves them; rejection deletes the pending payload.</li>
-                <li>Pending upload destination names remain reserved while awaiting moderation, and approval publishes the payload atomically without overwriting an existing file. Classic Guest uploaders are moderated server-side without requiring protocol changes to the uploading client.</li>
         </ul></span>
 
         <p><span class="header" lang="en">New in 1.0.8</span></p>

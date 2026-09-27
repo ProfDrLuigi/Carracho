@@ -229,6 +229,8 @@ enum LegacyCommand {
     /// Modern-only asynchronous notice sent to a Guest after a completed upload
     /// has been accepted into the server's approval queue.
     static let guestUploadPendingNotice: UInt32 = 0xf0000a04
+    /// Modern-only asynchronous queue-count notification for connected Administrators.
+    static let pendingUploadQueueChanged: UInt32 = 0xf0000a05
     /// Modern-only administrator request to permanently remove a non-Public room.
     /// Modern-only message editing (Classic packet layouts are never modified).
     static let messageEdit: UInt32 = 0xf0000901

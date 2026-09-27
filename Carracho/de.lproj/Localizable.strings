@@ -2099,3 +2099,7 @@
 "Upload awaits approval" = "Upload wartet auf Freigabe";
 "The folder %@ was uploaded completely. It will become visible on the server only after an Administrator approves it." = "Der Ordner %@ wurde vollständig hochgeladen. Er wird auf dem Server erst sichtbar, nachdem ein Administrator ihn freigegeben hat.";
 "The file %@ was uploaded completely. It will become visible on the server only after an Administrator approves it." = "Die Datei %@ wurde vollständig hochgeladen. Sie wird auf dem Server erst sichtbar, nachdem ein Administrator sie freigegeben hat.";
+
+// Pending-upload bookmark alert
+"1 Guest upload is awaiting approval" = "1 Guest-Upload wartet auf Freigabe";
+"%@ Guest uploads are awaiting approval" = "%@ Guest-Uploads warten auf Freigabe";

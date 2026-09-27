@@ -1081,7 +1081,7 @@ final class LegacyServerRuntime {
         stateLock.unlock()
         return [
             "serverName": state.identity.name,
-            "software": "Carracho Server 1.0.8",
+            "software": "Carracho Server 1.1.0",
             "uptimeSeconds": NSNumber(value: max(0, Int64(Date().timeIntervalSince(start ?? Date())))),
             "usersOnline": userCount,
             "maxConnections": Int(state.advanced.maxConnections),
@@ -2009,7 +2009,7 @@ final class LegacyServerRuntime {
             let ownActiveTransfers = session.userID.map { activeFileTransfersByUser[$0, default: 0] } ?? 0
             stateLock.unlock()
             let ticks = began.map { UInt64(max(0, Date().timeIntervalSince($0)) * 60) } ?? 0
-            let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.8"
+            let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.1.0"
             try session.sendAuthenticated(LegacyPacket(command: LegacyCommand.serverInfo,
                                                         transactionID: packet.transactionID,
                                                         fields: [
@@ -4474,6 +4474,8 @@ final class LegacyServerRuntime {
         case LegacyServerSettingField.maxFolderDownloadDepth: return LegacyWire.uint16BE(state.advanced.maxFolderDownloadDepth)
         case LegacyServerSettingField.fileWatcherGuestsEnabled:
             return LegacyServerSettingField.encodeBoolean(state.advanced.fileWatcherGuestsEnabled)
+        case LegacyServerSettingField.guestUploadApprovalEnabled:
+            return LegacyServerSettingField.encodeBoolean(state.advanced.guestUploadApprovalEnabled)
         case LegacyServerSettingField.statisticHits: return u32(state.statistics.hits)
         case LegacyServerSettingField.statisticConnectionPeak: return u32(state.statistics.connectionPeak)
         case LegacyServerSettingField.statisticIncorrectLogins: return u32(state.statistics.incorrectLogins)
@@ -4655,6 +4657,7 @@ final class LegacyServerRuntime {
             try requirePendingUploadAdministrator(session)
             let id = try pendingUploadID(from: packet)
             try approvePendingUpload(id: id)
+            broadcastPendingUploadQueueChanged()
             try session.sendAuthenticated(LegacyPacket(
                 command: LegacyCommand.taskComplete,
                 transactionID: packet.transactionID,
@@ -4673,6 +4676,7 @@ final class LegacyServerRuntime {
             try requirePendingUploadAdministrator(session)
             let id = try pendingUploadID(from: packet)
             try rejectPendingUpload(id: id)
+            broadcastPendingUploadQueueChanged()
             try session.sendAuthenticated(LegacyPacket(
                 command: LegacyCommand.taskComplete,
                 transactionID: packet.transactionID,
@@ -7738,16 +7742,41 @@ extension LegacyServerRuntime {
         log("Pending Guest upload rejected: \(LegacyPath.displayString(record.metadataPath))")
     }
 
+    private func broadcastPendingUploadQueueChanged(count: Int? = nil) {
+        let resolvedCount = count ?? ((try? pendingUploadRecords().count) ?? 0)
+        let packet = LegacyPacket(
+            command: LegacyCommand.pendingUploadQueueChanged,
+            transactionID: 0,
+            fields: [LegacyTLV(type: 1, value: LegacyWire.uint16BE(UInt16(clamping: resolvedCount)))]
+        )
+
+        stateLock.lock()
+        let recipients = authenticatedByUserID.values.filter {
+            !$0.isLegacyTransport && $0.account?.mode == .administrator
+        }
+        stateLock.unlock()
+
+        for session in recipients {
+            do {
+                try session.sendAuthenticated(packet)
+            } catch {
+                log("Could not notify Administrator about pending uploads: \(error.localizedDescription)")
+            }
+        }
+    }
+
     func pendingUploadsForAdministration() throws -> [LegacyPendingUpload] {
         try pendingUploadRecords().map(\.wireValue)
     }
 
     func approvePendingUploadForAdministration(_ id: UUID) throws {
         try approvePendingUpload(id: id)
+        broadcastPendingUploadQueueChanged()
     }
 
     func rejectPendingUploadForAdministration(_ id: UUID) throws {
         try rejectPendingUpload(id: id)
+        broadcastPendingUploadQueueChanged()
     }
 
     private func notifyGuestUploadAwaitingApproval(userID: UInt32, path: Data, isFolder: Bool) {
@@ -7971,6 +8000,7 @@ extension LegacyServerRuntime {
                 total: total,
                 isFolder: isFolder
             )
+            broadcastPendingUploadQueueChanged()
             notifyGuestUploadAwaitingApproval(userID: access.userID, path: targetPath, isFolder: isFolder)
             log("Upload completed for user \(access.userID) and is awaiting approval: \(LegacyPath.displayString(targetPath))")
         } else {

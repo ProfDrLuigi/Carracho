@@ -613,6 +613,9 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         var pendingEvents: [LegacyControlEvent] = []
         var eventNotificationCount = 0
         var newsNotificationCount = 0
+        /// Number of Guest uploads awaiting approval on this connected server.
+        /// Kept per bookmark so background server connections can raise their own 🚨.
+        var pendingUploadApprovalCount = 0
         var backgroundNewsTimer: Timer?
         var backgroundNewsRefreshInFlight = false
         var backgroundNewsSupported = true
@@ -2653,7 +2656,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
             navigation.bottomAnchor.constraint(equalTo: scrollContent.bottomAnchor),
             scrollContent.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
         ])
-        let version = infoLabel(L("Carracho 1.0.8"))
+        let version = infoLabel(L("Carracho 1.1.0"))
         version.font = .systemFont(ofSize: 10)
         appearancePopup.removeAllItems()
         appearancePopup.addItems(withTitles: [L("System Appearance"), L("Light"), L("Dark")])
@@ -4805,6 +4808,22 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         return dot
     }
 
+    func bookmarkPendingUploadAlert(_ count: Int) -> NSTextField {
+        let alert = NSTextField(labelWithString: "🚨")
+        alert.identifier = NSUserInterfaceItemIdentifier("bookmarkPendingUploadAlert")
+        alert.font = .systemFont(ofSize: 14)
+        alert.alignment = .center
+        alert.translatesAutoresizingMaskIntoConstraints = false
+        alert.toolTip = count == 1
+            ? L("1 Guest upload is awaiting approval")
+            : LF("%@ Guest uploads are awaiting approval", String(count))
+        NSLayoutConstraint.activate([
+            alert.widthAnchor.constraint(equalToConstant: 18),
+            alert.heightAnchor.constraint(equalToConstant: 20),
+        ])
+        return alert
+    }
+
     func bookmarkNotificationBadge(_ count: Int) -> NSTextField {
         let display = count > 99 ? "99+" : String(count)
         let badge = NSTextField(labelWithString: display)
@@ -4900,7 +4919,12 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
             name.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
             let statusDot = bookmarkStatusDot(for: bookmark.id)
             var bookmarkViews: [NSView] = [icon, statusDot, name]
-            let notificationCount = bookmarkConnections[bookmark.id]?.notificationCount ?? 0
+            let context = bookmarkConnections[bookmark.id]
+            let pendingApprovalCount = context?.pendingUploadApprovalCount ?? 0
+            if pendingApprovalCount > 0 {
+                bookmarkViews.append(bookmarkPendingUploadAlert(pendingApprovalCount))
+            }
+            let notificationCount = context?.notificationCount ?? 0
             if notificationCount > 0 { bookmarkViews.append(bookmarkNotificationBadge(notificationCount)) }
             let openStack = horizontalStack(bookmarkViews, spacing: 7)
             openStack.translatesAutoresizingMaskIntoConstraints = false
@@ -5405,6 +5429,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
                     case .idle, .failed:
                         self.stopBackgroundNewsPolling(for: context)
                         self.clearBookmarkNotifications(for: context)
+                        context.pendingUploadApprovalCount = 0
                         context.snapshot = nil
                         context.pendingEvents.removeAll()
                     default:
@@ -5421,6 +5446,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
                 case .idle, .failed:
                     self.stopBackgroundNewsPolling(for: context)
                     self.clearBookmarkNotifications(for: context)
+                    context.pendingUploadApprovalCount = 0
                     context.snapshot = nil
                     context.pendingEvents.removeAll()
                 default:
@@ -5436,6 +5462,34 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
                 return
             }
             guard let bookmarkID, let context = self.bookmarkConnections[bookmarkID] else { return }
+            if case let .pendingUploadQueueChanged(count) = event {
+                context.pendingUploadApprovalCount = max(0, count)
+                self.reloadBookmarkStack()
+                return
+            }
+            if case let .ownPermissionsChanged(permissionWord0, permissionWord1) = event {
+                let bit = LegacyAccountPermissionBit.administrator
+                let words = [permissionWord0, permissionWord1]
+                let isAdministrator = bit >= 0 && bit < 64 &&
+                    (words[bit / 32] & (UInt32(0x8000_0000) >> UInt32(bit % 32))) != 0
+                if !isAdministrator {
+                    context.pendingUploadApprovalCount = 0
+                    self.reloadBookmarkStack()
+                } else {
+                    target.requestPendingUploads { [weak self, weak target] result in
+                        DispatchQueue.main.async {
+                            guard let self, let target,
+                                  let current = self.bookmarkConnections[bookmarkID],
+                                  current.client === target,
+                                  target.isConnected else { return }
+                            if case let .success(items) = result {
+                                current.pendingUploadApprovalCount = items.count
+                                self.reloadBookmarkStack()
+                            }
+                        }
+                    }
+                }
+            }
             let increment = self.backgroundNotificationIncrement(for: event, context: context)
             if increment > 0 {
                 context.eventNotificationCount = min(999, context.eventNotificationCount + increment)
@@ -5698,6 +5752,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
             refreshTransferMonitorUI()
         }
         renderSession()
+        refreshPendingUploadBookmarkCount()
         if currentWorkspace == .accounts { reloadRemoteAccounts() }
         if currentWorkspace == .advanced {
             reloadAdvancedSettings()
@@ -5730,6 +5785,26 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
                 self.replayDeferredInteractiveEvents()
                 self.activatePendingBookmarkIfPossible()
                 self.finishStartupBookmarkConnection(completedBookmarkID)
+            }
+        }
+    }
+
+    func refreshPendingUploadBookmarkCount() {
+        guard client.isConnected, !isConnectedToClassicServer, isRemoteAdministrator,
+              let bookmarkID = activeBookmarkConnectionID,
+              let context = bookmarkConnections[bookmarkID],
+              context.client === client else { return }
+        let requestClient = client
+        requestClient.requestPendingUploads { [weak self, weak requestClient] result in
+            DispatchQueue.main.async {
+                guard let self, let requestClient,
+                      let context = self.bookmarkConnections[bookmarkID],
+                      context.client === requestClient,
+                      requestClient.isConnected else { return }
+                if case let .success(items) = result {
+                    context.pendingUploadApprovalCount = items.count
+                    self.reloadBookmarkStack()
+                }
             }
         }
     }
@@ -6768,6 +6843,15 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
                 channelMemberTable.reloadData()
                 renderActiveChannelTranscript()
             }
+        case let .pendingUploadQueueChanged(count):
+            if let bookmarkID = activeBookmarkConnectionID,
+               let context = bookmarkConnections[bookmarkID] {
+                context.pendingUploadApprovalCount = max(0, count)
+            }
+            reloadBookmarkStack()
+            if currentWorkspace == .advanced, advancedRemoteGuestUploadApprovalSupported {
+                reloadPendingUploads()
+            }
         case let .guestUploadAwaitingApproval(path, isFolder):
             let displayName = LegacyPath.displayName(path)
             let status = isFolder
@@ -6802,6 +6886,13 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
             // contents until an unrelated navigation happened to flush the tree.
             resetInlineFileExpansion()
             refreshAdministrativeNavigationVisibility()
+            if isRemoteAdministrator {
+                refreshPendingUploadBookmarkCount()
+            } else if let bookmarkID = activeBookmarkConnectionID,
+                      let context = bookmarkConnections[bookmarkID] {
+                context.pendingUploadApprovalCount = 0
+                reloadBookmarkStack()
+            }
             renderSession()
             refreshCurrentServerDirectory()
         case let .channelUserJoined(channelID, userID, mode):

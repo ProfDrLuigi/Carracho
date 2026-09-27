@@ -18,12 +18,11 @@ The modern transport protects far more than login traffic: chat/control packets,
 
 See the collapsible **Security and modern encryption** section below for the protocol details.
 
-### Current release: 1.0.9
+### Current release: 1.1.0
 
-Carracho 1.0.9 focuses on **large Files-search performance and stability**, preserves Conference sender identity after users disconnect, refreshes Tracker and macOS Server artwork, and further refines server-side file handling. **Bot File Watchers** now ignore internal transfer-staging paths and have configurable Guest visibility, while an optional **Guest upload approval** workflow can keep completed Guest uploads hidden until an Administrator approves or rejects them on both macOS and Linux.
+Carracho 1.1.0 introduces optional **Guest Upload Approval** across the macOS and native Linux servers. Completed Guest uploads can remain hidden until an Administrator approves or rejects them, with persistent pending state, safe destination reservation, remote Administration controls, and explicit feedback to modern Guest uploaders. Folder uploads are reported as awaiting approval only after the complete folder tree has actually been received and verified.
 
-The full release notes are available in [`README_1.0.9.md`](README_1.0.9.md).
-
+The full release notes are available in [`README_1.1.0.md`](README_1.1.0.md).
 
 ## At a glance
 

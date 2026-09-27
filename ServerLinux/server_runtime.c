@@ -178,6 +178,7 @@
 #define CMD_PENDING_UPLOAD_APPROVE 0xf0000a02u
 #define CMD_PENDING_UPLOAD_REJECT 0xf0000a03u
 #define CMD_GUEST_UPLOAD_PENDING_NOTICE 0xf0000a04u
+#define CMD_PENDING_UPLOAD_QUEUE_CHANGED 0xf0000a05u
 #define CMD_CHANNEL_DELETE 0xf0000800u
 #define CMD_CHANNEL_DELETED 0xf0000801u
 #define FILE_LABEL_FIELD 0xf0000600u
@@ -2265,7 +2266,7 @@ static void *bot_thread_main(void*opaque){
 
 static int handle_server_info(cr_session*s,const cr_packet*p){
     uint8_t a[1024],b[1024],c[1024],d[CR_MAX_IDENTITY_TEXT+1],uptime[4],max_total[2],active_total[2],max_user[2],active_user[2];
-    const uint8_t version[]="Carracho Server 1.0.8";
+    const uint8_t version[]="Carracho Server 1.1.0";
     size_t an=0,bn=0,cn=0,dn=0;uint16_t limit_total=0,limit_user=0;
     pthread_mutex_lock(&s->server->state.mutex);
     int fail=cr_utf8_to_macroman(s->server->state.identity.name,a,sizeof(a),&an)||
@@ -5255,6 +5256,52 @@ static int pending_upload_packet_id(const cr_packet *p, char id[37]) {
     memcpy(id,f->value,36); id[36]=0;
     return media_uuid_text_valid(id) ? 0 : -1;
 }
+static uint16_t pending_upload_visible_count(json_object *root) {
+    uint16_t visible = 0;
+    size_t count = json_object_array_length(root);
+    for (size_t i = 0; i < count && visible < UINT16_MAX; i++) {
+        json_object *o = json_object_array_get_idx(root, i);
+        const char *payload = NULL;
+        if (!pending_upload_json_string(o, "payloadFilesystemPath", &payload) &&
+            access(payload, F_OK) == 0) {
+            visible++;
+        }
+    }
+    return visible;
+}
+
+static int pending_upload_current_count(cr_server *s, uint16_t *out) {
+    if (!s || !out) return -1;
+    int lockfd = pending_upload_lock(s);
+    if (lockfd < 0) return -1;
+    json_object *root = pending_upload_load(s);
+    if (!root) {
+        pending_upload_unlock(lockfd);
+        return -1;
+    }
+    *out = pending_upload_visible_count(root);
+    json_object_put(root);
+    pending_upload_unlock(lockfd);
+    return 0;
+}
+
+static void broadcast_pending_upload_queue_changed(cr_server *s) {
+    uint16_t count = 0;
+    if (pending_upload_current_count(s, &count)) return;
+    uint8_t wire[2];
+    cr_write_be16(wire, count);
+    cr_tlv_out field = {1, wire, 2};
+
+    pthread_mutex_lock(&s->mutex);
+    for (size_t i = 0; i < s->allocated_session_count; i++) {
+        cr_session *x = s->sessions[i];
+        if (session_ready_for_async(x) && x->modern_transport && x->mode == CR_MODE_ADMIN) {
+            (void)session_send(x, CMD_PENDING_UPLOAD_QUEUE_CHANGED, 0, &field, 1);
+        }
+    }
+    pthread_mutex_unlock(&s->mutex);
+}
+
 static int handle_pending_upload_list(cr_session *session, const cr_packet *p) {
     if (pending_upload_require_admin(session) || p->field_count) return send_error(session,p->transaction_id,1);
     cr_server *s = session->server;
@@ -5263,12 +5310,8 @@ static int handle_pending_upload_list(cr_session *session, const cr_packet *p) {
     json_object *root = pending_upload_load(s);
     if (!root) { pending_upload_unlock(lockfd); return send_error(session,p->transaction_id,1); }
 
-    uint16_t visible = 0;
+    uint16_t visible = pending_upload_visible_count(root);
     size_t count = json_object_array_length(root);
-    for (size_t i=0;i<count && visible<UINT16_MAX;i++) {
-        json_object *o=json_object_array_get_idx(root,i); const char *payload=NULL;
-        if (!pending_upload_json_string(o,"payloadFilesystemPath",&payload) && access(payload,F_OK)==0) visible++;
-    }
     cr_buffer b; cr_buffer_init(&b);
     int fail = cr_buffer_append_u16(&b,visible);
     for (size_t i=0;i<count && !fail;i++) {
@@ -5338,6 +5381,7 @@ static int handle_pending_upload_approve(cr_session *session, const cr_packet *p
         }
     }
     log_msg("Pending Guest upload approved: %s",target_copy);
+    broadcast_pending_upload_queue_changed(s);
     return send_task_complete(session,p->transaction_id);
 }
 static int handle_pending_upload_reject(cr_session *session, const cr_packet *p) {
@@ -5357,6 +5401,7 @@ static int handle_pending_upload_reject(cr_session *session, const cr_packet *p)
     json_object_put(root);pending_upload_unlock(lockfd);
     char*slash=strrchr(payload_copy,'/');if(slash){*slash=0;(void)rmdir(payload_copy);}
     log_msg("Pending Guest upload rejected: %s",id);
+    broadcast_pending_upload_queue_changed(s);
     return send_task_complete(session,p->transaction_id);
 }
 
@@ -5418,6 +5463,7 @@ static int serve_upload(cr_server*s,cr_transfer_stream*stream,cr_session*session
         int is_folder=root_kind==1;
         if(queue_guest_upload_for_approval(s,session,stage,parentfs,targetfs,target.data,target.len,total,is_folder))goto done;
         committed=1;
+        broadcast_pending_upload_queue_changed(s);
         send_guest_upload_pending_notice(s,session->user_id,target.data,target.len,is_folder);
         log_msg("Upload completed for user %u and is awaiting approval",session->user_id);
     }else{
@@ -6297,7 +6343,7 @@ static json_object *http_status_json(cr_server *s) {
     time_t now = time(NULL);
     int64_t uptime = now > s->started_at ? (int64_t)(now - s->started_at) : 0;
     json_object_object_add(root, "serverName", json_object_new_string(server_name));
-    json_object_object_add(root, "software", json_object_new_string("Carracho Server 1.0.8"));
+    json_object_object_add(root, "software", json_object_new_string("Carracho Server 1.1.0"));
     json_object_object_add(root, "uptimeSeconds", json_object_new_int64(uptime));
     json_object_object_add(root, "usersOnline", json_object_new_int64((int64_t)online));
     json_object_object_add(root, "maxConnections", json_object_new_int(max_connections));

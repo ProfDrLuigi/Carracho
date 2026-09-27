@@ -14,10 +14,7 @@ The Swift/macOS and native Linux servers continue to share the same modern File 
 - Bot File Watchers ignore internal **`.carracho` transfer-staging** paths.
 - File Watcher announcements remain restricted to **Account Holder** and **Administrator** members by default.
 - Administrators can optionally allow **Guest** members to receive File Watcher announcements.
-- Optional **Guest upload approval** keeps completed Guest uploads hidden until an Administrator approves or rejects them.
-- Pending uploads show destination, uploader, size and upload time in Administration.
-- Guest upload moderation is persistent and implemented on both macOS and native Linux.
-- The File Watcher Guest-delivery policy and Guest upload approval setting are exposed through the normal server settings and HTTP Administration API.
+- The Guest-delivery policy is persistent and implemented on both macOS and native Linux, including the HTTP Administration API.
 
 ## Carracho Client 1.0.9
 
@@ -82,23 +79,6 @@ The setting is loaded and saved through the normal modern server-settings protoc
 
 For compatibility with older modern servers, the client treats the field as optional. If a connected server does not expose it, the File Watcher Guest control is disabled and the rest of the Advanced settings page continues to work normally.
 
-### Guest upload moderation
-
-Administration now also exposes **Guest uploads require approval** under **Advanced → Guest Upload Approval**.
-
-The setting defaults to off. When enabled, completed uploads from **Guest** accounts are not published immediately. Instead, Administrators receive a pending-upload queue showing:
-
-- file or destination path;
-- uploader;
-- size;
-- upload time.
-
-The queue provides **Approve**, **Reject**, and **Refresh** actions. Account Holder and Administrator uploads continue to publish immediately.
-
-After a moderated upload has been received completely and safely moved into the pending area, a modern Guest client receives an explicit notice that the upload succeeded but is still awaiting Administrator approval. Folder uploads produce this notice only once, after the complete folder tree and all contained file data have been received and verified; individual child files do not generate separate approval notices.
-
-The moderation commands use stable pending-upload IDs rather than exposing internal filesystem paths to the client. Older modern servers that do not support the feature leave the approval controls unavailable without breaking the rest of Administration.
-
 ## Carracho Server 1.0.9
 
 ### Cleaner File Watcher events
@@ -113,35 +93,6 @@ The behavior is implemented in:
 
 - the Swift/macOS filesystem watcher;
 - the native Linux **inotify** watcher.
-
-### Guest upload approval
-
-Both server implementations can optionally moderate completed uploads from Guest accounts.
-
-The setting is stored as:
-
-```text
-guestUploadApprovalEnabled
-```
-
-and defaults to `false` for existing configurations.
-
-When enabled, a Guest upload still uses the normal `.carracho` transfer staging while bytes are arriving. After the transfer has been fully verified, the payload is moved into a hidden `.carracho-pending` area beside its intended destination instead of being published under its final name.
-
-Before approval, the pending payload is:
-
-- absent from normal Files listings;
-- unavailable through normal download paths;
-- excluded from the filename search index;
-- ignored by Bot File Watchers.
-
-The intended final destination remains reserved while the item is pending. This prevents another Guest, Account Holder, or Administrator upload from taking the same name before moderation is complete.
-
-**Approve** performs a no-overwrite atomic move into the intended destination. Only after publication is the normal search index updated and the final filesystem event becomes visible to File Watchers.
-
-**Reject** permanently deletes the hidden pending payload.
-
-The pending manifest survives server restarts. Classic/Legacy Guest clients can still upload using the historical transfer protocol; moderation is a server-side decision and therefore does not require the uploading client to understand the new feature. Approval and rejection are modern Administrator operations.
 
 ### Configurable Guest delivery
 
@@ -159,16 +110,10 @@ Normal Bot chat and RSS behavior remain separate from this File Watcher-specific
 
 ### Persistence and remote administration
 
-The File Watcher Guest-delivery setting is stored as:
+The new Guest-delivery setting is stored as:
 
 ```text
 fileWatcherGuestsEnabled
-```
-
-Guest upload moderation uses:
-
-```text
-guestUploadApprovalEnabled
 ```
 
 It defaults to `false` when absent from an older configuration.
@@ -196,8 +141,8 @@ Carracho 1.0.9 continues to preserve Classic/Legacy behavior.
 
 - The Files-search performance changes are client-side implementation improvements and do not alter the search protocol.
 - Conference identity snapshots affect only local transcript rendering.
-- The File Watcher Guest-delivery and Guest upload approval fields are modern server extensions.
-- Older modern servers may omit the new fields; the 1.0.9 client handles those cases without making the rest of Advanced Administration unavailable.
-- Classic/Legacy Guest clients can still be subject to server-side upload moderation, but approval and rejection require a modern Administrator client.
+- The File Watcher Guest-delivery field is a modern server extension.
+- Older modern servers may omit the new field; the 1.0.9 client handles that case without making the rest of Advanced Administration unavailable.
+- Classic/Legacy clients do not need to understand the new setting.
 
 For the complete 1.0.9 feature set, use a Carracho 1.0.9 client with a matching Carracho Server 1.0.9.

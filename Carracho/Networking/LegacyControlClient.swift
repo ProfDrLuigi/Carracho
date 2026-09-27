@@ -209,6 +209,7 @@ enum LegacyControlEvent {
     case mediaDeleted(UUID)
     case fileLabelChanged(path: Data, label: LegacyFileLabel)
     case guestUploadAwaitingApproval(path: Data, isFolder: Bool)
+    case pendingUploadQueueChanged(count: Int)
     case forcedDisconnect
     case unhandled(LegacyPacket)
 }
@@ -2379,6 +2380,12 @@ final class LegacyControlClient {
                     throw LegacyControlClientError.protocolFailure("invalid Guest upload pending notice")
                 }
                 onEvent?(.guestUploadAwaitingApproval(path: path, isFolder: kindByte == 1))
+            case LegacyCommand.pendingUploadQueueChanged:
+                guard let countField = packet.firstField(type: 1),
+                      countField.value.count == 2 else {
+                    throw LegacyControlClientError.protocolFailure("invalid pending-upload queue notification")
+                }
+                onEvent?(.pendingUploadQueueChanged(count: Int(try countField.uint16BE())))
             case LegacyCommand.userPresenceState:
                 guard let idField = packet.firstField(type: LegacyPresenceStateField.userID),
                       let stateField = packet.firstField(type: LegacyPresenceStateField.state),

@@ -25,6 +25,18 @@
     <body>
         
 
+        <p><span class="header" lang="en">New in 1.1.0</span></p>
+        <ul>
+            <span class="newstext">
+                <li>Updated the macOS client to version 1.1.0 (build 11).</li>
+                <li>Added optional Guest Upload Approval in Advanced Administration. When enabled, completed Guest uploads remain hidden until an Administrator approves or rejects them; the pending queue shows destination, uploader, size, and upload time.</li>
+                <li>Added Approve, Reject, and Refresh controls for pending Guest uploads. Account Holder and Administrator uploads continue to publish immediately.</li>
+                <li>Connected Administrator bookmarks now show 🚨 whenever that server has pending Guest uploads awaiting approval. The alert updates live for background-connected bookmarks and disappears after the final pending item is approved or rejected.</li>
+                <li>Modern Guest uploaders now receive a clear notice after the server has fully accepted a moderated upload into the approval queue, explaining that the item will become visible only after Administrator approval.</li>
+                <li>Folder uploads are handled as one complete moderated transfer: the awaiting-approval notice is sent only once, after the entire folder tree and all contained file data have been received and verified.</li>
+                <li>Older modern servers that do not support Guest Upload Approval leave the new controls unavailable without affecting the rest of Administration.</li>
+        </ul></span>
+
         <p><span class="header" lang="en">New in 1.0.9</span></p>
         <ul>
             <span class="newstext">
@@ -34,7 +46,6 @@
                 <li>Conference history now keeps a sender snapshot with each received message, so a user's nickname, avatar, and group color remain visible after that user disconnects instead of falling back to an unknown/default presentation.</li>
                 <li>Refined Tracker presentation by using the dedicated Carracho Tracker artwork for saved Tracker rows.</li>
                 <li>Added an Advanced server setting for Bot File Watchers that controls whether Guest accounts receive watcher announcements. Account Holders and Administrators continue to receive them by default; older modern servers that do not support the new setting keep the control disabled without breaking the rest of Administration.</li>
-                <li>Added optional Guest upload moderation in Administration. When enabled, completed Guest uploads remain hidden until an Administrator approves or rejects them; the Pending Uploads table shows destination, uploader, size, and upload time. Account Holder and Administrator uploads continue to publish immediately.</li>
         </ul></span>
 
         <p><span class="header" lang="en">New in 1.0.8</span></p>

@@ -1048,6 +1048,12 @@ extension ViewController {
                     case let .success(items):
                         self.adminPendingUploads = items
                         self.adminPendingUploadsTable.reloadData()
+                        if let bookmarkID = self.activeBookmarkConnectionID,
+                           let context = self.bookmarkConnections[bookmarkID],
+                           context.client === requestClient {
+                            context.pendingUploadApprovalCount = items.count
+                            self.reloadBookmarkStack()
+                        }
                     case let .failure(error):
                         self.adminPendingUploads = []
                         self.adminPendingUploadsTable.reloadData()

@@ -2099,3 +2099,7 @@
 "Upload awaits approval" = "Upload awaits approval";
 "The folder %@ was uploaded completely. It will become visible on the server only after an Administrator approves it." = "The folder %@ was uploaded completely. It will become visible on the server only after an Administrator approves it.";
 "The file %@ was uploaded completely. It will become visible on the server only after an Administrator approves it." = "The file %@ was uploaded completely. It will become visible on the server only after an Administrator approves it.";
+
+// Pending-upload bookmark alert
+"1 Guest upload is awaiting approval" = "1 Guest upload is awaiting approval";
+"%@ Guest uploads are awaiting approval" = "%@ Guest uploads are awaiting approval";
