@@ -25,6 +25,17 @@
     <body>
         
 
+        <p><span class="header" lang="en">New in 1.0.9</span></p>
+        <ul>
+            <span class="newstext">
+                <li>Updated the macOS client to version 1.0.9 (build 10).</li>
+                <li>Greatly improved scrolling performance for large server-wide Files search results. Search rows now use lightweight reusable cells, stable result snapshots, cached size/date/kind text, and cached file-type artwork instead of repeating expensive layout, sorting, and LaunchServices work while scrolling.</li>
+                <li>Improved very large file-search transfers by yielding between already-buffered records and keepalive frames, preventing deep callback recursion and making long result streams more robust.</li>
+                <li>Conference history now keeps a sender snapshot with each received message, so a user's nickname, avatar, and group color remain visible after that user disconnects instead of falling back to an unknown/default presentation.</li>
+                <li>Refined Tracker presentation by using the dedicated Carracho Tracker artwork for saved Tracker rows.</li>
+                <li>Added an Advanced server setting for Bot File Watchers that controls whether Guest accounts receive watcher announcements. Account Holders and Administrators continue to receive them by default; older modern servers that do not support the new setting keep the control disabled without breaking the rest of Administration.</li>
+        </ul></span>
+
         <p><span class="header" lang="en">New in 1.0.8</span></p>
         <ul>
             <span class="newstext">

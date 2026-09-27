@@ -27,6 +27,7 @@ struct CarrachoServerConfiguration: Codable, Equatable {
     var maxSimultaneousFileTransfers: UInt16 = 20
     var maxFileTransfersPerUser: UInt16 = 1
     var maxFolderDownloadDepth: UInt16 = 8
+    var fileWatcherGuestsEnabled: Bool = false
     var uploadBandwidthLimitBytesPerSecond: UInt64 = 0
     var searchIndexExclusions: [String] = []
     var searchIndexRebuildIntervalHours: UInt32 = 0
@@ -37,7 +38,7 @@ struct CarrachoServerConfiguration: Codable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case serverName, description, serverPort, filesRoot, legacyFilesRoot, authenticationMode
         case maxConnections, maxConnectionsPerIP, maxSimultaneousFileTransfers
-        case maxFileTransfersPerUser, maxFolderDownloadDepth
+        case maxFileTransfersPerUser, maxFolderDownloadDepth, fileWatcherGuestsEnabled
         case uploadBandwidthLimitBytesPerSecond, searchIndexExclusions, searchIndexRebuildIntervalHours
         case httpAdmin, newsExpirationHour, newsExpirationMinute
     }
@@ -57,6 +58,7 @@ struct CarrachoServerConfiguration: Codable, Equatable {
         maxSimultaneousFileTransfers = try values.decodeIfPresent(UInt16.self, forKey: .maxSimultaneousFileTransfers) ?? 20
         maxFileTransfersPerUser = try values.decodeIfPresent(UInt16.self, forKey: .maxFileTransfersPerUser) ?? 1
         maxFolderDownloadDepth = try values.decodeIfPresent(UInt16.self, forKey: .maxFolderDownloadDepth) ?? 8
+        fileWatcherGuestsEnabled = try values.decodeIfPresent(Bool.self, forKey: .fileWatcherGuestsEnabled) ?? false
         uploadBandwidthLimitBytesPerSecond = try values.decodeIfPresent(UInt64.self, forKey: .uploadBandwidthLimitBytesPerSecond) ?? 0
         searchIndexExclusions = try values.decodeIfPresent([String].self, forKey: .searchIndexExclusions) ?? []
         searchIndexRebuildIntervalHours = try values.decodeIfPresent(UInt32.self, forKey: .searchIndexRebuildIntervalHours) ?? 0
@@ -191,6 +193,7 @@ final class CarrachoServerService {
         configuration.maxSimultaneousFileTransfers = state.advanced.maxSimultaneousFileTransfers
         configuration.maxFileTransfersPerUser = state.advanced.maxFileTransfersPerUser
         configuration.maxFolderDownloadDepth = state.advanced.maxFolderDownloadDepth
+        configuration.fileWatcherGuestsEnabled = state.advanced.fileWatcherGuestsEnabled
         configuration.newsExpirationHour = state.advanced.newsExpirationHour
         configuration.newsExpirationMinute = state.advanced.newsExpirationMinute
         configuration.uploadBandwidthLimitBytesPerSecond = state.runtime.uploadBandwidthLimitBytesPerSecond
@@ -364,6 +367,7 @@ final class CarrachoServerService {
         advanced.maxSimultaneousFileTransfers = configuration.maxSimultaneousFileTransfers
         advanced.maxFileTransfersPerUser = configuration.maxFileTransfersPerUser
         advanced.maxFolderDownloadDepth = configuration.maxFolderDownloadDepth
+        advanced.fileWatcherGuestsEnabled = configuration.fileWatcherGuestsEnabled
         advanced.newsExpirationHour = configuration.newsExpirationHour
         advanced.newsExpirationMinute = configuration.newsExpirationMinute
         let legacyFilesURL = configuration.legacyFilesRoot.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty

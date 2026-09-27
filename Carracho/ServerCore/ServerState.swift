@@ -324,6 +324,8 @@ struct ServerAdvancedSettings: Codable, Equatable {
     var maxSimultaneousFileTransfers: UInt16 = 20
     var maxFileTransfersPerUser: UInt16 = 1
     var maxFolderDownloadDepth: UInt16 = 8
+    /// Whether Guest accounts may receive Bot File Watcher announcements in Conferences.
+    var fileWatcherGuestsEnabled: Bool = false
     var newsExpirationHour: UInt8 = 0
     var newsExpirationMinute: UInt8 = 0
     var ipRestrictions: [ServerIPRestriction] = []
@@ -333,13 +335,15 @@ struct ServerAdvancedSettings: Codable, Equatable {
 
     private enum CodingKeys: String, CodingKey {
         case controlPort, maxConnections, maxConnectionsPerIP, maxSimultaneousFileTransfers
-        case maxFileTransfersPerUser, maxFolderDownloadDepth, newsExpirationHour, newsExpirationMinute
+        case maxFileTransfersPerUser, maxFolderDownloadDepth, fileWatcherGuestsEnabled
+        case newsExpirationHour, newsExpirationMinute
         case ipRestrictions, trackers, trackerAdvertisementFlags, trackerDescription
     }
 
     init(controlPort: UInt16 = 6700, maxConnections: UInt16 = 100, maxConnectionsPerIP: UInt16 = 5,
          maxSimultaneousFileTransfers: UInt16 = 20, maxFileTransfersPerUser: UInt16 = 1,
-         maxFolderDownloadDepth: UInt16 = 8, newsExpirationHour: UInt8 = 0, newsExpirationMinute: UInt8 = 0,
+         maxFolderDownloadDepth: UInt16 = 8, fileWatcherGuestsEnabled: Bool = false,
+         newsExpirationHour: UInt8 = 0, newsExpirationMinute: UInt8 = 0,
          ipRestrictions: [ServerIPRestriction] = [], trackers: [ServerTrackerSetting] = [],
          trackerAdvertisementFlags: UInt32 = 0, trackerDescription: String = "") {
         self.controlPort = controlPort
@@ -348,6 +352,7 @@ struct ServerAdvancedSettings: Codable, Equatable {
         self.maxSimultaneousFileTransfers = maxSimultaneousFileTransfers
         self.maxFileTransfersPerUser = maxFileTransfersPerUser
         self.maxFolderDownloadDepth = maxFolderDownloadDepth
+        self.fileWatcherGuestsEnabled = fileWatcherGuestsEnabled
         self.newsExpirationHour = newsExpirationHour
         self.newsExpirationMinute = newsExpirationMinute
         self.ipRestrictions = ipRestrictions
@@ -364,6 +369,7 @@ struct ServerAdvancedSettings: Codable, Equatable {
         maxSimultaneousFileTransfers = try c.decodeIfPresent(UInt16.self, forKey: .maxSimultaneousFileTransfers) ?? 20
         maxFileTransfersPerUser = try c.decodeIfPresent(UInt16.self, forKey: .maxFileTransfersPerUser) ?? 1
         maxFolderDownloadDepth = try c.decodeIfPresent(UInt16.self, forKey: .maxFolderDownloadDepth) ?? 8
+        fileWatcherGuestsEnabled = try c.decodeIfPresent(Bool.self, forKey: .fileWatcherGuestsEnabled) ?? false
         newsExpirationHour = try c.decodeIfPresent(UInt8.self, forKey: .newsExpirationHour) ?? 0
         newsExpirationMinute = try c.decodeIfPresent(UInt8.self, forKey: .newsExpirationMinute) ?? 0
         ipRestrictions = try c.decodeIfPresent([ServerIPRestriction].self, forKey: .ipRestrictions) ?? []

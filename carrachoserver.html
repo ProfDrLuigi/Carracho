@@ -25,6 +25,17 @@
     <body>
         
 
+        <p><span class="header" lang="en">New in 1.0.9</span></p>
+        <ul>
+            <span class="newstext">
+                <li>Updated Carracho Server for macOS to version 1.0.9 (build 10).</li>
+                <li>Refreshed the macOS Server application icon artwork.</li>
+                <li>Improved Bot File Watcher filtering on both macOS and native Linux so internal <code>.carracho</code> transfer-staging files and directories are ignored instead of producing premature or duplicate announcements while uploads are still being finalized.</li>
+                <li>File Watcher announcements now default to Account Holder and Administrator members of the selected Conference. A new persistent Advanced server setting can additionally allow Guest members to receive them.</li>
+                <li>The Guest-delivery setting is implemented consistently by the Swift/macOS and native Linux servers, is available through remote Carracho Administration, and is exposed through the HTTP Administration API as <code>fileWatcherGuestsEnabled</code>.</li>
+                <li>Older configurations remain compatible: the new Guest setting defaults to disabled when absent, preserving the restricted File Watcher delivery policy until an administrator explicitly enables it.</li>
+        </ul></span>
+
         <p><span class="header" lang="en">New in 1.0.8</span></p>
         <ul>
             <span class="newstext">

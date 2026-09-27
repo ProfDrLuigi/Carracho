@@ -425,7 +425,7 @@ final class LegacyServerRuntime {
     /// Sends one line as the local Bot into a conference. The Bot joins a non-Public room on first
     /// addressed use so its messages have normal conference membership semantics.
     private func postLocalBotMessage(_ text: String, channelID: UInt32, source: String,
-                                     accountHoldersAndAdministratorsOnly: Bool = false) throws {
+                                     includeGuestRecipients: Bool = true) throws {
         let normalized = text.replacingOccurrences(of: "\r\n", with: "\n")
             .replacingOccurrences(of: "\r", with: "\n")
         guard !normalized.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
@@ -455,7 +455,7 @@ final class LegacyServerRuntime {
             canSpeak = (channel.flags & Self.channelRestrictedChatFlag) == 0 ||
                 (botMode & (Self.channelOperatorMode | Self.channelSpeechMode)) != 0
             recipients = channel.members.keys.compactMap { authenticatedByUserID[$0] }
-            if accountHoldersAndAdministratorsOnly {
+            if !includeGuestRecipients {
                 recipients = recipients.filter {
                     guard let mode = $0.account?.mode else { return false }
                     return mode == .accountHolder || mode == .administrator
@@ -1334,6 +1334,7 @@ final class LegacyServerRuntime {
             "maxSimultaneousFileTransfers": Int(state.advanced.maxSimultaneousFileTransfers),
             "maxFileTransfersPerUser": Int(state.advanced.maxFileTransfersPerUser),
             "maxFolderDownloadDepth": Int(state.advanced.maxFolderDownloadDepth),
+            "fileWatcherGuestsEnabled": state.advanced.fileWatcherGuestsEnabled,
             "filesRoot": state.runtime.filesRoot.isEmpty ? storageRoot.standardizedFileURL.path : state.runtime.filesRoot,
             "legacyFilesRoot": state.runtime.legacyFilesRoot,
             "searchIndexRebuildIntervalHours": NSNumber(value: state.runtime.searchIndexRebuildIntervalHours),
@@ -1384,6 +1385,15 @@ final class LegacyServerRuntime {
         return value
     }
 
+    private func httpAdminBool(_ object: [String: Any], key: String) throws -> Bool? {
+        guard let raw = object[key] else { return nil }
+        guard let number = raw as? NSNumber,
+              CFGetTypeID(number) == CFBooleanGetTypeID() else {
+            throw ServerStateError.invalidValue("\(key) must be a boolean.")
+        }
+        return number.boolValue
+    }
+
     private func httpAdminUInt64(_ object: [String: Any], key: String, maximum: UInt64) throws -> UInt64? {
         guard let raw = object[key] else { return nil }
         guard let number = raw as? NSNumber,
@@ -1422,6 +1432,7 @@ final class LegacyServerRuntime {
         let maxTransfers = try httpAdminUInt64(object, key: "maxSimultaneousFileTransfers", maximum: UInt64(UInt16.max))
         let maxUserTransfers = try httpAdminUInt64(object, key: "maxFileTransfersPerUser", maximum: UInt64(UInt16.max))
         let maxFolderDepth = try httpAdminUInt64(object, key: "maxFolderDownloadDepth", maximum: UInt64(UInt16.max))
+        let fileWatcherGuestsEnabled = try httpAdminBool(object, key: "fileWatcherGuestsEnabled")
         let rebuildHours = try httpAdminUInt64(object, key: "searchIndexRebuildIntervalHours", maximum: UInt64(UInt32.max))
         let exclusions: [String]?
         if let raw = object["searchIndexExclusions"] {
@@ -1469,6 +1480,7 @@ final class LegacyServerRuntime {
                 state.advanced.maxFileTransfersPerUser = UInt16(maxUserTransfers)
             }
             if let maxFolderDepth { state.advanced.maxFolderDownloadDepth = UInt16(maxFolderDepth) }
+            if let fileWatcherGuestsEnabled { state.advanced.fileWatcherGuestsEnabled = fileWatcherGuestsEnabled }
             if let rebuildHours { state.runtime.searchIndexRebuildIntervalHours = UInt32(rebuildHours) }
             if let exclusions { state.runtime.searchIndexExclusions = exclusions }
             try ServerStateValidator.validate(identity: state.identity)
@@ -3848,9 +3860,10 @@ final class LegacyServerRuntime {
             return false
         }
         do {
+            let includeGuests = backend.snapshot().advanced.fileWatcherGuestsEnabled
             try postLocalBotMessage(body, channelID: announcement.watcher.channelID,
                                     source: "file-watcher:\(announcement.watcher.path)",
-                                    accountHoldersAndAdministratorsOnly: true)
+                                    includeGuestRecipients: includeGuests)
             return true
         } catch {
             log("Bot File Watcher could not post \(announcement.folderPath): \(error.localizedDescription)")
@@ -4379,7 +4392,8 @@ final class LegacyServerRuntime {
              LegacyServerSettingField.searchIndexExclusions,
              LegacyServerSettingField.legacyFilesRoot,
              LegacyServerSettingField.authenticationMode,
-             LegacyServerSettingField.searchIndexRebuildIntervalHours:
+             LegacyServerSettingField.searchIndexRebuildIntervalHours,
+             LegacyServerSettingField.fileWatcherGuestsEnabled:
             return .editAdvancedSettings
         case LegacyServerSettingField.trackerList, LegacyServerSettingField.trackerRegistrationFlags,
              LegacyServerSettingField.trackerDescription:
@@ -4418,6 +4432,8 @@ final class LegacyServerRuntime {
         case LegacyServerSettingField.maxConnections: return LegacyWire.uint16BE(state.advanced.maxConnections)
         case LegacyServerSettingField.maxConnectionsPerIP: return LegacyWire.uint16BE(state.advanced.maxConnectionsPerIP)
         case LegacyServerSettingField.maxFolderDownloadDepth: return LegacyWire.uint16BE(state.advanced.maxFolderDownloadDepth)
+        case LegacyServerSettingField.fileWatcherGuestsEnabled:
+            return LegacyServerSettingField.encodeBoolean(state.advanced.fileWatcherGuestsEnabled)
         case LegacyServerSettingField.statisticHits: return u32(state.statistics.hits)
         case LegacyServerSettingField.statisticConnectionPeak: return u32(state.statistics.connectionPeak)
         case LegacyServerSettingField.statisticIncorrectLogins: return u32(state.statistics.incorrectLogins)
@@ -4624,6 +4640,10 @@ final class LegacyServerRuntime {
                     case LegacyServerSettingField.maxConnections: state.advanced.maxConnections = try field.uint16BE()
                     case LegacyServerSettingField.maxConnectionsPerIP: state.advanced.maxConnectionsPerIP = try field.uint16BE()
                     case LegacyServerSettingField.maxFolderDownloadDepth: state.advanced.maxFolderDownloadDepth = try field.uint16BE()
+                    case LegacyServerSettingField.fileWatcherGuestsEnabled:
+                        state.advanced.fileWatcherGuestsEnabled = try LegacyServerSettingField.decodeBoolean(
+                            field.value, fieldName: "File Watcher Guest visibility"
+                        )
                     case LegacyServerSettingField.allowDenyIPList:
                         let rules = try LegacyServerSettingField.decodeIPRestrictions(field.value)
                         guard rules.count <= 4096 else { throw ServerStateError.invalidValue("Allow/Deny IP list exceeds 4096 rules.") }
@@ -4750,6 +4770,7 @@ final class LegacyServerRuntime {
         object["maxSimultaneousFileTransfers"] = Int(state.advanced.maxSimultaneousFileTransfers)
         object["maxFileTransfersPerUser"] = Int(state.advanced.maxFileTransfersPerUser)
         object["maxFolderDownloadDepth"] = Int(state.advanced.maxFolderDownloadDepth)
+        object["fileWatcherGuestsEnabled"] = state.advanced.fileWatcherGuestsEnabled
         object["uploadBandwidthLimitBytesPerSecond"] = NSNumber(value: state.runtime.uploadBandwidthLimitBytesPerSecond)
         object["searchIndexExclusions"] = state.runtime.searchIndexExclusions
         object["searchIndexRebuildIntervalHours"] = Int(state.runtime.searchIndexRebuildIntervalHours)

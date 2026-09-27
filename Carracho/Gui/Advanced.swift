@@ -94,6 +94,8 @@ extension ViewController {
 
         adminAuthenticationModePopup.target = self
         adminAuthenticationModePopup.action = #selector(advancedPopupChanged(_:))
+        adminFileWatcherGuestsCheckbox.target = self
+        adminFileWatcherGuestsCheckbox.action = #selector(advancedCheckboxChanged(_:))
         transferBandwidthUnitPopup.target = self
         transferBandwidthUnitPopup.action = #selector(advancedBandwidthUnitChanged(_:))
         transferBandwidthField.target = self
@@ -143,6 +145,11 @@ extension ViewController {
             advancedFormRow("Upload limit", control: bandwidthControls),
             transferBandwidthValueLabel,
             advancedHelp(L("The upload limit applies server-wide. Enter 0 for unlimited.")),
+        ])
+
+        let fileWatcherCard = advancedSectionCard(title: L("Bot File Watchers"), symbol: "folder.badge.gearshape", content: [
+            adminFileWatcherGuestsCheckbox,
+            advancedHelp(L("When enabled, Guest accounts in the selected Conference also receive new-file announcements. Account Holders and Administrators always receive them.")),
         ])
 
         adminLegacyFilesRootField.placeholderString = L("Empty = normal File Root")
@@ -229,8 +236,9 @@ extension ViewController {
 
         let grid = ResponsiveAdvancedGridView(cards: [
             connectionsCard, transfersCard,
-            legacyCard, maintenanceCard,
-            exclusionsCard, bansCard,
+            fileWatcherCard, legacyCard,
+            maintenanceCard, exclusionsCard,
+            bansCard,
         ])
 
         let scroll = NSScrollView()
@@ -307,10 +315,12 @@ extension ViewController {
         advancedSaveStatusOverride = nil
         advancedSaveStatusColor = nil
         advancedRemoteCoreLoaded = false
+        advancedRemoteFileWatcherGuestSettingSupported = false
         advancedRemoteLegacyRootLoaded = false
         advancedRemoteExclusionsLoaded = false
         advancedRemoteBansLoaded = false
         remoteAdvancedAuthenticationMode = nil
+        adminFileWatcherGuestsCheckbox.state = .off
 
         // Do not allow values from the previous connection to remain actionable while the
         // next server is still loading its own administration state.
@@ -330,6 +340,10 @@ extension ViewController {
     }
 
     @objc func advancedPopupChanged(_ sender: NSPopUpButton) {
+        markAdvancedDirty()
+    }
+
+    @objc func advancedCheckboxChanged(_ sender: NSButton) {
         markAdvancedDirty()
     }
 
@@ -361,6 +375,11 @@ extension ViewController {
             field.isEnabled = editorEnabled
         }
         adminAuthenticationModePopup.isEnabled = editorEnabled
+        let fileWatcherGuestSettingAvailable = !client.isConnected || advancedRemoteFileWatcherGuestSettingSupported
+        adminFileWatcherGuestsCheckbox.isEnabled = editorEnabled && fileWatcherGuestSettingAvailable
+        adminFileWatcherGuestsCheckbox.toolTip = client.isConnected && !advancedRemoteFileWatcherGuestSettingSupported
+            ? L("This server does not support Guest visibility for Bot File Watchers.")
+            : nil
         let bandwidthEditable = editorEnabled && (
             !client.isConnected ||
             remoteTransferUploadLimitBytesPerSecond != nil ||
@@ -437,6 +456,7 @@ extension ViewController {
             let maxTransfersPerUser = try parseUInt16(adminMaxTransfersPerUserField, name: L("Max. file transfers per user"), requirePositive: true)
             let maxFolderDepth = try parseUInt16(adminMaxFolderDepthField, name: L("Max. folder download depth"), requirePositive: false)
             let authenticationMode: ServerAuthenticationMode = adminAuthenticationModePopup.indexOfSelectedItem == 1 ? .modernOnly : .legacyCompatible
+            let fileWatcherGuestsEnabled = adminFileWatcherGuestsCheckbox.state == .on
             let legacyRoot = adminLegacyFilesRootField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
             guard legacyRoot.isEmpty || NSString(string: legacyRoot).isAbsolutePath else {
                 throw ServerStateError.invalidValue(L("Classic / Legacy File Root must be empty or an absolute server path."))
@@ -482,6 +502,7 @@ extension ViewController {
                                                    maxTransfersPerUser: maxTransfersPerUser,
                                                    maxFolderDepth: maxFolderDepth,
                                                    authenticationMode: authenticationMode,
+                                                   fileWatcherGuestsEnabled: fileWatcherGuestsEnabled,
                                                    legacyRoot: legacyRoot,
                                                    exclusions: exclusions,
                                                    rebuildIntervalHours: rebuildIntervalHours,
@@ -494,6 +515,7 @@ extension ViewController {
                                                   maxTransfersPerUser: maxTransfersPerUser,
                                                   maxFolderDepth: maxFolderDepth,
                                                   authenticationMode: authenticationMode,
+                                                  fileWatcherGuestsEnabled: fileWatcherGuestsEnabled,
                                                   legacyRoot: legacyRoot,
                                                   exclusions: exclusions,
                                                   rebuildIntervalHours: rebuildIntervalHours,
@@ -532,6 +554,7 @@ extension ViewController {
     func saveLocalAdvancedChanges(maxConnections: UInt16, maxConnectionsPerIP: UInt16,
                                           maxTransfers: UInt16, maxTransfersPerUser: UInt16,
                                           maxFolderDepth: UInt16, authenticationMode: ServerAuthenticationMode,
+                                          fileWatcherGuestsEnabled: Bool,
                                           legacyRoot: String, exclusions: [String],
                                           rebuildIntervalHours: UInt32, bandwidth: UInt64) {
         guard let backend = serverBackend else { return }
@@ -550,6 +573,7 @@ extension ViewController {
             advanced.maxSimultaneousFileTransfers = maxTransfers
             advanced.maxFileTransfersPerUser = maxTransfersPerUser
             advanced.maxFolderDownloadDepth = maxFolderDepth
+            advanced.fileWatcherGuestsEnabled = fileWatcherGuestsEnabled
 
             var runtime = localServerState.runtime
             let intervalChanged = runtime.searchIndexRebuildIntervalHours != rebuildIntervalHours
@@ -644,6 +668,7 @@ extension ViewController {
     func saveRemoteAdvancedChanges(maxConnections: UInt16, maxConnectionsPerIP: UInt16,
                                            maxTransfers: UInt16, maxTransfersPerUser: UInt16,
                                            maxFolderDepth: UInt16, authenticationMode: ServerAuthenticationMode,
+                                           fileWatcherGuestsEnabled: Bool,
                                            legacyRoot: String, exclusions: [String],
                                            rebuildIntervalHours: UInt32, bandwidth: UInt64?,
                                            bans: [ServerIPRestriction]) {
@@ -677,7 +702,7 @@ extension ViewController {
             lock.unlock()
         }
 
-        let settings = [
+        var settings = [
             LegacyTLV(type: LegacyServerSettingField.authenticationMode,
                       value: LegacyServerSettingField.encodeAuthenticationMode(modernOnly: authenticationMode == .modernOnly)),
             LegacyTLV(type: LegacyServerSettingField.maxConnections, value: LegacyWire.uint16BE(maxConnections)),
@@ -690,6 +715,12 @@ extension ViewController {
             LegacyTLV(type: LegacyServerSettingField.searchIndexRebuildIntervalHours,
                       value: LegacyWire.uint32BE(rebuildIntervalHours)),
         ]
+        if advancedRemoteFileWatcherGuestSettingSupported {
+            settings.append(LegacyTLV(
+                type: LegacyServerSettingField.fileWatcherGuestsEnabled,
+                value: LegacyServerSettingField.encodeBoolean(fileWatcherGuestsEnabled)
+            ))
+        }
         group.enter()
         client.setServerSettings(settings) { result in
             switch result {
@@ -823,6 +854,7 @@ extension ViewController {
             LegacyServerSettingField.maxSimultaneousFileTransfers,
             LegacyServerSettingField.maxFileTransfersPerUser,
             LegacyServerSettingField.maxFolderDownloadDepth,
+            LegacyServerSettingField.fileWatcherGuestsEnabled,
             LegacyServerSettingField.searchIndexRebuildIntervalHours,
         ]
         let requestClient = client
@@ -860,6 +892,18 @@ extension ViewController {
                 self.adminMaxTransfersPerUserField.stringValue = String(try u16(maxTransfersPerUser))
                 let remoteFolderDepth = try u16(maxFolderDepth)
                 self.adminMaxFolderDepthField.stringValue = String(Self.displayedRemoteFolderDepth(remoteFolderDepth))
+                if let fileWatcherGuests = values[LegacyServerSettingField.fileWatcherGuestsEnabled] {
+                    let guestsEnabled = try LegacyServerSettingField.decodeBoolean(
+                        fileWatcherGuests, fieldName: "File Watcher Guest visibility"
+                    )
+                    self.advancedRemoteFileWatcherGuestSettingSupported = true
+                    self.adminFileWatcherGuestsCheckbox.state = guestsEnabled ? .on : .off
+                } else {
+                    // Older modern servers simply omit unknown setting fields. Keep their
+                    // Administration page usable and do not send the new setting back to them.
+                    self.advancedRemoteFileWatcherGuestSettingSupported = false
+                    self.adminFileWatcherGuestsCheckbox.state = .off
+                }
                 let interval = try values[LegacyServerSettingField.searchIndexRebuildIntervalHours].map(u32) ?? 0
                 self.adminSearchIndexRebuildIntervalField.stringValue = String(interval)
                 self.advancedRemoteCoreLoaded = true

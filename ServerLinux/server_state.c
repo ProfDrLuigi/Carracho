@@ -155,7 +155,7 @@ static json_object *initial_state(void){
     json_object*identity=json_object_new_object();json_object_object_add(identity,"name",json_object_new_string("Carracho Server"));json_object_object_add(identity,"operatorName",json_object_new_string("unknown"));json_object_object_add(identity,"location",json_object_new_string("unknown"));json_object_object_add(identity,"description",json_object_new_string(""));json_object_object_add(identity,"bannerURL",json_object_new_string(""));
     char*default_banner=base64_encode(k_carracho_classic_banner_png,k_carracho_classic_banner_png_len);if(default_banner){json_object_object_add(identity,"bannerData",json_object_new_string(default_banner));free(default_banner);}
     json_object_object_add(root,"identity",identity);
-    json_object*adv=json_object_new_object();json_object_object_add(adv,"controlPort",json_object_new_int(6700));json_object_object_add(adv,"maxConnections",json_object_new_int(100));json_object_object_add(adv,"maxConnectionsPerIP",json_object_new_int(5));json_object_object_add(adv,"maxSimultaneousFileTransfers",json_object_new_int(20));json_object_object_add(adv,"maxFileTransfersPerUser",json_object_new_int(1));json_object_object_add(adv,"maxFolderDownloadDepth",json_object_new_int(8));json_object_object_add(adv,"newsExpirationHour",json_object_new_int(0));json_object_object_add(adv,"newsExpirationMinute",json_object_new_int(0));json_object_object_add(adv,"ipRestrictions",json_object_new_array());json_object_object_add(adv,"trackers",json_object_new_array());json_object_object_add(adv,"trackerAdvertisementFlags",json_object_new_int64(0));json_object_object_add(adv,"trackerDescription",json_object_new_string(""));json_object_object_add(root,"advanced",adv);
+    json_object*adv=json_object_new_object();json_object_object_add(adv,"controlPort",json_object_new_int(6700));json_object_object_add(adv,"maxConnections",json_object_new_int(100));json_object_object_add(adv,"maxConnectionsPerIP",json_object_new_int(5));json_object_object_add(adv,"maxSimultaneousFileTransfers",json_object_new_int(20));json_object_object_add(adv,"maxFileTransfersPerUser",json_object_new_int(1));json_object_object_add(adv,"maxFolderDownloadDepth",json_object_new_int(8));json_object_object_add(adv,"fileWatcherGuestsEnabled",json_object_new_boolean(0));json_object_object_add(adv,"newsExpirationHour",json_object_new_int(0));json_object_object_add(adv,"newsExpirationMinute",json_object_new_int(0));json_object_object_add(adv,"ipRestrictions",json_object_new_array());json_object_object_add(adv,"trackers",json_object_new_array());json_object_object_add(adv,"trackerAdvertisementFlags",json_object_new_int64(0));json_object_object_add(adv,"trackerDescription",json_object_new_string(""));json_object_object_add(root,"advanced",adv);
     json_object*runtime=json_object_new_object();json_object_object_add(runtime,"filesRoot",json_object_new_string(""));json_object_object_add(runtime,"legacyFilesRoot",json_object_new_string(""));json_object_object_add(runtime,"uploadBandwidthLimitBytesPerSecond",json_object_new_int64(0));json_object_object_add(runtime,"searchIndexExclusions",json_object_new_array());json_object_object_add(runtime,"searchIndexRebuildIntervalHours",json_object_new_int(0));json_object_object_add(root,"runtime",runtime);
     json_object*agreement=json_object_new_object();json_object_object_add(agreement,"enabled",json_object_new_boolean(0));json_object_object_add(agreement,"text",json_object_new_string(""));json_object_object_add(root,"agreement",agreement);
     static const unsigned admin_permissions[]={0x0a,0x0b,0x0c,0x0d,0x0e,0x0f,0x10,0x11,0x12,0x13,0x14,0x15,0x16,0x17,0x18,0x19,0x1c,0x21,0x22,0x23,0x24,0x25,0x26,0x27,0x28,0x2a,0x2c,0x2d,0x2e,0x2f,0x30,0x31};
@@ -309,6 +309,17 @@ static int json_set_int_if_changed(json_object *object, const char *key, int64_t
     return 0;
 }
 
+static int json_set_bool_if_changed(json_object *object, const char *key, int value, unsigned *changed) {
+    json_object *old = NULL;
+    int normalized = value ? 1 : 0;
+    if (json_object_object_get_ex(object, key, &old) && json_object_is_type(old, json_type_boolean) &&
+        json_object_get_boolean(old) == normalized)
+        return 0;
+    json_object_object_add(object, key, json_object_new_boolean(normalized));
+    if (changed) (*changed)++;
+    return 0;
+}
+
 static int json_set_trackers_if_changed(json_object *advanced, const cr_startup_persistent_settings *settings, unsigned *changed) {
     json_object *old = NULL;
     int same = json_object_object_get_ex(advanced, "trackers", &old) && json_object_is_type(old, json_type_array) &&
@@ -439,6 +450,7 @@ int cr_state_reconcile_startup_settings(cr_server_state *s, const cr_startup_per
     json_set_int_if_changed(advanced, "maxSimultaneousFileTransfers", settings->max_simultaneous_file_transfers, &changed);
     json_set_int_if_changed(advanced, "maxFileTransfersPerUser", settings->max_file_transfers_per_user, &changed);
     json_set_int_if_changed(advanced, "maxFolderDownloadDepth", settings->max_folder_download_depth, &changed);
+    json_set_bool_if_changed(advanced, "fileWatcherGuestsEnabled", settings->file_watcher_guests_enabled, &changed);
     json_set_int_if_changed(advanced, "newsExpirationHour", settings->news_expiration_hour, &changed);
     json_set_int_if_changed(advanced, "newsExpirationMinute", settings->news_expiration_minute, &changed);
     if (settings->tracker_registration_configured) {
@@ -482,6 +494,7 @@ int cr_state_refresh_parsed_locked(cr_server_state*s){
            The generic positive-U16 parser used to turn a persisted 0 straight back into the
            default 8 whenever the state was refreshed after an admin save. */
         { int64_t x=json_int_default(o,"maxFolderDownloadDepth",8); if(x>=0&&x<=65535)s->advanced.max_folder_download_depth=(uint16_t)x; }
+        s->advanced.file_watcher_guests_enabled=json_bool_default(o,"fileWatcherGuestsEnabled",0);
         s->advanced.news_expiration_hour=(uint8_t)json_int_default(o,"newsExpirationHour",0);s->advanced.news_expiration_minute=(uint8_t)json_int_default(o,"newsExpirationMinute",0);s->advanced.tracker_advertisement_flags=(uint32_t)json_int_default(o,"trackerAdvertisementFlags",0);copy_json_string(o,"trackerDescription",s->advanced.tracker_description,sizeof(s->advanced.tracker_description),"");
         json_object *rules = NULL;
         if (json_object_object_get_ex(o, "ipRestrictions", &rules) && json_object_is_type(rules, json_type_array)) {

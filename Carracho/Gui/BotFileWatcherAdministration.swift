@@ -53,7 +53,7 @@ extension ViewController {
             adminBotFileWatcherAddButton, adminBotFileWatcherDeleteButton,
             NSView(), adminBotFileWatcherSaveButton,
         ], spacing: 8)
-        let note = infoLabel(L("Watch a folder below the server Files root, or use . to watch the Files root itself. When new files arrive, the Bot posts one coalesced message to the selected conference for Account Holders and Administrators only. Guest accounts do not receive File Watcher announcements. Use {folder} for a clickable folder link and {file} for the detected file or folder name."))
+        let note = infoLabel(L("Watch a folder below the server Files root, or use . to watch the Files root itself. When new files arrive, the Bot posts one coalesced message to the selected conference. Guest visibility is controlled in Advanced server settings. Use {folder} for a clickable folder link and {file} for the detected file or folder name."))
         note.maximumNumberOfLines = 4
         return [title, scroll, actions, note]
     }

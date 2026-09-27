@@ -187,8 +187,11 @@ Supported PATCH fields are:
 - maxSimultaneousFileTransfers
 - maxFileTransfersPerUser
 - maxFolderDownloadDepth
+- fileWatcherGuestsEnabled
 - searchIndexRebuildIntervalHours
 - searchIndexExclusions
+
+`fileWatcherGuestsEnabled` is a boolean. When `false` (the default), Bot File Watcher announcements are delivered only to Account Holder and Administrator members of the selected Conference. When `true`, Guest members receive them as well.
 
 Changes are written through the normal server-state code and persisted back to the startup configuration.
 

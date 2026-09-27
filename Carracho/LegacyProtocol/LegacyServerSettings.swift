@@ -43,14 +43,22 @@ enum LegacyServerSettingField {
     static let authenticationMode: UInt32 = 0xf0000006
     /// Modern Carracho extension: UInt32 hours between automatic full search-index rebuilds; 0 disables.
     static let searchIndexRebuildIntervalHours: UInt32 = 0xf0000007
+    /// Modern Carracho extension: one byte, 1 allows Guest accounts to receive Bot File Watcher announcements.
+    static let fileWatcherGuestsEnabled: UInt32 = 0xf0000008
 
-    static func encodeAuthenticationMode(modernOnly: Bool) -> Data { Data([modernOnly ? 1 : 0]) }
+    static func encodeBoolean(_ value: Bool) -> Data { Data([value ? 1 : 0]) }
 
-    static func decodeAuthenticationMode(_ data: Data) throws -> Bool {
+    static func decodeBoolean(_ data: Data, fieldName: String) throws -> Bool {
         guard data.count == 1, let value = data.first, value <= 1 else {
-            throw LegacyProtocolError.invalidRecord("authentication mode must be one byte (0 or 1)")
+            throw LegacyProtocolError.invalidRecord("\(fieldName) must be one byte (0 or 1)")
         }
         return value == 1
+    }
+
+    static func encodeAuthenticationMode(modernOnly: Bool) -> Data { encodeBoolean(modernOnly) }
+
+    static func decodeAuthenticationMode(_ data: Data) throws -> Bool {
+        try decodeBoolean(data, fieldName: "authentication mode")
     }
 
     static func packNewsExpireTime(hour: UInt8, minute: UInt8) throws -> UInt16 {

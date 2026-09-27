@@ -2008,12 +2008,15 @@
 
 // Bot File Watchers
 "File Watchers" = "File Watchers";
+"Bot File Watchers" = "Bot File Watchers";
+"Show announcements to Guests" = "Show announcements to Guests";
+"When enabled, Guest accounts in the selected Conference also receive new-file announcements. Account Holders and Administrators always receive them." = "When enabled, Guest accounts in the selected Conference also receive new-file announcements. Account Holders and Administrators always receive them.";
 "Add Watcher" = "Add Watcher";
 "Remove Watcher" = "Remove Watcher";
 "Save Watchers" = "Save Watchers";
 "Folder relative to Files root, or . for root" = "Folder relative to Files root, or . for root";
 "New {file} in {folder}" = "New {file} in {folder}";
-"Watch a folder below the server Files root, or use . to watch the Files root itself. When new files arrive, the Bot posts one coalesced message to the selected conference for Account Holders and Administrators only. Guest accounts do not receive File Watcher announcements. Use {folder} for a clickable folder link and {file} for the detected file or folder name." = "Watch a folder below the server Files root, or use . to watch the Files root itself. When new files arrive, the Bot posts one coalesced message to the selected conference for Account Holders and Administrators only. Guest accounts do not receive File Watcher announcements. Use {folder} for a clickable folder link and {file} for the detected file or folder name.";
+"Watch a folder below the server Files root, or use . to watch the Files root itself. When new files arrive, the Bot posts one coalesced message to the selected conference. Guest visibility is controlled in Advanced server settings. Use {folder} for a clickable folder link and {file} for the detected file or folder name." = "Watch a folder below the server Files root, or use . to watch the Files root itself. When new files arrive, the Bot posts one coalesced message to the selected conference. Guest visibility is controlled in Advanced server settings. Use {folder} for a clickable folder link and {file} for the detected file or folder name.";
 "Too many Bot File Watchers." = "Too many Bot File Watchers.";
 "File Watcher %@ has invalid settings. Paths are relative to Files and the message must contain {folder} or {file}." = "File Watcher %@ has invalid settings. Paths are relative to Files and the message must contain {folder} or {file}.";
 "Each File Watcher needs a unique identifier." = "Each File Watcher needs a unique identifier.";
@@ -2021,6 +2024,7 @@
 "Bot File Watchers saved." = "Bot File Watchers saved.";
 "Bot File Watchers require a modern Carracho server." = "Bot File Watchers require a modern Carracho server.";
 "This server does not support Bot File Watchers." = "This server does not support Bot File Watchers.";
+"This server does not support Guest visibility for Bot File Watchers." = "This server does not support Guest visibility for Bot File Watchers.";
 
 // Account transfer statistics
 "Download data" = "Download data";

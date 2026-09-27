@@ -147,6 +147,20 @@ static int config_int(json_object *root, const char *key, int64_t fallback,
     return 0;
 }
 
+static int config_bool(json_object *root, const char *key, int fallback, int *out) {
+    json_object *value = NULL;
+    if (!json_object_object_get_ex(root, key, &value)) {
+        *out = fallback ? 1 : 0;
+        return 0;
+    }
+    if (!json_object_is_type(value, json_type_boolean)) {
+        fprintf(stderr, "carracho-server: config field '%s' must be a boolean\n", key);
+        return -1;
+    }
+    *out = json_object_get_boolean(value) ? 1 : 0;
+    return 0;
+}
+
 static int config_tracker_registration(json_object *root, cr_startup_persistent_settings *out) {
     json_object *registration = NULL;
     if (!json_object_object_get_ex(root, "trackerRegistration", &registration)) return 0;
@@ -456,6 +470,7 @@ static int load_startup_config(const char *config_path, const char *instance_roo
     config->persistent.max_file_transfers_per_user = (uint16_t)number;
     if (config_int(root, "maxFolderDownloadDepth", 8, 0, 65535, &number)) { json_object_put(root); return -1; }
     config->persistent.max_folder_download_depth = (uint16_t)number;
+    if (config_bool(root, "fileWatcherGuestsEnabled", 0, &config->persistent.file_watcher_guests_enabled)) { json_object_put(root); return -1; }
     if (config_int(root, "newsExpirationHour", 0, 0, 23, &number)) { json_object_put(root); return -1; }
     config->persistent.news_expiration_hour = (uint8_t)number;
     if (config_int(root, "newsExpirationMinute", 0, 0, 59, &number)) { json_object_put(root); return -1; }

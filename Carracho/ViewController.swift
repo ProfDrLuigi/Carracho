@@ -956,6 +956,11 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
     let adminMaxTransfersField = NSTextField(string: "")
     let adminMaxTransfersPerUserField = NSTextField(string: "")
     let adminMaxFolderDepthField = NSTextField(string: "")
+    let adminFileWatcherGuestsCheckbox = NSButton(
+        checkboxWithTitle: L("Show announcements to Guests"),
+        target: nil,
+        action: nil
+    )
     let adminLegacyFilesRootField = NSTextField(string: "")
     let adminLegacyFilesRootStatusLabel = NSTextField(labelWithString: "")
     let adminSearchIndexExclusionsView = NSTextView()
@@ -980,6 +985,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
     var advancedSaveStatusOverride: String?
     var advancedSaveStatusColor: NSColor?
     var advancedRemoteCoreLoaded = false
+    var advancedRemoteFileWatcherGuestSettingSupported = false
     var advancedRemoteLegacyRootLoaded = false
     var advancedRemoteExclusionsLoaded = false
     var advancedRemoteBansLoaded = false

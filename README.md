@@ -18,11 +18,11 @@ The modern transport protects far more than login traffic: chat/control packets,
 
 See the collapsible **Security and modern encryption** section below for the protocol details.
 
-### Current release: 1.0.8
+### Current release: 1.0.9
 
-Carracho 1.0.8 adds **five-minute message editing** for modern Conference and Private Messages and introduces configurable **Bot File Watchers** on both the macOS and native Linux servers. File Watchers can monitor individual folders or the complete Files root, publish into a selected Conference, and use `{folder}` and `{file}` placeholders in their announcements.
+Carracho 1.0.9 focuses on **large Files-search performance and stability**, preserves Conference sender identity after users disconnect, refreshes Tracker and macOS Server artwork, and further refines **Bot File Watchers**. Watchers now ignore internal transfer-staging paths, remain restricted to Account Holders and Administrators by default, and can optionally be made visible to Guest members through an Advanced server setting on both macOS and Linux.
 
-The full release notes are available in [`README_1.0.8.md`](README_1.0.8.md).
+The full release notes are available in [`README_1.0.9.md`](README_1.0.9.md).
 
 
 ## At a glance
@@ -328,7 +328,7 @@ Announcement templates support two placeholders:
 New {file} in {folder}
 ```
 
-The client understands the generated `carracho-file:///` links and opens the referenced location directly in the **Files** workspace. File Watcher announcements are delivered only to **Account Holder** and **Administrator** members of the selected Conference; Guest accounts do not receive these Bot messages. Filesystem event bursts are coalesced before posting, and repeated announcements for the same watcher/folder are rate-limited.
+The client understands the generated `carracho-file:///` links and opens the referenced location directly in the **Files** workspace. By default, File Watcher announcements are delivered to **Account Holder** and **Administrator** members of the selected Conference. An Advanced server setting can additionally allow **Guest** members to receive them. Filesystem event bursts are coalesced before posting, and repeated announcements for the same watcher/folder are rate-limited.
 
 The macOS server uses native filesystem event sources. The native Linux server implements the same feature with **inotify**.
 
