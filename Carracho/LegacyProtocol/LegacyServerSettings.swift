@@ -45,6 +45,8 @@ enum LegacyServerSettingField {
     static let searchIndexRebuildIntervalHours: UInt32 = 0xf0000007
     /// Modern Carracho extension: one byte, 1 allows Guest accounts to receive Bot File Watcher announcements.
     static let fileWatcherGuestsEnabled: UInt32 = 0xf0000008
+    /// Modern Carracho extension: one byte, 1 stages completed Guest uploads for administrator approval.
+    static let guestUploadApprovalEnabled: UInt32 = 0xf0000009
 
     static func encodeBoolean(_ value: Bool) -> Data { Data([value ? 1 : 0]) }
 

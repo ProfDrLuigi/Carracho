@@ -451,6 +451,7 @@ int cr_state_reconcile_startup_settings(cr_server_state *s, const cr_startup_per
     json_set_int_if_changed(advanced, "maxFileTransfersPerUser", settings->max_file_transfers_per_user, &changed);
     json_set_int_if_changed(advanced, "maxFolderDownloadDepth", settings->max_folder_download_depth, &changed);
     json_set_bool_if_changed(advanced, "fileWatcherGuestsEnabled", settings->file_watcher_guests_enabled, &changed);
+    json_set_bool_if_changed(advanced, "guestUploadApprovalEnabled", settings->guest_upload_approval_enabled, &changed);
     json_set_int_if_changed(advanced, "newsExpirationHour", settings->news_expiration_hour, &changed);
     json_set_int_if_changed(advanced, "newsExpirationMinute", settings->news_expiration_minute, &changed);
     if (settings->tracker_registration_configured) {
@@ -495,6 +496,7 @@ int cr_state_refresh_parsed_locked(cr_server_state*s){
            default 8 whenever the state was refreshed after an admin save. */
         { int64_t x=json_int_default(o,"maxFolderDownloadDepth",8); if(x>=0&&x<=65535)s->advanced.max_folder_download_depth=(uint16_t)x; }
         s->advanced.file_watcher_guests_enabled=json_bool_default(o,"fileWatcherGuestsEnabled",0);
+        s->advanced.guest_upload_approval_enabled=json_bool_default(o,"guestUploadApprovalEnabled",0);
         s->advanced.news_expiration_hour=(uint8_t)json_int_default(o,"newsExpirationHour",0);s->advanced.news_expiration_minute=(uint8_t)json_int_default(o,"newsExpirationMinute",0);s->advanced.tracker_advertisement_flags=(uint32_t)json_int_default(o,"trackerAdvertisementFlags",0);copy_json_string(o,"trackerDescription",s->advanced.tracker_description,sizeof(s->advanced.tracker_description),"");
         json_object *rules = NULL;
         if (json_object_object_get_ex(o, "ipRestrictions", &rules) && json_object_is_type(rules, json_type_array)) {

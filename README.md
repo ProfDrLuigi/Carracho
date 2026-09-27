@@ -20,7 +20,7 @@ See the collapsible **Security and modern encryption** section below for the pro
 
 ### Current release: 1.0.9
 
-Carracho 1.0.9 focuses on **large Files-search performance and stability**, preserves Conference sender identity after users disconnect, refreshes Tracker and macOS Server artwork, and further refines **Bot File Watchers**. Watchers now ignore internal transfer-staging paths, remain restricted to Account Holders and Administrators by default, and can optionally be made visible to Guest members through an Advanced server setting on both macOS and Linux.
+Carracho 1.0.9 focuses on **large Files-search performance and stability**, preserves Conference sender identity after users disconnect, refreshes Tracker and macOS Server artwork, and further refines server-side file handling. **Bot File Watchers** now ignore internal transfer-staging paths and have configurable Guest visibility, while an optional **Guest upload approval** workflow can keep completed Guest uploads hidden until an Administrator approves or rejects them on both macOS and Linux.
 
 The full release notes are available in [`README_1.0.9.md`](README_1.0.9.md).
 
@@ -123,9 +123,10 @@ It includes:
 - Quick Look preview on macOS;
 - Finder integration for completed local downloads;
 - direct navigation from Bot File Watcher links into the referenced server folder;
-- support for personal directories, Dropbox-style areas and server-side access rules.
+- support for personal directories, Dropbox-style areas and server-side access rules;
+- optional server-side approval of completed Guest uploads before they become visible to other users.
 
-The server keeps incomplete uploads separate from published files. A staged upload is exposed under its final name only after the transfer has completed successfully.
+The server keeps incomplete uploads separate from published files. A staged upload is exposed under its final name only after the transfer has completed successfully. When **Guest uploads require approval** is enabled, a completed Guest upload is moved into a hidden pending area instead of the published tree. It is excluded from normal Files listings, downloads, search indexing and Bot File Watcher announcements until an Administrator approves it; rejecting it deletes the pending payload.
 
 Modern and Classic clients can also be given **separate file roots** when desired. The normal `filesRoot` is the published file tree used by modern Carracho sessions. An optional `legacyFilesRoot` can point Classic/Legacy clients at a completely different directory tree on the same server. If `legacyFilesRoot` is left empty, Classic clients simply use the normal `filesRoot` as well. This makes it possible to keep one shared file area for everybody or deliberately separate the modern and historical client environments without running two servers.
 
@@ -257,7 +258,7 @@ The current administration workspaces include:
 - **Server Log** — protocol and runtime activity;
 - **Events** — user activity audit trail;
 - **Bot** — local Bot runtime, automatic greeting, command rules, RSS/Atom feeds and File Watchers;
-- **Advanced** — limits, file/search settings, IP rules, authentication mode and storage-related options;
+- **Advanced** — limits, file/search settings, IP rules, authentication mode, File Watcher Guest visibility and Guest upload approval with a pending-upload queue;
 - **Agreement** — login agreement text;
 - **Statistics** — server and transfer counters.
 
@@ -329,6 +330,16 @@ New {file} in {folder}
 ```
 
 The client understands the generated `carracho-file:///` links and opens the referenced location directly in the **Files** workspace. By default, File Watcher announcements are delivered to **Account Holder** and **Administrator** members of the selected Conference. An Advanced server setting can additionally allow **Guest** members to receive them. Filesystem event bursts are coalesced before posting, and repeated announcements for the same watcher/folder are rate-limited.
+
+#### Guest upload approval
+
+Administrators can optionally enable **Guest uploads require approval** in **Administration → Advanced**. With this setting off, uploads behave as before. With it on, only uploads from **Guest** accounts are moderated; Account Holder and Administrator uploads are still published immediately.
+
+A completed Guest upload is kept in a hidden server-side pending area on the same filesystem as its intended destination. The client shows pending items with their destination, uploader, size and upload time, together with **Approve**, **Reject** and **Refresh** actions. Approval atomically publishes the payload under its intended final name and then makes it eligible for search indexing and File Watcher announcements. Rejection permanently deletes the pending payload.
+
+Pending destination names remain reserved while awaiting a decision so another upload cannot silently take the same final path. The queue survives server restarts on both the Swift/macOS and native Linux servers.
+
+A modern Guest uploader is notified after the server has fully accepted the completed payload into the approval queue. For folder uploads, this happens once for the whole folder and only after every contained file and subfolder has been transferred successfully.
 
 The macOS server uses native filesystem event sources. The native Linux server implements the same feature with **inotify**.
 
@@ -469,7 +480,7 @@ Server/
 
 ### Native Linux server
 
-`ServerLinux/` contains a native C implementation intended for headless deployment. It does not require a Swift runtime and uses OpenSSL, json-c, SQLite, libcurl and libxml2. Modern server features such as message editing and Bot File Watchers are implemented alongside the Swift/macOS runtime; Linux File Watchers use native `inotify` events.
+`ServerLinux/` contains a native C implementation intended for headless deployment. It does not require a Swift runtime and uses OpenSSL, json-c, SQLite, libcurl and libxml2. Modern server features such as message editing, Bot File Watchers and Guest upload approval are implemented alongside the Swift/macOS runtime; Linux File Watchers use native `inotify` events.
 
 Compilation of the native Linux components is documented in the **Building on Linux** section below.
 

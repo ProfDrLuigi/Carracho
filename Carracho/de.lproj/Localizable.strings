@@ -2070,3 +2070,32 @@
 "A message cannot be empty." = "Eine Nachricht darf nicht leer sein.";
 "Image attachments cannot be changed when editing a message." = "Bildanhänge können beim Bearbeiten einer Nachricht nicht geändert werden.";
 "Message could not be edited: %@" = "Nachricht konnte nicht bearbeitet werden: %@";
+
+// Guest upload approval
+"Guest uploads require approval" = "Guest-Uploads müssen freigegeben werden";
+"Guest Upload Approval" = "Freigabe von Guest-Uploads";
+"File / Destination" = "Datei / Ziel";
+"Uploader" = "Hochgeladen von";
+"Uploaded" = "Hochgeladen";
+"Approve" = "Freigeben";
+"Reject" = "Ablehnen";
+"When enabled, completed Guest uploads stay hidden until an Administrator approves them. Account Holder and Administrator uploads are published immediately." = "Wenn aktiviert, bleiben abgeschlossene Guest-Uploads verborgen, bis ein Administrator sie freigibt. Uploads von Account Holdern und Administratoren werden sofort veröffentlicht.";
+"This server does not support Guest upload approval." = "Dieser Server unterstützt die Freigabe von Guest-Uploads nicht.";
+"Loading pending uploads…" = "Ausstehende Uploads werden geladen…";
+"Pending upload moderation is unavailable on this server." = "Die Moderation ausstehender Uploads ist auf diesem Server nicht verfügbar.";
+"Start the local server to manage pending uploads." = "Starten Sie den lokalen Server, um ausstehende Uploads zu verwalten.";
+"No pending Guest uploads" = "Keine ausstehenden Guest-Uploads";
+"%@ pending Guest upload(s)" = "%@ ausstehende Guest-Uploads";
+"Could not load pending Guest uploads: %@" = "Ausstehende Guest-Uploads konnten nicht geladen werden: %@";
+"Guest upload approved: %@" = "Guest-Upload freigegeben: %@";
+"Guest upload rejected: %@" = "Guest-Upload abgelehnt: %@";
+"Reject Guest Upload?" = "Guest-Upload ablehnen?";
+"This permanently deletes the pending upload %@." = "Dadurch wird der ausstehende Upload %@ dauerhaft gelöscht.";
+
+// Guest upload pending notice
+"Folder upload completed and awaits approval: %@" = "Ordner vollständig hochgeladen und wartet auf Freigabe: %@";
+"Upload completed and awaits approval: %@" = "Upload abgeschlossen und wartet auf Freigabe: %@";
+"Folder upload awaits approval" = "Ordner-Upload wartet auf Freigabe";
+"Upload awaits approval" = "Upload wartet auf Freigabe";
+"The folder %@ was uploaded completely. It will become visible on the server only after an Administrator approves it." = "Der Ordner %@ wurde vollständig hochgeladen. Er wird auf dem Server erst sichtbar, nachdem ein Administrator ihn freigegeben hat.";
+"The file %@ was uploaded completely. It will become visible on the server only after an Administrator approves it." = "Die Datei %@ wurde vollständig hochgeladen. Sie wird auf dem Server erst sichtbar, nachdem ein Administrator sie freigegeben hat.";

@@ -96,6 +96,8 @@ extension ViewController {
         adminAuthenticationModePopup.action = #selector(advancedPopupChanged(_:))
         adminFileWatcherGuestsCheckbox.target = self
         adminFileWatcherGuestsCheckbox.action = #selector(advancedCheckboxChanged(_:))
+        adminGuestUploadApprovalCheckbox.target = self
+        adminGuestUploadApprovalCheckbox.action = #selector(advancedCheckboxChanged(_:))
         transferBandwidthUnitPopup.target = self
         transferBandwidthUnitPopup.action = #selector(advancedBandwidthUnitChanged(_:))
         transferBandwidthField.target = self
@@ -150,6 +152,60 @@ extension ViewController {
         let fileWatcherCard = advancedSectionCard(title: L("Bot File Watchers"), symbol: "folder.badge.gearshape", content: [
             adminFileWatcherGuestsCheckbox,
             advancedHelp(L("When enabled, Guest accounts in the selected Conference also receive new-file announcements. Account Holders and Administrators always receive them.")),
+        ])
+
+        if adminPendingUploadsTable.tableColumns.isEmpty {
+            for (identifier, title, width) in [
+                ("pendingName", L("File / Destination"), CGFloat(220)),
+                ("pendingUploader", L("Uploader"), CGFloat(110)),
+                ("pendingSize", L("Size"), CGFloat(80)),
+                ("pendingDate", L("Uploaded"), CGFloat(145)),
+            ] {
+                let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(identifier))
+                column.title = title
+                column.width = width
+                column.minWidth = identifier == "pendingName" ? 150 : 70
+                adminPendingUploadsTable.addTableColumn(column)
+            }
+        }
+        adminPendingUploadsTable.dataSource = self
+        adminPendingUploadsTable.delegate = self
+        adminPendingUploadsTable.allowsMultipleSelection = false
+        adminPendingUploadsTable.allowsEmptySelection = true
+        adminPendingUploadsTable.rowHeight = 24
+        adminPendingUploadsTable.usesAlternatingRowBackgroundColors = false
+
+        let pendingScroll = NSScrollView()
+        pendingScroll.documentView = adminPendingUploadsTable
+        pendingScroll.hasVerticalScroller = true
+        pendingScroll.hasHorizontalScroller = true
+        pendingScroll.autohidesScrollers = true
+        pendingScroll.borderType = .bezelBorder
+        pendingScroll.heightAnchor.constraint(equalToConstant: 176).isActive = true
+
+        adminPendingUploadsStatusLabel.font = .systemFont(ofSize: 10.5)
+        adminPendingUploadsStatusLabel.textColor = CarrachoTheme.secondaryText
+        adminPendingUploadsStatusLabel.lineBreakMode = .byTruncatingTail
+
+        adminPendingUploadsRefreshButton.target = self
+        adminPendingUploadsRefreshButton.action = #selector(refreshPendingUploads(_:))
+        adminPendingUploadsApproveButton.target = self
+        adminPendingUploadsApproveButton.action = #selector(approveSelectedPendingUpload(_:))
+        adminPendingUploadsRejectButton.target = self
+        adminPendingUploadsRejectButton.action = #selector(rejectSelectedPendingUpload(_:))
+        adminPendingUploadsRejectButton.contentTintColor = .systemRed
+        let pendingButtons = horizontalStack([
+            adminPendingUploadsStatusLabel, NSView(),
+            adminPendingUploadsRefreshButton,
+            adminPendingUploadsRejectButton,
+            adminPendingUploadsApproveButton,
+        ], spacing: 8)
+
+        let uploadApprovalCard = advancedSectionCard(title: L("Guest Upload Approval"), symbol: "checkmark.shield.fill", content: [
+            adminGuestUploadApprovalCheckbox,
+            advancedHelp(L("When enabled, completed Guest uploads stay hidden until an Administrator approves them. Account Holder and Administrator uploads are published immediately.")),
+            pendingScroll,
+            pendingButtons,
         ])
 
         adminLegacyFilesRootField.placeholderString = L("Empty = normal File Root")
@@ -236,7 +292,7 @@ extension ViewController {
 
         let grid = ResponsiveAdvancedGridView(cards: [
             connectionsCard, transfersCard,
-            fileWatcherCard, legacyCard,
+            fileWatcherCard, uploadApprovalCard, legacyCard,
             maintenanceCard, exclusionsCard,
             bansCard,
         ])
@@ -316,6 +372,7 @@ extension ViewController {
         advancedSaveStatusColor = nil
         advancedRemoteCoreLoaded = false
         advancedRemoteFileWatcherGuestSettingSupported = false
+        advancedRemoteGuestUploadApprovalSupported = false
         advancedRemoteLegacyRootLoaded = false
         advancedRemoteExclusionsLoaded = false
         advancedRemoteBansLoaded = false
@@ -380,6 +437,12 @@ extension ViewController {
         adminFileWatcherGuestsCheckbox.toolTip = client.isConnected && !advancedRemoteFileWatcherGuestSettingSupported
             ? L("This server does not support Guest visibility for Bot File Watchers.")
             : nil
+        let guestUploadApprovalAvailable = !client.isConnected || advancedRemoteGuestUploadApprovalSupported
+        adminGuestUploadApprovalCheckbox.isEnabled = editorEnabled && guestUploadApprovalAvailable
+        adminGuestUploadApprovalCheckbox.toolTip = client.isConnected && !advancedRemoteGuestUploadApprovalSupported
+            ? L("This server does not support Guest upload approval.")
+            : nil
+        updatePendingUploadButtons()
         let bandwidthEditable = editorEnabled && (
             !client.isConnected ||
             remoteTransferUploadLimitBytesPerSecond != nil ||
@@ -457,6 +520,7 @@ extension ViewController {
             let maxFolderDepth = try parseUInt16(adminMaxFolderDepthField, name: L("Max. folder download depth"), requirePositive: false)
             let authenticationMode: ServerAuthenticationMode = adminAuthenticationModePopup.indexOfSelectedItem == 1 ? .modernOnly : .legacyCompatible
             let fileWatcherGuestsEnabled = adminFileWatcherGuestsCheckbox.state == .on
+            let guestUploadApprovalEnabled = adminGuestUploadApprovalCheckbox.state == .on
             let legacyRoot = adminLegacyFilesRootField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
             guard legacyRoot.isEmpty || NSString(string: legacyRoot).isAbsolutePath else {
                 throw ServerStateError.invalidValue(L("Classic / Legacy File Root must be empty or an absolute server path."))
@@ -503,6 +567,7 @@ extension ViewController {
                                                    maxFolderDepth: maxFolderDepth,
                                                    authenticationMode: authenticationMode,
                                                    fileWatcherGuestsEnabled: fileWatcherGuestsEnabled,
+                                                   guestUploadApprovalEnabled: guestUploadApprovalEnabled,
                                                    legacyRoot: legacyRoot,
                                                    exclusions: exclusions,
                                                    rebuildIntervalHours: rebuildIntervalHours,
@@ -516,6 +581,7 @@ extension ViewController {
                                                   maxFolderDepth: maxFolderDepth,
                                                   authenticationMode: authenticationMode,
                                                   fileWatcherGuestsEnabled: fileWatcherGuestsEnabled,
+                                                  guestUploadApprovalEnabled: guestUploadApprovalEnabled,
                                                   legacyRoot: legacyRoot,
                                                   exclusions: exclusions,
                                                   rebuildIntervalHours: rebuildIntervalHours,
@@ -555,6 +621,7 @@ extension ViewController {
                                           maxTransfers: UInt16, maxTransfersPerUser: UInt16,
                                           maxFolderDepth: UInt16, authenticationMode: ServerAuthenticationMode,
                                           fileWatcherGuestsEnabled: Bool,
+                                          guestUploadApprovalEnabled: Bool,
                                           legacyRoot: String, exclusions: [String],
                                           rebuildIntervalHours: UInt32, bandwidth: UInt64) {
         guard let backend = serverBackend else { return }
@@ -574,6 +641,7 @@ extension ViewController {
             advanced.maxFileTransfersPerUser = maxTransfersPerUser
             advanced.maxFolderDownloadDepth = maxFolderDepth
             advanced.fileWatcherGuestsEnabled = fileWatcherGuestsEnabled
+            advanced.guestUploadApprovalEnabled = guestUploadApprovalEnabled
 
             var runtime = localServerState.runtime
             let intervalChanged = runtime.searchIndexRebuildIntervalHours != rebuildIntervalHours
@@ -669,6 +737,7 @@ extension ViewController {
                                            maxTransfers: UInt16, maxTransfersPerUser: UInt16,
                                            maxFolderDepth: UInt16, authenticationMode: ServerAuthenticationMode,
                                            fileWatcherGuestsEnabled: Bool,
+                                           guestUploadApprovalEnabled: Bool,
                                            legacyRoot: String, exclusions: [String],
                                            rebuildIntervalHours: UInt32, bandwidth: UInt64?,
                                            bans: [ServerIPRestriction]) {
@@ -719,6 +788,12 @@ extension ViewController {
             settings.append(LegacyTLV(
                 type: LegacyServerSettingField.fileWatcherGuestsEnabled,
                 value: LegacyServerSettingField.encodeBoolean(fileWatcherGuestsEnabled)
+            ))
+        }
+        if advancedRemoteGuestUploadApprovalSupported {
+            settings.append(LegacyTLV(
+                type: LegacyServerSettingField.guestUploadApprovalEnabled,
+                value: LegacyServerSettingField.encodeBoolean(guestUploadApprovalEnabled)
             ))
         }
         group.enter()
@@ -838,6 +913,7 @@ extension ViewController {
             advancedRemoteCoreLoaded = false
             refreshAdminControls()
             updateAdvancedSaveUI()
+            reloadPendingUploads()
             return
         }
         advancedRemoteCoreLoaded = false
@@ -855,6 +931,7 @@ extension ViewController {
             LegacyServerSettingField.maxFileTransfersPerUser,
             LegacyServerSettingField.maxFolderDownloadDepth,
             LegacyServerSettingField.fileWatcherGuestsEnabled,
+            LegacyServerSettingField.guestUploadApprovalEnabled,
             LegacyServerSettingField.searchIndexRebuildIntervalHours,
         ]
         let requestClient = client
@@ -904,15 +981,180 @@ extension ViewController {
                     self.advancedRemoteFileWatcherGuestSettingSupported = false
                     self.adminFileWatcherGuestsCheckbox.state = .off
                 }
+                if let approval = values[LegacyServerSettingField.guestUploadApprovalEnabled] {
+                    let enabled = try LegacyServerSettingField.decodeBoolean(
+                        approval, fieldName: "Guest upload approval"
+                    )
+                    self.advancedRemoteGuestUploadApprovalSupported = true
+                    self.adminGuestUploadApprovalCheckbox.state = enabled ? .on : .off
+                } else {
+                    self.advancedRemoteGuestUploadApprovalSupported = false
+                    self.adminGuestUploadApprovalCheckbox.state = .off
+                }
                 let interval = try values[LegacyServerSettingField.searchIndexRebuildIntervalHours].map(u32) ?? 0
                 self.adminSearchIndexRebuildIntervalField.stringValue = String(interval)
                 self.advancedRemoteCoreLoaded = true
                 self.updateAdvancedSaveUI()
+                self.reloadPendingUploads()
             } catch {
                 self.advancedRemoteCoreLoaded = false
                 self.updateAdvancedSaveUI()
                 self.showAdminError(error)
             }
+        }
+    }
+
+    func updatePendingUploadButtons() {
+        let supported = client.isConnected
+            ? (advancedRemoteGuestUploadApprovalSupported && isRemoteAdministrator)
+            : localServerRuntime != nil
+        let row = adminPendingUploadsTable.selectedRow
+        let hasSelection = row >= 0 && row < adminPendingUploads.count
+        adminPendingUploadsRefreshButton.isEnabled = supported && !pendingUploadsLoading
+        adminPendingUploadsApproveButton.isEnabled = supported && hasSelection && !pendingUploadsLoading
+        adminPendingUploadsRejectButton.isEnabled = supported && hasSelection && !pendingUploadsLoading
+
+        if pendingUploadsLoading {
+            adminPendingUploadsStatusLabel.stringValue = L("Loading pending uploads…")
+        } else if !supported {
+            adminPendingUploadsStatusLabel.stringValue = client.isConnected
+                ? L("Pending upload moderation is unavailable on this server.")
+                : L("Start the local server to manage pending uploads.")
+        } else if adminPendingUploads.isEmpty {
+            adminPendingUploadsStatusLabel.stringValue = L("No pending Guest uploads")
+        } else {
+            adminPendingUploadsStatusLabel.stringValue = LF("%@ pending Guest upload(s)", String(adminPendingUploads.count))
+        }
+    }
+
+    func reloadPendingUploads() {
+        guard !pendingUploadsLoading else { return }
+        if client.isConnected {
+            guard advancedRemoteGuestUploadApprovalSupported, isRemoteAdministrator else {
+                adminPendingUploads = []
+                adminPendingUploadsTable.reloadData()
+                updatePendingUploadButtons()
+                return
+            }
+            pendingUploadsLoading = true
+            updatePendingUploadButtons()
+            let requestClient = client
+            requestClient.requestPendingUploads { [weak self, weak requestClient] result in
+                DispatchQueue.main.async {
+                    guard let self, let requestClient,
+                          self.client === requestClient, requestClient.isConnected else { return }
+                    self.pendingUploadsLoading = false
+                    switch result {
+                    case let .success(items):
+                        self.adminPendingUploads = items
+                        self.adminPendingUploadsTable.reloadData()
+                    case let .failure(error):
+                        self.adminPendingUploads = []
+                        self.adminPendingUploadsTable.reloadData()
+                        self.appendLine("\n" + LF("Could not load pending Guest uploads: %@", Self.displayMessage(for: error)))
+                    }
+                    self.updatePendingUploadButtons()
+                }
+            }
+            return
+        }
+
+        do {
+            adminPendingUploads = try localServerRuntime?.pendingUploadsForAdministration() ?? []
+            adminPendingUploadsTable.reloadData()
+            updatePendingUploadButtons()
+        } catch {
+            adminPendingUploads = []
+            adminPendingUploadsTable.reloadData()
+            updatePendingUploadButtons()
+            showAdminError(error)
+        }
+    }
+
+    @objc func refreshPendingUploads(_ sender: Any?) {
+        reloadPendingUploads()
+    }
+
+    @objc func approveSelectedPendingUpload(_ sender: Any?) {
+        let row = adminPendingUploadsTable.selectedRow
+        guard row >= 0, row < adminPendingUploads.count, !pendingUploadsLoading else { return }
+        let item = adminPendingUploads[row]
+        pendingUploadsLoading = true
+        updatePendingUploadButtons()
+
+        if client.isConnected {
+            client.approvePendingUpload(item.id) { [weak self] result in
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    self.pendingUploadsLoading = false
+                    switch result {
+                    case .success:
+                        self.reloadPendingUploads()
+                        self.appendLine("\n" + LF("Guest upload approved: %@", item.destination))
+                    case let .failure(error):
+                        self.updatePendingUploadButtons()
+                        self.showAdminError(error)
+                    }
+                }
+            }
+        } else {
+            do {
+                try localServerRuntime?.approvePendingUploadForAdministration(item.id)
+                pendingUploadsLoading = false
+                reloadPendingUploads()
+            } catch {
+                pendingUploadsLoading = false
+                updatePendingUploadButtons()
+                showAdminError(error)
+            }
+        }
+    }
+
+    @objc func rejectSelectedPendingUpload(_ sender: Any?) {
+        let row = adminPendingUploadsTable.selectedRow
+        guard row >= 0, row < adminPendingUploads.count, !pendingUploadsLoading else { return }
+        let item = adminPendingUploads[row]
+        let performReject = { [weak self] in
+            guard let self else { return }
+            self.pendingUploadsLoading = true
+            self.updatePendingUploadButtons()
+            if self.client.isConnected {
+                self.client.rejectPendingUpload(item.id) { [weak self] result in
+                    DispatchQueue.main.async {
+                        guard let self else { return }
+                        self.pendingUploadsLoading = false
+                        switch result {
+                        case .success:
+                            self.reloadPendingUploads()
+                            self.appendLine("\n" + LF("Guest upload rejected: %@", item.destination))
+                        case let .failure(error):
+                            self.updatePendingUploadButtons()
+                            self.showAdminError(error)
+                        }
+                    }
+                }
+            } else {
+                do {
+                    try self.localServerRuntime?.rejectPendingUploadForAdministration(item.id)
+                    self.pendingUploadsLoading = false
+                    self.reloadPendingUploads()
+                } catch {
+                    self.pendingUploadsLoading = false
+                    self.updatePendingUploadButtons()
+                    self.showAdminError(error)
+                }
+            }
+        }
+
+        guard let window = view.window else { performReject(); return }
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = L("Reject Guest Upload?")
+        alert.informativeText = LF("This permanently deletes the pending upload %@.", item.destination)
+        alert.addButton(withTitle: L("Reject"))
+        alert.addButton(withTitle: L("Cancel"))
+        alert.beginSheetModal(for: window) { response in
+            if response == .alertFirstButtonReturn { performReject() }
         }
     }
 

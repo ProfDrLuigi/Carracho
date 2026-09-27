@@ -188,10 +188,13 @@ Supported PATCH fields are:
 - maxFileTransfersPerUser
 - maxFolderDownloadDepth
 - fileWatcherGuestsEnabled
+- guestUploadApprovalEnabled
 - searchIndexRebuildIntervalHours
 - searchIndexExclusions
 
 `fileWatcherGuestsEnabled` is a boolean. When `false` (the default), Bot File Watcher announcements are delivered only to Account Holder and Administrator members of the selected Conference. When `true`, Guest members receive them as well.
+
+`guestUploadApprovalEnabled` is a boolean and defaults to `false`. When enabled, completed uploads from Guest accounts are held outside the published Files tree until an Administrator approves or rejects them through modern Carracho Administration. The HTTP settings endpoint controls the policy; pending-upload moderation actions are not exposed as HTTP endpoints.
 
 Changes are written through the normal server-state code and persisted back to the startup configuration.
 

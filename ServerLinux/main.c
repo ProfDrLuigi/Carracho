@@ -471,6 +471,7 @@ static int load_startup_config(const char *config_path, const char *instance_roo
     if (config_int(root, "maxFolderDownloadDepth", 8, 0, 65535, &number)) { json_object_put(root); return -1; }
     config->persistent.max_folder_download_depth = (uint16_t)number;
     if (config_bool(root, "fileWatcherGuestsEnabled", 0, &config->persistent.file_watcher_guests_enabled)) { json_object_put(root); return -1; }
+    if (config_bool(root, "guestUploadApprovalEnabled", 0, &config->persistent.guest_upload_approval_enabled)) { json_object_put(root); return -1; }
     if (config_int(root, "newsExpirationHour", 0, 0, 23, &number)) { json_object_put(root); return -1; }
     config->persistent.news_expiration_hour = (uint8_t)number;
     if (config_int(root, "newsExpirationMinute", 0, 0, 59, &number)) { json_object_put(root); return -1; }

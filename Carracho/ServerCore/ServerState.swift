@@ -326,6 +326,8 @@ struct ServerAdvancedSettings: Codable, Equatable {
     var maxFolderDownloadDepth: UInt16 = 8
     /// Whether Guest accounts may receive Bot File Watcher announcements in Conferences.
     var fileWatcherGuestsEnabled: Bool = false
+    /// Whether completed Guest uploads require administrator approval before publication.
+    var guestUploadApprovalEnabled: Bool = false
     var newsExpirationHour: UInt8 = 0
     var newsExpirationMinute: UInt8 = 0
     var ipRestrictions: [ServerIPRestriction] = []
@@ -335,7 +337,7 @@ struct ServerAdvancedSettings: Codable, Equatable {
 
     private enum CodingKeys: String, CodingKey {
         case controlPort, maxConnections, maxConnectionsPerIP, maxSimultaneousFileTransfers
-        case maxFileTransfersPerUser, maxFolderDownloadDepth, fileWatcherGuestsEnabled
+        case maxFileTransfersPerUser, maxFolderDownloadDepth, fileWatcherGuestsEnabled, guestUploadApprovalEnabled
         case newsExpirationHour, newsExpirationMinute
         case ipRestrictions, trackers, trackerAdvertisementFlags, trackerDescription
     }
@@ -343,6 +345,7 @@ struct ServerAdvancedSettings: Codable, Equatable {
     init(controlPort: UInt16 = 6700, maxConnections: UInt16 = 100, maxConnectionsPerIP: UInt16 = 5,
          maxSimultaneousFileTransfers: UInt16 = 20, maxFileTransfersPerUser: UInt16 = 1,
          maxFolderDownloadDepth: UInt16 = 8, fileWatcherGuestsEnabled: Bool = false,
+         guestUploadApprovalEnabled: Bool = false,
          newsExpirationHour: UInt8 = 0, newsExpirationMinute: UInt8 = 0,
          ipRestrictions: [ServerIPRestriction] = [], trackers: [ServerTrackerSetting] = [],
          trackerAdvertisementFlags: UInt32 = 0, trackerDescription: String = "") {
@@ -353,6 +356,7 @@ struct ServerAdvancedSettings: Codable, Equatable {
         self.maxFileTransfersPerUser = maxFileTransfersPerUser
         self.maxFolderDownloadDepth = maxFolderDownloadDepth
         self.fileWatcherGuestsEnabled = fileWatcherGuestsEnabled
+        self.guestUploadApprovalEnabled = guestUploadApprovalEnabled
         self.newsExpirationHour = newsExpirationHour
         self.newsExpirationMinute = newsExpirationMinute
         self.ipRestrictions = ipRestrictions
@@ -370,6 +374,7 @@ struct ServerAdvancedSettings: Codable, Equatable {
         maxFileTransfersPerUser = try c.decodeIfPresent(UInt16.self, forKey: .maxFileTransfersPerUser) ?? 1
         maxFolderDownloadDepth = try c.decodeIfPresent(UInt16.self, forKey: .maxFolderDownloadDepth) ?? 8
         fileWatcherGuestsEnabled = try c.decodeIfPresent(Bool.self, forKey: .fileWatcherGuestsEnabled) ?? false
+        guestUploadApprovalEnabled = try c.decodeIfPresent(Bool.self, forKey: .guestUploadApprovalEnabled) ?? false
         newsExpirationHour = try c.decodeIfPresent(UInt8.self, forKey: .newsExpirationHour) ?? 0
         newsExpirationMinute = try c.decodeIfPresent(UInt8.self, forKey: .newsExpirationMinute) ?? 0
         ipRestrictions = try c.decodeIfPresent([ServerIPRestriction].self, forKey: .ipRestrictions) ?? []

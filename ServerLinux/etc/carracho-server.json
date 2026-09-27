@@ -11,6 +11,7 @@
   "maxFileTransfersPerUser":1,
   "maxFolderDownloadDepth":8,
   "fileWatcherGuestsEnabled":false,
+  "guestUploadApprovalEnabled":false,
   "uploadBandwidthLimitBytesPerSecond":0,
   "searchIndexExclusions":[],
   "newsExpirationHour":0,

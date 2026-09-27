@@ -111,6 +111,29 @@ final class LegacyServerRuntime {
         var members: [UInt32: UInt8] = [:]
     }
 
+    private struct PendingUploadRecord: Codable, Equatable {
+        var id: UUID
+        var uploadedAt: Date
+        var size: UInt64
+        var isFolder: Bool
+        var uploader: String
+        var targetFilesystemPath: String
+        var metadataPath: Data
+        var legacyTransport: Bool
+        var payloadFilesystemPath: String
+
+        var wireValue: LegacyPendingUpload {
+            LegacyPendingUpload(
+                id: id,
+                uploadedAt: uploadedAt,
+                size: size,
+                isFolder: isFolder,
+                uploader: uploader,
+                destination: LegacyPath.displayString(metadataPath)
+            )
+        }
+    }
+
     private struct ActiveTransferDescriptor {
         var transferID: UInt32
         var kind: UInt8
@@ -134,6 +157,9 @@ final class LegacyServerRuntime {
     let backend: ModernServerBackend
     private(set) var storageRoot: URL
     private let serverSupportRoot: URL
+    private let pendingUploadMetadataRoot: URL
+    private let pendingUploadManifestURL: URL
+    private let pendingUploadLock = NSLock()
     let newsStore: ServerNewsStore
     let flatNewsStore: ServerFlatNewsStore
     let mediaStore: ServerMediaStore
@@ -259,6 +285,9 @@ final class LegacyServerRuntime {
         let serverRoot = supportRoot ?? files.deletingLastPathComponent()
         let databases = databaseRoot ?? serverRoot
         self.serverSupportRoot = serverRoot
+        self.pendingUploadMetadataRoot = serverRoot.appendingPathComponent("Pending Uploads", isDirectory: true)
+        self.pendingUploadManifestURL = serverRoot.appendingPathComponent("Pending Uploads", isDirectory: true)
+            .appendingPathComponent("pending.json", isDirectory: false)
         let newsDatabase = databases.appendingPathComponent("news.db", isDirectory: false)
         let legacyNewsRoot = newsRoot ?? serverRoot.appendingPathComponent("News", isDirectory: true)
         self.newsStore = ServerNewsStore(databaseURL: newsDatabase, legacyRootURL: legacyNewsRoot)
@@ -537,6 +566,7 @@ final class LegacyServerRuntime {
         try FileManager.default.createDirectory(at: storageRoot, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: trashRoot, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: personalHomeRoot, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: pendingUploadMetadataRoot, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: logFileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         let configuredLegacyRoot = backend.snapshot().runtime.legacyFilesRoot.trimmingCharacters(in: .whitespacesAndNewlines)
         if !configuredLegacyRoot.isEmpty {
@@ -1335,6 +1365,7 @@ final class LegacyServerRuntime {
             "maxFileTransfersPerUser": Int(state.advanced.maxFileTransfersPerUser),
             "maxFolderDownloadDepth": Int(state.advanced.maxFolderDownloadDepth),
             "fileWatcherGuestsEnabled": state.advanced.fileWatcherGuestsEnabled,
+            "guestUploadApprovalEnabled": state.advanced.guestUploadApprovalEnabled,
             "filesRoot": state.runtime.filesRoot.isEmpty ? storageRoot.standardizedFileURL.path : state.runtime.filesRoot,
             "legacyFilesRoot": state.runtime.legacyFilesRoot,
             "searchIndexRebuildIntervalHours": NSNumber(value: state.runtime.searchIndexRebuildIntervalHours),
@@ -1433,6 +1464,7 @@ final class LegacyServerRuntime {
         let maxUserTransfers = try httpAdminUInt64(object, key: "maxFileTransfersPerUser", maximum: UInt64(UInt16.max))
         let maxFolderDepth = try httpAdminUInt64(object, key: "maxFolderDownloadDepth", maximum: UInt64(UInt16.max))
         let fileWatcherGuestsEnabled = try httpAdminBool(object, key: "fileWatcherGuestsEnabled")
+        let guestUploadApprovalEnabled = try httpAdminBool(object, key: "guestUploadApprovalEnabled")
         let rebuildHours = try httpAdminUInt64(object, key: "searchIndexRebuildIntervalHours", maximum: UInt64(UInt32.max))
         let exclusions: [String]?
         if let raw = object["searchIndexExclusions"] {
@@ -1481,6 +1513,7 @@ final class LegacyServerRuntime {
             }
             if let maxFolderDepth { state.advanced.maxFolderDownloadDepth = UInt16(maxFolderDepth) }
             if let fileWatcherGuestsEnabled { state.advanced.fileWatcherGuestsEnabled = fileWatcherGuestsEnabled }
+            if let guestUploadApprovalEnabled { state.advanced.guestUploadApprovalEnabled = guestUploadApprovalEnabled }
             if let rebuildHours { state.runtime.searchIndexRebuildIntervalHours = UInt32(rebuildHours) }
             if let exclusions { state.runtime.searchIndexExclusions = exclusions }
             try ServerStateValidator.validate(identity: state.identity)
@@ -2130,6 +2163,12 @@ final class LegacyServerRuntime {
             try handleBotTestRSSFeed(packet: packet, session: session)
         case LegacyCommand.botSetFileWatchers:
             try handleBotSetFileWatchers(packet: packet, session: session)
+        case LegacyCommand.pendingUploadListRequest:
+            try handlePendingUploadList(packet: packet, session: session)
+        case LegacyCommand.pendingUploadApprove:
+            try handlePendingUploadApprove(packet: packet, session: session)
+        case LegacyCommand.pendingUploadReject:
+            try handlePendingUploadReject(packet: packet, session: session)
 
         case LegacyCommand.requestServerSettings:
             try handleServerSettingsRequest(packet: packet, session: session)
@@ -4393,7 +4432,8 @@ final class LegacyServerRuntime {
              LegacyServerSettingField.legacyFilesRoot,
              LegacyServerSettingField.authenticationMode,
              LegacyServerSettingField.searchIndexRebuildIntervalHours,
-             LegacyServerSettingField.fileWatcherGuestsEnabled:
+             LegacyServerSettingField.fileWatcherGuestsEnabled,
+             LegacyServerSettingField.guestUploadApprovalEnabled:
             return .editAdvancedSettings
         case LegacyServerSettingField.trackerList, LegacyServerSettingField.trackerRegistrationFlags,
              LegacyServerSettingField.trackerDescription:
@@ -4571,6 +4611,81 @@ final class LegacyServerRuntime {
         }
     }
 
+    private func requirePendingUploadAdministrator(_ session: LegacyServerSession) throws {
+        guard !session.isLegacyTransport, session.account?.mode == .administrator else {
+            throw LegacyServerRuntimeError.protocolFailure("pending upload moderation requires a modern Administrator session")
+        }
+    }
+
+    private func pendingUploadID(from packet: LegacyPacket) throws -> UUID {
+        guard packet.fields.count == 1,
+              let field = packet.firstField(type: 1),
+              field.value.count <= 36,
+              let text = String(data: field.value, encoding: .utf8),
+              let id = UUID(uuidString: text) else {
+            throw LegacyServerRuntimeError.protocolFailure("invalid pending upload id")
+        }
+        return id
+    }
+
+    private func handlePendingUploadList(packet: LegacyPacket, session: LegacyServerSession) throws {
+        do {
+            try requirePendingUploadAdministrator(session)
+            guard packet.fields.isEmpty else {
+                throw LegacyServerRuntimeError.protocolFailure("pending upload list request must be empty")
+            }
+            let values = try pendingUploadRecords().map(\.wireValue)
+            let encoded = try LegacyPendingUpload.encodeList(values)
+            guard encoded.count <= Int(UInt16.max) else {
+                throw LegacyServerRuntimeError.protocolFailure("pending upload list is too large")
+            }
+            try session.sendAuthenticated(LegacyPacket(
+                command: LegacyCommand.pendingUploadListReply,
+                transactionID: packet.transactionID,
+                fields: [LegacyTLV(type: 1, value: encoded)]
+            ))
+        } catch {
+            log("Pending upload list failed: \(error.localizedDescription)")
+            try session.sendAuthenticated(Self.errorPacket(transactionID: packet.transactionID, code: 1))
+        }
+    }
+
+    private func handlePendingUploadApprove(packet: LegacyPacket, session: LegacyServerSession) throws {
+        do {
+            try requirePendingUploadAdministrator(session)
+            let id = try pendingUploadID(from: packet)
+            try approvePendingUpload(id: id)
+            try session.sendAuthenticated(LegacyPacket(
+                command: LegacyCommand.taskComplete,
+                transactionID: packet.transactionID,
+                fields: []
+            ))
+            appendUserEvent(session: session, category: "administration", action: "approve-guest-upload",
+                            detail: "pending_id=\(id.uuidString.lowercased())")
+        } catch {
+            log("Pending upload approval failed: \(error.localizedDescription)")
+            try session.sendAuthenticated(Self.errorPacket(transactionID: packet.transactionID, code: 1))
+        }
+    }
+
+    private func handlePendingUploadReject(packet: LegacyPacket, session: LegacyServerSession) throws {
+        do {
+            try requirePendingUploadAdministrator(session)
+            let id = try pendingUploadID(from: packet)
+            try rejectPendingUpload(id: id)
+            try session.sendAuthenticated(LegacyPacket(
+                command: LegacyCommand.taskComplete,
+                transactionID: packet.transactionID,
+                fields: []
+            ))
+            appendUserEvent(session: session, category: "administration", action: "reject-guest-upload",
+                            detail: "pending_id=\(id.uuidString.lowercased())")
+        } catch {
+            log("Pending upload rejection failed: \(error.localizedDescription)")
+            try session.sendAuthenticated(Self.errorPacket(transactionID: packet.transactionID, code: 1))
+        }
+    }
+
     private func handleServerSettingsRequest(packet: LegacyPacket, session: LegacyServerSession) throws {
         do {
             let state = backend.snapshot()
@@ -4643,6 +4758,10 @@ final class LegacyServerRuntime {
                     case LegacyServerSettingField.fileWatcherGuestsEnabled:
                         state.advanced.fileWatcherGuestsEnabled = try LegacyServerSettingField.decodeBoolean(
                             field.value, fieldName: "File Watcher Guest visibility"
+                        )
+                    case LegacyServerSettingField.guestUploadApprovalEnabled:
+                        state.advanced.guestUploadApprovalEnabled = try LegacyServerSettingField.decodeBoolean(
+                            field.value, fieldName: "Guest upload approval"
                         )
                     case LegacyServerSettingField.allowDenyIPList:
                         let rules = try LegacyServerSettingField.decodeIPRestrictions(field.value)
@@ -4771,6 +4890,7 @@ final class LegacyServerRuntime {
         object["maxFileTransfersPerUser"] = Int(state.advanced.maxFileTransfersPerUser)
         object["maxFolderDownloadDepth"] = Int(state.advanced.maxFolderDownloadDepth)
         object["fileWatcherGuestsEnabled"] = state.advanced.fileWatcherGuestsEnabled
+        object["guestUploadApprovalEnabled"] = state.advanced.guestUploadApprovalEnabled
         object["uploadBandwidthLimitBytesPerSecond"] = NSNumber(value: state.runtime.uploadBandwidthLimitBytesPerSecond)
         object["searchIndexExclusions"] = state.runtime.searchIndexExclusions
         object["searchIndexRebuildIntervalHours"] = Int(state.runtime.searchIndexRebuildIntervalHours)
@@ -5577,6 +5697,9 @@ final class LegacyServerRuntime {
         case LegacyCommand.botSetRSSFeeds: event = ("administration", "configure-bot-rss", "")
         case LegacyCommand.botTestRSSFeed: event = ("administration", "test-bot-rss", "")
         case LegacyCommand.botSetFileWatchers: event = ("administration", "configure-bot-file-watchers", "")
+        case LegacyCommand.pendingUploadListRequest: event = ("administration", "list-pending-guest-uploads", "")
+        case LegacyCommand.pendingUploadApprove: event = ("administration", "approve-guest-upload", "")
+        case LegacyCommand.pendingUploadReject: event = ("administration", "reject-guest-upload", "")
         case LegacyCommand.rebuildSearchIndex: event = ("administration", "rebuild-search-index", "")
         case LegacyCommand.changeOwnPassword: event = ("account", "change-password", "")
         default: break
@@ -7026,7 +7149,9 @@ extension LegacyServerRuntime {
             let data = Data(raw)
             guard !data.isEmpty,
                   let component = String(data: data, encoding: .macOSRoman),
-                  component != ".", component != "..", !component.contains("/"), !component.contains("\0") else {
+                  component != ".", component != "..",
+                  component.caseInsensitiveCompare(".carracho-pending") != .orderedSame,
+                  !component.contains("/"), !component.contains("\0") else {
                 throw LegacyServerRuntimeError.protocolFailure("unsafe legacy storage path")
             }
             return data
@@ -7463,6 +7588,186 @@ extension LegacyServerRuntime {
         return data
     }
 
+    private func loadPendingUploadRecordsLocked() throws -> [PendingUploadRecord] {
+        guard FileManager.default.fileExists(atPath: pendingUploadManifestURL.path) else { return [] }
+        let data = try Data(contentsOf: pendingUploadManifestURL)
+        guard !data.isEmpty else { return [] }
+        return try JSONDecoder().decode([PendingUploadRecord].self, from: data)
+    }
+
+    private func savePendingUploadRecordsLocked(_ records: [PendingUploadRecord]) throws {
+        try FileManager.default.createDirectory(at: pendingUploadMetadataRoot, withIntermediateDirectories: true)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let data = try encoder.encode(records)
+        try data.write(to: pendingUploadManifestURL, options: .atomic)
+    }
+
+    private func pendingUploadRecords() throws -> [PendingUploadRecord] {
+        pendingUploadLock.lock()
+        defer { pendingUploadLock.unlock() }
+        return try loadPendingUploadRecordsLocked()
+            .filter { FileManager.default.fileExists(atPath: $0.payloadFilesystemPath) }
+            .sorted { $0.uploadedAt < $1.uploadedAt }
+    }
+
+    private func pendingUploadTargetReserved(_ target: URL) throws -> Bool {
+        pendingUploadLock.lock()
+        defer { pendingUploadLock.unlock() }
+        let standardized = target.standardizedFileURL.path
+        return try loadPendingUploadRecordsLocked().contains {
+            $0.targetFilesystemPath == standardized &&
+            FileManager.default.fileExists(atPath: $0.payloadFilesystemPath)
+        }
+    }
+
+    private func queueGuestUploadForApproval(stagingRoot: URL, targetURL: URL, metadataPath: Data,
+                                             access: LegacyTransferAccess, total: UInt64,
+                                             isFolder: Bool) throws {
+        let id = UUID()
+        let hiddenRoot = targetURL.deletingLastPathComponent()
+            .appendingPathComponent(".carracho-pending", isDirectory: true)
+        let payloadURL = hiddenRoot.appendingPathComponent(id.uuidString.lowercased(), isDirectory: isFolder)
+        let uploader = String(data: access.nickname, encoding: .macOSRoman)
+            ?? (access.account.name.isEmpty ? access.account.login : access.account.name)
+
+        pendingUploadLock.lock()
+        defer { pendingUploadLock.unlock() }
+
+        var records = try loadPendingUploadRecordsLocked()
+        let targetPath = targetURL.standardizedFileURL.path
+        guard !FileManager.default.fileExists(atPath: targetPath) else {
+            throw LegacyServerRuntimeError.protocolFailure("upload destination already exists")
+        }
+        guard !records.contains(where: {
+            $0.targetFilesystemPath == targetPath &&
+            FileManager.default.fileExists(atPath: $0.payloadFilesystemPath)
+        }) else {
+            throw LegacyServerRuntimeError.protocolFailure("upload destination already awaits approval")
+        }
+
+        if FileManager.default.fileExists(atPath: hiddenRoot.path) {
+            let values = try hiddenRoot.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+            guard values.isDirectory == true, values.isSymbolicLink != true else {
+                throw LegacyServerRuntimeError.protocolFailure("pending upload storage is unsafe")
+            }
+        } else {
+            try FileManager.default.createDirectory(at: hiddenRoot, withIntermediateDirectories: true)
+        }
+        guard !FileManager.default.fileExists(atPath: payloadURL.path) else {
+            throw LegacyServerRuntimeError.protocolFailure("pending upload id collision")
+        }
+        try FileManager.default.moveItem(at: stagingRoot, to: payloadURL)
+
+        let record = PendingUploadRecord(
+            id: id,
+            uploadedAt: Date(),
+            size: total,
+            isFolder: isFolder,
+            uploader: uploader,
+            targetFilesystemPath: targetPath,
+            metadataPath: metadataPath,
+            legacyTransport: access.legacyTransport,
+            payloadFilesystemPath: payloadURL.standardizedFileURL.path
+        )
+        records.append(record)
+        do {
+            try savePendingUploadRecordsLocked(records)
+        } catch {
+            try? FileManager.default.moveItem(at: payloadURL, to: stagingRoot)
+            throw error
+        }
+        log("Guest upload pending approval from \(uploader): \(LegacyPath.displayString(metadataPath))")
+    }
+
+    private func approvePendingUpload(id: UUID) throws {
+        pendingUploadLock.lock()
+        defer { pendingUploadLock.unlock() }
+
+        var records = try loadPendingUploadRecordsLocked()
+        guard let index = records.firstIndex(where: { $0.id == id }) else {
+            throw LegacyServerRuntimeError.protocolFailure("pending upload does not exist")
+        }
+        let record = records[index]
+        let payload = URL(fileURLWithPath: record.payloadFilesystemPath)
+        let target = URL(fileURLWithPath: record.targetFilesystemPath)
+        guard FileManager.default.fileExists(atPath: payload.path) else {
+            records.remove(at: index)
+            try savePendingUploadRecordsLocked(records)
+            throw LegacyServerRuntimeError.protocolFailure("pending upload payload is missing")
+        }
+        guard !FileManager.default.fileExists(atPath: target.path) else {
+            throw LegacyServerRuntimeError.protocolFailure("upload destination already exists")
+        }
+        try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.moveItem(at: payload, to: target)
+        records.remove(at: index)
+        do {
+            try savePendingUploadRecordsLocked(records)
+        } catch {
+            // Publication already succeeded atomically. A stale manifest entry is harmless
+            // because list/reservation code ignores records whose hidden payload is gone.
+            log("Pending upload manifest cleanup failed after approval: \(error.localizedDescription)")
+        }
+        try? FileManager.default.removeItem(at: payload.deletingLastPathComponent())
+        refreshSearchIndexSubtree(at: target, path: record.metadataPath, legacyTransport: record.legacyTransport)
+        log("Pending Guest upload approved: \(LegacyPath.displayString(record.metadataPath))")
+    }
+
+    private func rejectPendingUpload(id: UUID) throws {
+        pendingUploadLock.lock()
+        defer { pendingUploadLock.unlock() }
+
+        var records = try loadPendingUploadRecordsLocked()
+        guard let index = records.firstIndex(where: { $0.id == id }) else {
+            throw LegacyServerRuntimeError.protocolFailure("pending upload does not exist")
+        }
+        let record = records[index]
+        let payload = URL(fileURLWithPath: record.payloadFilesystemPath)
+        if FileManager.default.fileExists(atPath: payload.path) {
+            try FileManager.default.removeItem(at: payload)
+        }
+        records.remove(at: index)
+        do {
+            try savePendingUploadRecordsLocked(records)
+        } catch {
+            // Rejection already deleted the payload; keep the user-visible result successful.
+            log("Pending upload manifest cleanup failed after rejection: \(error.localizedDescription)")
+        }
+        try? FileManager.default.removeItem(at: payload.deletingLastPathComponent())
+        log("Pending Guest upload rejected: \(LegacyPath.displayString(record.metadataPath))")
+    }
+
+    func pendingUploadsForAdministration() throws -> [LegacyPendingUpload] {
+        try pendingUploadRecords().map(\.wireValue)
+    }
+
+    func approvePendingUploadForAdministration(_ id: UUID) throws {
+        try approvePendingUpload(id: id)
+    }
+
+    func rejectPendingUploadForAdministration(_ id: UUID) throws {
+        try rejectPendingUpload(id: id)
+    }
+
+    private func notifyGuestUploadAwaitingApproval(userID: UInt32, path: Data, isFolder: Bool) {
+        guard let session = authenticatedSession(userID: userID),
+              !session.isLegacyTransport else { return }
+        let packet = LegacyPacket(
+            command: LegacyCommand.guestUploadPendingNotice,
+            transactionID: 0,
+            fields: [
+                LegacyTLV(type: 1, value: path),
+                LegacyTLV(type: 2, value: Data([isFolder ? 1 : 0])),
+            ]
+        )
+        do {
+            try session.sendAuthenticated(packet)
+        } catch {
+            log("Could not notify Guest about pending upload: \(error.localizedDescription)")
+        }
+    }
+
     private func serveUpload(stream: LegacySocketTransferStream, access: LegacyTransferAccess, transferID: UInt32) throws {
         let parentPath = try stream.readString16()
         let wireTargetPath = try stream.readString16()
@@ -7487,8 +7792,10 @@ extension LegacyServerRuntime {
             throw LegacyServerRuntimeError.protocolFailure("upload parent is not a directory")
         }
         let targetURL = try storageURL(for: targetPath, account: access.account, legacyTransport: access.legacyTransport, requireExisting: false)
+        let requiresApproval = access.account.mode == .guest && backend.snapshot().advanced.guestUploadApprovalEnabled
         let exists = FileManager.default.fileExists(atPath: targetURL.path)
-        if exists {
+        let pendingTargetReserved = try pendingUploadTargetReserved(targetURL)
+        if exists || pendingTargetReserved {
             // Published server content is never replaced by an upload. A partial/resumable upload
             // is stored separately as <name>.carracho, so rejecting an existing final target does
             // not interfere with legitimate resume behavior.
@@ -7653,9 +7960,24 @@ extension LegacyServerRuntime {
         guard !FileManager.default.fileExists(atPath: targetURL.path) else {
             throw LegacyServerRuntimeError.protocolFailure("upload destination already exists at commit")
         }
-        try FileManager.default.moveItem(at: stagingRoot, to: targetURL)
-        refreshSearchIndexSubtree(at: targetURL, path: try storageMetadataPath(targetPath, account: access.account), legacyTransport: access.legacyTransport)
-        log("Upload completed for user \(access.userID): \(LegacyPath.displayString(targetPath))")
+        let metadataPath = try storageMetadataPath(targetPath, account: access.account)
+        if requiresApproval {
+            let isFolder = stagedRootIsFolder == true
+            try queueGuestUploadForApproval(
+                stagingRoot: stagingRoot,
+                targetURL: targetURL,
+                metadataPath: metadataPath,
+                access: access,
+                total: total,
+                isFolder: isFolder
+            )
+            notifyGuestUploadAwaitingApproval(userID: access.userID, path: targetPath, isFolder: isFolder)
+            log("Upload completed for user \(access.userID) and is awaiting approval: \(LegacyPath.displayString(targetPath))")
+        } else {
+            try FileManager.default.moveItem(at: stagingRoot, to: targetURL)
+            refreshSearchIndexSubtree(at: targetURL, path: metadataPath, legacyTransport: access.legacyTransport)
+            log("Upload completed for user \(access.userID): \(LegacyPath.displayString(targetPath))")
+        }
     }
 
     private func uploadPartialURL(for finalURL: URL) throws -> URL {

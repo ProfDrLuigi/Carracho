@@ -38,6 +38,7 @@
 #include <string.h>
 #include <strings.h>
 #include <sys/socket.h>
+#include <sys/file.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/time.h>
@@ -57,6 +58,7 @@
 #define SETTING_AUTHENTICATION_MODE 0xf0000006u
 #define SETTING_SEARCH_INDEX_REBUILD_INTERVAL 0xf0000007u
 #define SETTING_FILE_WATCHER_GUESTS_ENABLED 0xf0000008u
+#define SETTING_GUEST_UPLOAD_APPROVAL_ENABLED 0xf0000009u
 #define USER_FIELD_GROUP_COLOR 0xf0000003u
 #define USER_FIELD_LEGACY_TRANSPORT 0xf0000004u
 #define CLIENT_FIELD_OPERATING_SYSTEM 0xf1000000u
@@ -171,6 +173,11 @@
 #define CMD_BOT_TEST_RSS_FEED 0xf0000706u
 #define CMD_BOT_RSS_FEED_TEST_REPLY 0xf0000707u
 #define CMD_BOT_SET_FILE_WATCHERS 0xf0000708u
+#define CMD_PENDING_UPLOAD_LIST_REQUEST 0xf0000a00u
+#define CMD_PENDING_UPLOAD_LIST_REPLY 0xf0000a01u
+#define CMD_PENDING_UPLOAD_APPROVE 0xf0000a02u
+#define CMD_PENDING_UPLOAD_REJECT 0xf0000a03u
+#define CMD_GUEST_UPLOAD_PENDING_NOTICE 0xf0000a04u
 #define CMD_CHANNEL_DELETE 0xf0000800u
 #define CMD_CHANNEL_DELETED 0xf0000801u
 #define FILE_LABEL_FIELD 0xf0000600u
@@ -386,6 +393,8 @@ struct cr_server {
     cr_media_store media;
     char trash_root[PATH_MAX];
     char config_path[PATH_MAX];
+    char pending_upload_manifest_path[PATH_MAX];
+    char pending_upload_lock_path[PATH_MAX];
     cr_search_index_exclusions search_index_exclusions;
     uint32_t search_index_rebuild_interval_hours;
     time_t last_file_index_schedule_check;
@@ -451,6 +460,10 @@ static void *bot_thread_main(void *opaque);
 static void *bot_rss_thread_main(void *opaque);
 static void *bot_file_watch_thread_main(void *opaque);
 static void broadcast_presence_state_locked(cr_server *server, uint32_t user_id, uint8_t state);
+
+static int handle_pending_upload_list(cr_session *s, const cr_packet *p);
+static int handle_pending_upload_approve(cr_session *s, const cr_packet *p);
+static int handle_pending_upload_reject(cr_session *s, const cr_packet *p);
 
 typedef struct accepted_ctx { cr_server *server; int fd; char peer[INET_ADDRSTRLEN]; } accepted_ctx;
 typedef struct cr_transfer_access {
@@ -1131,6 +1144,7 @@ static int resolve_legacy_path_ex(cr_server*s,cr_session*session,const uint8_t*p
     while(pos<path_len){
         size_t start=pos;while(pos<path_len&&path[pos]!=1)pos++;size_t n=pos-start;if(!n||n>255)return-1;
         char component[1024];if(decode_file_component(session,path+start,n,component,sizeof(component)))return-1;
+        if(!strcasecmp(component,".carracho-pending"))return-1;
         if(first&&session->personal==CR_PERSONAL_NESTED&&!strcmp(component,virtual_home)){
             if(strlen(home)+1>cap||!realpath(home,resolved_scope))return-1;
             allow_server_symlink_shares=0;
@@ -3848,7 +3862,7 @@ static int server_setting_permission(uint32_t field,int write){
         case 0x05:case 0x06:case 0x07:case 0x08:return PERM_EDIT_SERVER_INFO;
         case 0x0c:return PERM_MANAGE_NEWSGROUPS;
         case SETTING_ACCOUNT_GROUPS:return PERM_MANAGE_ACCOUNTS;
-        case 0x09:case 0x20:case 0x21:case 0x22:case 0x23:case 0x35:case 0x2f:case SETTING_SEARCH_INDEX_EXCLUSIONS:case SETTING_LEGACY_FILES_ROOT:case SETTING_AUTHENTICATION_MODE:case SETTING_SEARCH_INDEX_REBUILD_INTERVAL:case SETTING_FILE_WATCHER_GUESTS_ENABLED:return PERM_EDIT_ADVANCED;
+        case 0x09:case 0x20:case 0x21:case 0x22:case 0x23:case 0x35:case 0x2f:case SETTING_SEARCH_INDEX_EXCLUSIONS:case SETTING_LEGACY_FILES_ROOT:case SETTING_AUTHENTICATION_MODE:case SETTING_SEARCH_INDEX_REBUILD_INTERVAL:case SETTING_FILE_WATCHER_GUESTS_ENABLED:case SETTING_GUEST_UPLOAD_APPROVAL_ENABLED:return PERM_EDIT_ADVANCED;
         case 0x30:case 0x32:case 0x33:return PERM_EDIT_TRACKERS;
         case 0x24:case 0x25:case 0x26:case 0x27:case 0x28:case 0x29:case 0x2a:case 0x2b:case 0x2c:case 0x2d:case 0x2e:case 0x34:return write?-1:PERM_VIEW_STATISTICS;
         case 0x36:return write?-1:PERM_EDIT_ADVANCED;
@@ -3942,6 +3956,7 @@ static int persist_startup_configuration_config(cr_server*s){
     json_object_object_add(root,"maxFileTransfersPerUser",json_object_new_int(s->state.advanced.max_file_transfers_per_user));
     json_object_object_add(root,"maxFolderDownloadDepth",json_object_new_int(s->state.advanced.max_folder_download_depth));
     json_object_object_add(root,"fileWatcherGuestsEnabled",json_object_new_boolean(s->state.advanced.file_watcher_guests_enabled));
+    json_object_object_add(root,"guestUploadApprovalEnabled",json_object_new_boolean(s->state.advanced.guest_upload_approval_enabled));
     json_object_object_add(root,"newsExpirationHour",json_object_new_int(s->state.advanced.news_expiration_hour));
     json_object_object_add(root,"newsExpirationMinute",json_object_new_int(s->state.advanced.news_expiration_minute));
     json_object_object_add(root,"legacyFilesRoot",json_object_new_string(s->state.legacy_storage_root));
@@ -3982,6 +3997,7 @@ static int setting_requires_startup_config_mirror(uint32_t field){
         case SETTING_AUTHENTICATION_MODE:
         case SETTING_SEARCH_INDEX_REBUILD_INTERVAL:
         case SETTING_FILE_WATCHER_GUESTS_ENABLED:
+        case SETTING_GUEST_UPLOAD_APPROVAL_ENABLED:
         case SETTING_SEARCH_INDEX_EXCLUSIONS:
             return 1;
         default:
@@ -4024,6 +4040,7 @@ static json_object* config_root_for_mirror(cr_server*s){
     json_object_object_add(root,"maxFileTransfersPerUser",json_object_new_int(s->state.advanced.max_file_transfers_per_user));
     json_object_object_add(root,"maxFolderDownloadDepth",json_object_new_int(s->state.advanced.max_folder_download_depth));
     json_object_object_add(root,"fileWatcherGuestsEnabled",json_object_new_boolean(s->state.advanced.file_watcher_guests_enabled));
+    json_object_object_add(root,"guestUploadApprovalEnabled",json_object_new_boolean(s->state.advanced.guest_upload_approval_enabled));
     json_object_object_add(root,"newsExpirationHour",json_object_new_int(s->state.advanced.news_expiration_hour));
     json_object_object_add(root,"newsExpirationMinute",json_object_new_int(s->state.advanced.news_expiration_minute));
 
@@ -4173,6 +4190,7 @@ static int setting_value_locked(cr_server*s,uint32_t field,cr_buffer*b){
         case SETTING_LEGACY_FILES_ROOT:{json_object*runtime=NULL,*v=NULL;const char*path="";if(json_object_object_get_ex(st->root,"runtime",&runtime)&&json_object_is_type(runtime,json_type_object)&&json_object_object_get_ex(runtime,"legacyFilesRoot",&v)&&json_object_is_type(v,json_type_string))path=json_object_get_string(v);return cr_buffer_append(b,path?path:"",path?strlen(path):0);}
         case SETTING_AUTHENTICATION_MODE:return cr_buffer_append_u8(b,st->legacy_compatible?0:1);
         case SETTING_FILE_WATCHER_GUESTS_ENABLED:return cr_buffer_append_u8(b,st->advanced.file_watcher_guests_enabled?1:0);
+        case SETTING_GUEST_UPLOAD_APPROVAL_ENABLED:return cr_buffer_append_u8(b,st->advanced.guest_upload_approval_enabled?1:0);
         case SETTING_SEARCH_INDEX_REBUILD_INTERVAL:{json_object*runtime=NULL,*v=NULL;uint32_t hours=0;if(json_object_object_get_ex(st->root,"runtime",&runtime)&&json_object_is_type(runtime,json_type_object)&&json_object_object_get_ex(runtime,"searchIndexRebuildIntervalHours",&v)&&json_object_is_type(v,json_type_int)){int64_t x=json_object_get_int64(v);if(x>0)hours=x>UINT32_MAX?UINT32_MAX:(uint32_t)x;}return cr_buffer_append_u32(b,hours);}
         case SETTING_SEARCH_INDEX_EXCLUSIONS:{json_object*runtime=NULL,*arr=NULL;cr_search_index_exclusions x;memset(&x,0,sizeof(x));if(json_object_object_get_ex(st->root,"runtime",&runtime)&&json_object_is_type(runtime,json_type_object)&&json_object_object_get_ex(runtime,"searchIndexExclusions",&arr)&&json_object_is_type(arr,json_type_array)){size_t count=json_object_array_length(arr);if(count>CR_MAX_SEARCH_INDEX_EXCLUSIONS)return-1;for(size_t i=0;i<count;i++){json_object*v=json_object_array_get_idx(arr,i);if(!v||!json_object_is_type(v,json_type_string))return-1;const char*p=json_object_get_string(v);if(!p||!*p||strlen(p)>=CR_MAX_SEARCH_INDEX_PATTERN)return-1;snprintf(x.patterns[i],sizeof(x.patterns[i]),"%s",p);}x.count=count;}return append_search_index_exclusions(b,&x);}
         case 0x2f:{if(cr_buffer_append_u32(b,(uint32_t)st->ip_restriction_count))return-1;for(size_t i=0;i<st->ip_restriction_count;i++){cr_ip_restriction*r=&st->ip_restrictions[i];if(cr_buffer_append(b,r->network,4)||cr_buffer_append(b,r->mask,4)||cr_buffer_append_u8(b,r->deny?1:0)||cr_buffer_append_u8(b,r->reserved))return-1;}return 0;}
@@ -4203,7 +4221,7 @@ static int handle_server_settings_request(cr_session*s,const cr_packet*p){
     for(uint16_t i=0;i<p->field_count&&!fail;i++){const cr_tlv*r=&p->fields[i];if(r->length){fail=1;break;}int perm=server_setting_permission(r->type,0);if(perm<0||!account_perm(s,(unsigned)perm))continue;if(setting_value_locked(s->server,r->type,&values[n])||values[n].len>UINT16_MAX){fail=1;break;}out[n]=(cr_tlv_out){r->type,values[n].data,(uint16_t)values[n].len};n++;}
     pthread_mutex_unlock(&s->server->state.mutex);int rc=fail?send_error(s,p->transaction_id,1):session_send(s,CMD_SERVER_SETTINGS_REPLY,p->transaction_id,out,n);for(size_t i=0;i<CR_MAX_TLVS;i++)cr_buffer_free(&values[i]);return rc;
 }
-static int validate_setting_field(cr_session*s,const cr_tlv*f){int perm=server_setting_permission(f->type,1);if(perm<0||!account_perm(s,(unsigned)perm))return-1;switch(f->type){case 0x04:{if(f->length<1||f->length>0xfc00||f->value[0]>1)return-1;if(f->length==1)return 0;if(f->length<9)return-1;uint32_t tn=cr_read_be32(f->value+1);if((size_t)tn+9>f->length)return-1;size_t pos=5u+tn;uint32_t sn=cr_read_be32(f->value+pos);return pos+4u+sn==f->length?0:-1;}case 0x05:return f->length>0&&f->length<=255?0:-1;case 0x06:case 0x07:return f->length<=255?0:-1;case 0x08:return f->length<=16384?0:-1;case 0x09:case 0x0c:case 0x20:case 0x21:case 0x22:case 0x23:case 0x35:return f->length==2?0:-1;case 0x2f:{if(f->length<4)return-1;uint32_t count=cr_read_be32(f->value);return count<=4096&&4u+(size_t)count*10u==f->length?0:-1;}case 0x30:{if(f->length<2)return-1;size_t pos=2;uint16_t count=cr_read_be16(f->value);for(uint16_t i=0;i<count;i++){if(pos+2>f->length)return-1;uint16_t a=cr_read_be16(f->value+pos);pos+=2;if(a>32||pos+a+2>f->length)return-1;pos+=a;uint16_t b=cr_read_be16(f->value+pos);pos+=2;if(!b||b>64||pos+b+2>f->length)return-1;pos+=b;uint16_t c=cr_read_be16(f->value+pos);pos+=2;if(c>16||pos+c+4>f->length)return-1;pos+=c+4;}return pos==f->length?0:-1;}case 0x32:return f->length==4?0:-1;case 0x33:return f->length<=255?0:-1;case SETTING_ACCOUNT_GROUPS:{cr_account_group*groups=calloc(CR_MAX_ACCOUNT_GROUPS,sizeof(*groups));if(!groups)return-1;size_t count=0;int rc=decode_account_groups_field(f,groups,&count);free(groups);return rc;}case SETTING_LEGACY_FILES_ROOT:return f->length<PATH_MAX&&valid_utf8_bytes(f->value,f->length)&&!memchr(f->value,0,f->length)&&(!f->length||f->value[0]=='/')?0:-1;case SETTING_AUTHENTICATION_MODE:return f->length==1&&f->value[0]<=1?0:-1;case SETTING_FILE_WATCHER_GUESTS_ENABLED:return f->length==1&&f->value[0]<=1?0:-1;case SETTING_SEARCH_INDEX_REBUILD_INTERVAL:return f->length==4?0:-1;case SETTING_SEARCH_INDEX_EXCLUSIONS:{cr_search_index_exclusions x;return decode_search_index_exclusions_field(f,&x);}default:return-1;}}
+static int validate_setting_field(cr_session*s,const cr_tlv*f){int perm=server_setting_permission(f->type,1);if(perm<0||!account_perm(s,(unsigned)perm))return-1;switch(f->type){case 0x04:{if(f->length<1||f->length>0xfc00||f->value[0]>1)return-1;if(f->length==1)return 0;if(f->length<9)return-1;uint32_t tn=cr_read_be32(f->value+1);if((size_t)tn+9>f->length)return-1;size_t pos=5u+tn;uint32_t sn=cr_read_be32(f->value+pos);return pos+4u+sn==f->length?0:-1;}case 0x05:return f->length>0&&f->length<=255?0:-1;case 0x06:case 0x07:return f->length<=255?0:-1;case 0x08:return f->length<=16384?0:-1;case 0x09:case 0x0c:case 0x20:case 0x21:case 0x22:case 0x23:case 0x35:return f->length==2?0:-1;case 0x2f:{if(f->length<4)return-1;uint32_t count=cr_read_be32(f->value);return count<=4096&&4u+(size_t)count*10u==f->length?0:-1;}case 0x30:{if(f->length<2)return-1;size_t pos=2;uint16_t count=cr_read_be16(f->value);for(uint16_t i=0;i<count;i++){if(pos+2>f->length)return-1;uint16_t a=cr_read_be16(f->value+pos);pos+=2;if(a>32||pos+a+2>f->length)return-1;pos+=a;uint16_t b=cr_read_be16(f->value+pos);pos+=2;if(!b||b>64||pos+b+2>f->length)return-1;pos+=b;uint16_t c=cr_read_be16(f->value+pos);pos+=2;if(c>16||pos+c+4>f->length)return-1;pos+=c+4;}return pos==f->length?0:-1;}case 0x32:return f->length==4?0:-1;case 0x33:return f->length<=255?0:-1;case SETTING_ACCOUNT_GROUPS:{cr_account_group*groups=calloc(CR_MAX_ACCOUNT_GROUPS,sizeof(*groups));if(!groups)return-1;size_t count=0;int rc=decode_account_groups_field(f,groups,&count);free(groups);return rc;}case SETTING_LEGACY_FILES_ROOT:return f->length<PATH_MAX&&valid_utf8_bytes(f->value,f->length)&&!memchr(f->value,0,f->length)&&(!f->length||f->value[0]=='/')?0:-1;case SETTING_AUTHENTICATION_MODE:return f->length==1&&f->value[0]<=1?0:-1;case SETTING_FILE_WATCHER_GUESTS_ENABLED:return f->length==1&&f->value[0]<=1?0:-1;case SETTING_GUEST_UPLOAD_APPROVAL_ENABLED:return f->length==1&&f->value[0]<=1?0:-1;case SETTING_SEARCH_INDEX_REBUILD_INTERVAL:return f->length==4?0:-1;case SETTING_SEARCH_INDEX_EXCLUSIONS:{cr_search_index_exclusions x;return decode_search_index_exclusions_field(f,&x);}default:return-1;}}
 static int decode_setting_text(const cr_tlv*f,char*out,size_t cap){return cr_macroman_to_utf8(f->value,f->length,out,cap);}
 static int apply_settings_locked(cr_server*s,const cr_packet*p){
     cr_server_state*st=&s->state;json_object*identity=ensure_json_object_member(st->root,"identity"),*advanced=ensure_json_object_member(st->root,"advanced"),*agreement=ensure_json_object_member(st->root,"agreement"),*runtime=ensure_json_object_member(st->root,"runtime");
@@ -4224,6 +4242,7 @@ static int apply_settings_locked(cr_server*s,const cr_packet*p){
         case SETTING_LEGACY_FILES_ROOT:{char path[PATH_MAX];if(f->length>=sizeof(path))return-1;memcpy(path,f->value,f->length);path[f->length]=0;json_object_object_add(runtime,"legacyFilesRoot",json_object_new_string(path));break;}
         case SETTING_AUTHENTICATION_MODE:if(cr_state_apply_authentication_mode_locked(st,f->value[0]==0))return-1;break;
         case SETTING_FILE_WATCHER_GUESTS_ENABLED:json_object_object_add(advanced,"fileWatcherGuestsEnabled",json_object_new_boolean(f->value[0]!=0));break;
+        case SETTING_GUEST_UPLOAD_APPROVAL_ENABLED:json_object_object_add(advanced,"guestUploadApprovalEnabled",json_object_new_boolean(f->value[0]!=0));break;
         case SETTING_SEARCH_INDEX_REBUILD_INTERVAL:json_object_object_add(runtime,"searchIndexRebuildIntervalHours",json_object_new_int64(cr_read_be32(f->value)));break;
         case SETTING_SEARCH_INDEX_EXCLUSIONS:{cr_search_index_exclusions x;if(decode_search_index_exclusions_field(f,&x))return-1;json_object*arr=json_object_new_array();if(!arr)return-1;for(size_t j=0;j<x.count;j++)json_object_array_add(arr,json_object_new_string(x.patterns[j]));json_object_object_add(runtime,"searchIndexExclusions",arr);break;}
         default:return-1;
@@ -4531,7 +4550,7 @@ static void record_request_event(cr_session*s,const cr_packet*p){
         case CMD_FLAT_NEWS_LIST:cat="news";action="read-flat-news";break;case CMD_FLAT_NEWS_POST:cat="news";action="post-flat-news";break;
         case CMD_CHANNEL_JOIN:cat="chat";action="join";break;case CMD_CHANNEL_LEAVE:cat="chat";action="leave";break;case CMD_CHANNEL_CHAT:cat="chat";action="message";break;case CMD_CHANNEL_DELETE:cat="chat";action="delete";break;
         case CMD_PRIVATE_MESSAGE:cat="messages";action="private-message";break;case CMD_OFFLINE_MESSAGE_SEND:cat="messages";action="offline-message";break;case CMD_BROADCAST:cat="messages";action="broadcast";break;
-        case CMD_ACCOUNT_SAVE:cat="administration";action="save-account";break;case CMD_ACCOUNT_DELETE:cat="administration";action="delete-account";break;case CMD_SET_SERVER_SETTINGS:cat="administration";action="change-server-settings";break;case CMD_BOT_SET_ENABLED:cat="administration";action="control-bot";break;case CMD_BOT_SET_GREETING:cat="administration";action="configure-bot-greeting";break;case CMD_BOT_SET_COMMAND_RULES:cat="administration";action="configure-bot-commands";break;case CMD_BOT_SET_RSS_FEEDS:cat="administration";action="configure-bot-rss";break;case CMD_BOT_TEST_RSS_FEED:cat="administration";action="test-bot-rss";break;case CMD_BOT_SET_FILE_WATCHERS:cat="administration";action="configure-bot-file-watchers";break;case CMD_REBUILD_SEARCH_INDEX:cat="administration";action="rebuild-search-index";break;case CMD_CHANGE_OWN_PASSWORD:cat="account";action="change-password";break;
+        case CMD_ACCOUNT_SAVE:cat="administration";action="save-account";break;case CMD_ACCOUNT_DELETE:cat="administration";action="delete-account";break;case CMD_SET_SERVER_SETTINGS:cat="administration";action="change-server-settings";break;case CMD_BOT_SET_ENABLED:cat="administration";action="control-bot";break;case CMD_BOT_SET_GREETING:cat="administration";action="configure-bot-greeting";break;case CMD_BOT_SET_COMMAND_RULES:cat="administration";action="configure-bot-commands";break;case CMD_BOT_SET_RSS_FEEDS:cat="administration";action="configure-bot-rss";break;case CMD_BOT_TEST_RSS_FEED:cat="administration";action="test-bot-rss";break;case CMD_BOT_SET_FILE_WATCHERS:cat="administration";action="configure-bot-file-watchers";break;case CMD_PENDING_UPLOAD_LIST_REQUEST:cat="administration";action="list-pending-guest-uploads";break;case CMD_PENDING_UPLOAD_APPROVE:cat="administration";action="approve-guest-upload";break;case CMD_PENDING_UPLOAD_REJECT:cat="administration";action="reject-guest-upload";break;case CMD_REBUILD_SEARCH_INDEX:cat="administration";action="rebuild-search-index";break;case CMD_CHANGE_OWN_PASSWORD:cat="account";action="change-password";break;
         default:break;
     }
     if(cat)event_msg(s,cat,action,detail);
@@ -4549,7 +4568,7 @@ case CMD_FLAT_NEWS_POST:return handle_flat_news_post(s,p);case CMD_FLAT_NEWS_LIS
 case CMD_TRANSFER_INFO:return handle_transfer_info(s,p);
 case CMD_REQUEST_SERVER_SETTINGS:return handle_server_settings_request(s,p);case CMD_SET_SERVER_SETTINGS:return handle_server_settings_update(s,p);
 case CMD_SERVER_LOG_REQUEST:return handle_server_log_request(s,p);case CMD_SERVER_LOG_CLEAR:return handle_server_log_clear(s,p);case CMD_EVENT_LOG_REQUEST:return handle_event_log_request(s,p);case CMD_EVENT_LOG_CLEAR:return handle_event_log_clear(s,p);case CMD_REBUILD_SEARCH_INDEX:return handle_rebuild_search_index(s,p);case CMD_SEARCH_INDEX_STATUS_REQUEST:return handle_search_index_status(s,p);
-case CMD_ACCOUNT_LIST:return handle_account_list(s,p);case CMD_GET_ACCOUNT:return handle_get_account(s,p);case CMD_ACCOUNT_SAVE:return handle_account_save(s,p);case CMD_ACCOUNT_DELETE:return handle_account_delete(s,p);case CMD_CHANGE_OWN_PASSWORD:return handle_change_own_password(s,p);case CMD_BOT_STATUS_REQUEST:return handle_bot_status(s,p);case CMD_BOT_SET_ENABLED:return handle_bot_set_enabled(s,p);case CMD_BOT_SET_GREETING:return handle_bot_set_greeting(s,p);case CMD_BOT_SET_COMMAND_RULES:return handle_bot_set_command_rules(s,p);case CMD_BOT_SET_RSS_FEEDS:return handle_bot_set_rss_feeds(s,p);case CMD_BOT_TEST_RSS_FEED:return handle_bot_test_rss_feed(s,p);case CMD_BOT_SET_FILE_WATCHERS:return handle_bot_set_file_watchers(s,p);
+case CMD_ACCOUNT_LIST:return handle_account_list(s,p);case CMD_GET_ACCOUNT:return handle_get_account(s,p);case CMD_ACCOUNT_SAVE:return handle_account_save(s,p);case CMD_ACCOUNT_DELETE:return handle_account_delete(s,p);case CMD_CHANGE_OWN_PASSWORD:return handle_change_own_password(s,p);case CMD_BOT_STATUS_REQUEST:return handle_bot_status(s,p);case CMD_BOT_SET_ENABLED:return handle_bot_set_enabled(s,p);case CMD_BOT_SET_GREETING:return handle_bot_set_greeting(s,p);case CMD_BOT_SET_COMMAND_RULES:return handle_bot_set_command_rules(s,p);case CMD_BOT_SET_RSS_FEEDS:return handle_bot_set_rss_feeds(s,p);case CMD_BOT_TEST_RSS_FEED:return handle_bot_test_rss_feed(s,p);case CMD_BOT_SET_FILE_WATCHERS:return handle_bot_set_file_watchers(s,p);case CMD_PENDING_UPLOAD_LIST_REQUEST:return handle_pending_upload_list(s,p);case CMD_PENDING_UPLOAD_APPROVE:return handle_pending_upload_approve(s,p);case CMD_PENDING_UPLOAD_REJECT:return handle_pending_upload_reject(s,p);
 case CMD_ADMIN_NEWSGROUP_LIST:return handle_admin_newsgroup_list(s,p);case CMD_NEWSGROUP_CREATE:return handle_newsgroup_admin_mutation(s,p,0);case CMD_NEWSGROUP_MODIFY:return handle_newsgroup_admin_mutation(s,p,1);case CMD_NEWSGROUP_DELETE:return handle_newsgroup_admin_mutation(s,p,2);
 case CMD_ARTICLE_READ:return handle_article_read(s,p);case CMD_FORUM_THREAD_LIST:return handle_forum_thread_list(s,p);case CMD_FORUM_THREAD_ENTRIES:return handle_forum_thread_entries(s,p);case CMD_FORUM_ARTICLE_REACTIONS:return handle_forum_article_reactions(s,p);case CMD_FORUM_ARTICLE_REACTION_SET:return handle_forum_article_reaction_set(s,p);case CMD_FORUM_ARTICLE_DELETE:return handle_forum_article_delete(s,p);case CMD_ARTICLE_DELETE:return handle_article_delete(s,p);
 case CMD_BROADCAST:return handle_broadcast(s,p);case CMD_CHANNEL_LIST:return handle_channel_list(s,p);case CMD_NEWSGROUP_LIST:return handle_newsgroups(s,p);
@@ -4672,6 +4691,16 @@ done:session_unregister(s);shutdown(s->fd,SHUT_RDWR);close(s->fd);log_msg("Conne
 }
 
 static void send_async_error_to_user(cr_server*s,uint32_t user_id,uint16_t code){pthread_mutex_lock(&s->mutex);cr_session*x=find_session_locked(s,user_id);if(x&&x->authenticated&&!x->closed)send_error(x,0,code);pthread_mutex_unlock(&s->mutex);}
+
+static void send_guest_upload_pending_notice(cr_server*s,uint32_t user_id,const uint8_t*path,size_t path_len,int is_folder){
+    if(!s||!path||!path_len||path_len>UINT16_MAX)return;
+    uint8_t folder=is_folder?1:0;
+    cr_tlv_out fields[]={{1,path,(uint16_t)path_len},{2,&folder,1}};
+    pthread_mutex_lock(&s->mutex);
+    cr_session*x=find_session_locked(s,user_id);
+    if(x&&x->modern_transport)session_send(x,CMD_GUEST_UPLOAD_PENDING_NOTICE,0,fields,2);
+    pthread_mutex_unlock(&s->mutex);
+}
 
 static void broadcast_banner_changed(cr_server*s){pthread_mutex_lock(&s->mutex);for(size_t i=0;i<s->allocated_session_count;i++){cr_session*x=s->sessions[i];if(session_ready_for_async(x))session_send(x,CMD_BANNER_CHANGED,0,NULL,0);}pthread_mutex_unlock(&s->mutex);}
 static int banner_is_oversized_builtin_logo(const uint8_t*data,size_t len){
@@ -5036,6 +5065,301 @@ static int rename_upload_noreplace(const char *source, const char *destination) 
 #endif
 }
 
+static int pending_upload_lock(cr_server *s) {
+    int fd = open(s->pending_upload_lock_path, O_CREAT | O_RDWR, 0600);
+    if (fd < 0) return -1;
+    if (flock(fd, LOCK_EX)) { close(fd); return -1; }
+    return fd;
+}
+static void pending_upload_unlock(int fd) {
+    if (fd >= 0) { (void)flock(fd, LOCK_UN); close(fd); }
+}
+static json_object *pending_upload_load(cr_server *s) {
+    if (access(s->pending_upload_manifest_path, F_OK)) {
+        if (errno == ENOENT) return json_object_new_array();
+        return NULL;
+    }
+    json_object *root = json_object_from_file(s->pending_upload_manifest_path);
+    if (!root || !json_object_is_type(root, json_type_array)) {
+        if (root) json_object_put(root);
+        return NULL;
+    }
+    return root;
+}
+static int pending_upload_save(cr_server *s, json_object *root) {
+    if (!root || !json_object_is_type(root, json_type_array)) return -1;
+    if (write_json_config_with_fallback(s->pending_upload_manifest_path, root, JSON_C_TO_STRING_PRETTY)) return -1;
+    (void)chmod(s->pending_upload_manifest_path, 0600);
+    return 0;
+}
+static int pending_upload_uuid(char out[37]) {
+    uint8_t b[16];
+    if (RAND_bytes(b, sizeof(b)) != 1) return -1;
+    b[6] = (uint8_t)((b[6] & 0x0f) | 0x40);
+    b[8] = (uint8_t)((b[8] & 0x3f) | 0x80);
+    snprintf(out, 37,
+             "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+             b[0],b[1],b[2],b[3],b[4],b[5],b[6],b[7],b[8],b[9],b[10],b[11],b[12],b[13],b[14],b[15]);
+    return 0;
+}
+static int pending_upload_hex(const uint8_t *data, size_t len, char *out, size_t cap) {
+    static const char h[] = "0123456789abcdef";
+    if (len > 4096 || cap < len * 2 + 1) return -1;
+    for (size_t i = 0; i < len; i++) { out[i*2] = h[data[i] >> 4]; out[i*2+1] = h[data[i] & 15]; }
+    out[len*2] = 0;
+    return 0;
+}
+static int pending_upload_unhex(const char *text, uint8_t *out, size_t cap, size_t *out_len) {
+    if (!text || !out_len) return -1;
+    size_t n = strlen(text);
+    if ((n & 1u) || n / 2 > cap || n > 8192) return -1;
+    for (size_t i = 0; i < n; i += 2) {
+        int hi = text[i] >= '0' && text[i] <= '9' ? text[i]-'0' :
+                 text[i] >= 'a' && text[i] <= 'f' ? text[i]-'a'+10 :
+                 text[i] >= 'A' && text[i] <= 'F' ? text[i]-'A'+10 : -1;
+        int lo = text[i+1] >= '0' && text[i+1] <= '9' ? text[i+1]-'0' :
+                 text[i+1] >= 'a' && text[i+1] <= 'f' ? text[i+1]-'a'+10 :
+                 text[i+1] >= 'A' && text[i+1] <= 'F' ? text[i+1]-'A'+10 : -1;
+        if (hi < 0 || lo < 0) return -1;
+        out[i/2] = (uint8_t)((hi << 4) | lo);
+    }
+    *out_len = n / 2;
+    return 0;
+}
+static int pending_upload_display_path(cr_session *session, const uint8_t *path, size_t path_len,
+                                       char *out, size_t cap) {
+    size_t pos = 0, used = 0;
+    if (!out || !cap) return -1;
+    out[0] = 0;
+    while (pos < path_len) {
+        size_t start = pos;
+        while (pos < path_len && path[pos] != 1) pos++;
+        size_t n = pos - start;
+        if (!n) return -1;
+        char component[1024];
+        if (decode_file_component(session, path + start, n, component, sizeof(component))) return -1;
+        size_t cn = strlen(component);
+        if (used + (used ? 1 : 0) + cn + 1 > cap) return -1;
+        if (used) out[used++] = '/';
+        memcpy(out + used, component, cn);
+        used += cn;
+        out[used] = 0;
+        if (pos < path_len) pos++;
+    }
+    return 0;
+}
+static int pending_upload_json_string(json_object *o, const char *key, const char **out) {
+    json_object *v = NULL;
+    if (!o || !json_object_object_get_ex(o,key,&v) || !json_object_is_type(v,json_type_string)) return -1;
+    const char *s = json_object_get_string(v);
+    if (!s || !*s) return -1;
+    *out = s;
+    return 0;
+}
+static int pending_upload_target_reserved(cr_server *s, const char *targetfs) {
+    int lockfd = pending_upload_lock(s);
+    if (lockfd < 0) return -1;
+    json_object *root = pending_upload_load(s);
+    if (!root) { pending_upload_unlock(lockfd); return -1; }
+    int reserved = 0;
+    size_t count = json_object_array_length(root);
+    for (size_t i = 0; i < count; i++) {
+        json_object *o = json_object_array_get_idx(root,i);
+        const char *target = NULL, *payload = NULL;
+        if (pending_upload_json_string(o,"targetFilesystemPath",&target) ||
+            pending_upload_json_string(o,"payloadFilesystemPath",&payload)) continue;
+        if (!strcmp(target,targetfs) && access(payload,F_OK)==0) { reserved = 1; break; }
+    }
+    json_object_put(root);
+    pending_upload_unlock(lockfd);
+    return reserved;
+}
+static int queue_guest_upload_for_approval(cr_server *s, cr_session *session,
+                                           const char *stage, const char *parentfs,
+                                           const char *targetfs, const uint8_t *target,
+                                           size_t target_len, uint64_t total, int is_folder) {
+    char hidden[PATH_MAX], id[37], payload[PATH_MAX], destination[8192], pathhex[8193], uploader[1024];
+    if (join_path_component(hidden,sizeof(hidden),parentfs,".carracho-pending") ||
+        pending_upload_uuid(id) ||
+        join_path_component(payload,sizeof(payload),hidden,id) ||
+        pending_upload_display_path(session,target,target_len,destination,sizeof(destination)) ||
+        pending_upload_hex(target,target_len,pathhex,sizeof(pathhex))) return -1;
+
+    struct stat st;
+    if (lstat(hidden,&st)==0) {
+        if (!S_ISDIR(st.st_mode) || S_ISLNK(st.st_mode)) return -1;
+    } else {
+        if (errno != ENOENT || mkdir(hidden,0700)) return -1;
+    }
+    (void)chmod(hidden,0700);
+
+    if (session->nickname_len &&
+        cr_macroman_to_utf8(session->nickname,session->nickname_len,uploader,sizeof(uploader))==0 &&
+        uploader[0]) {
+        /* nickname converted */
+    } else {
+        snprintf(uploader,sizeof(uploader),"%s",session->profile_name[0]?session->profile_name:session->login);
+    }
+
+    int lockfd = pending_upload_lock(s);
+    if (lockfd < 0) return -1;
+    json_object *root = pending_upload_load(s);
+    if (!root) { pending_upload_unlock(lockfd); return -1; }
+
+    struct stat target_st;
+    if (lstat(targetfs,&target_st)==0 || errno!=ENOENT) {
+        json_object_put(root); pending_upload_unlock(lockfd); errno = EEXIST; return -1;
+    }
+
+    size_t count = json_object_array_length(root);
+    for (size_t i = 0; i < count; i++) {
+        json_object *o = json_object_array_get_idx(root,i);
+        const char *existing_target = NULL, *existing_payload = NULL;
+        if (pending_upload_json_string(o,"targetFilesystemPath",&existing_target) ||
+            pending_upload_json_string(o,"payloadFilesystemPath",&existing_payload)) continue;
+        if (!strcmp(existing_target,targetfs) && access(existing_payload,F_OK)==0) {
+            json_object_put(root); pending_upload_unlock(lockfd); errno = EEXIST; return -1;
+        }
+    }
+
+    if (rename_upload_noreplace(stage,payload)) { json_object_put(root); pending_upload_unlock(lockfd); return -1; }
+
+    json_object *o = json_object_new_object();
+    if (!o) { (void)rename(payload,stage); json_object_put(root); pending_upload_unlock(lockfd); return -1; }
+    int indexable = !session_uses_legacy_files_root(s,session) && !session->files_root_path[0];
+    json_object_object_add(o,"id",json_object_new_string(id));
+    json_object_object_add(o,"uploadedAt",json_object_new_int64((int64_t)time(NULL)));
+    json_object_object_add(o,"size",json_object_new_int64((int64_t)total));
+    json_object_object_add(o,"isFolder",json_object_new_boolean(is_folder));
+    json_object_object_add(o,"uploader",json_object_new_string(uploader));
+    json_object_object_add(o,"destination",json_object_new_string(destination));
+    json_object_object_add(o,"targetFilesystemPath",json_object_new_string(targetfs));
+    json_object_object_add(o,"payloadFilesystemPath",json_object_new_string(payload));
+    json_object_object_add(o,"legacyPathHex",json_object_new_string(pathhex));
+    json_object_object_add(o,"indexable",json_object_new_boolean(indexable));
+    json_object_array_add(root,o);
+
+    int rc = pending_upload_save(s,root);
+    if (rc) (void)rename(payload,stage);
+    json_object_put(root);
+    pending_upload_unlock(lockfd);
+    if (!rc) log_msg("Guest upload pending approval from %s: %s",uploader,destination);
+    return rc;
+}
+static int pending_upload_require_admin(cr_session *s) {
+    return s && s->modern_transport && s->mode == CR_MODE_ADMIN ? 0 : -1;
+}
+static int pending_upload_packet_id(const cr_packet *p, char id[37]) {
+    const cr_tlv *f = cr_packet_field(p,1);
+    if (!p || p->field_count != 1 || !f || f->length != 36) return -1;
+    memcpy(id,f->value,36); id[36]=0;
+    return media_uuid_text_valid(id) ? 0 : -1;
+}
+static int handle_pending_upload_list(cr_session *session, const cr_packet *p) {
+    if (pending_upload_require_admin(session) || p->field_count) return send_error(session,p->transaction_id,1);
+    cr_server *s = session->server;
+    int lockfd = pending_upload_lock(s);
+    if (lockfd < 0) return send_error(session,p->transaction_id,1);
+    json_object *root = pending_upload_load(s);
+    if (!root) { pending_upload_unlock(lockfd); return send_error(session,p->transaction_id,1); }
+
+    uint16_t visible = 0;
+    size_t count = json_object_array_length(root);
+    for (size_t i=0;i<count && visible<UINT16_MAX;i++) {
+        json_object *o=json_object_array_get_idx(root,i); const char *payload=NULL;
+        if (!pending_upload_json_string(o,"payloadFilesystemPath",&payload) && access(payload,F_OK)==0) visible++;
+    }
+    cr_buffer b; cr_buffer_init(&b);
+    int fail = cr_buffer_append_u16(&b,visible);
+    for (size_t i=0;i<count && !fail;i++) {
+        json_object *o=json_object_array_get_idx(root,i), *v=NULL;
+        const char *payload=NULL,*id=NULL,*uploader=NULL,*destination=NULL;
+        if (pending_upload_json_string(o,"payloadFilesystemPath",&payload) || access(payload,F_OK)) continue;
+        if (pending_upload_json_string(o,"id",&id) || strlen(id)!=36 ||
+            pending_upload_json_string(o,"uploader",&uploader) ||
+            pending_upload_json_string(o,"destination",&destination)) { fail=1; break; }
+        int64_t uploaded=0,size=0; int folder=0;
+        if (!json_object_object_get_ex(o,"uploadedAt",&v) || !json_object_is_type(v,json_type_int)) {fail=1;break;}
+        uploaded=json_object_get_int64(v);
+        if (!json_object_object_get_ex(o,"size",&v) || !json_object_is_type(v,json_type_int)) {fail=1;break;}
+        size=json_object_get_int64(v);
+        if (!json_object_object_get_ex(o,"isFolder",&v) || !json_object_is_type(v,json_type_boolean)) {fail=1;break;}
+        folder=json_object_get_boolean(v);
+        size_t un=strlen(uploader),dn=strlen(destination);
+        if (uploaded<0 || size<0 || un>4096 || dn>4096 ||
+            cr_buffer_append_string16(&b,id,36) ||
+            cr_buffer_append_u64(&b,(uint64_t)uploaded) ||
+            cr_buffer_append_u64(&b,(uint64_t)size) ||
+            cr_buffer_append_u8(&b,folder?1:0) ||
+            cr_buffer_append_string16(&b,uploader,un) ||
+            cr_buffer_append_string16(&b,destination,dn) || b.len>UINT16_MAX) {fail=1;break;}
+    }
+    json_object_put(root); pending_upload_unlock(lockfd);
+    int rc;
+    if (fail || b.len>UINT16_MAX) rc=send_error(session,p->transaction_id,1);
+    else { cr_tlv_out f={1,b.data,(uint16_t)b.len}; rc=session_send(session,CMD_PENDING_UPLOAD_LIST_REPLY,p->transaction_id,&f,1); }
+    cr_buffer_free(&b);
+    return rc;
+}
+static int pending_upload_remove_record(json_object *root, size_t index) {
+    return json_object_array_del_idx(root,index,1);
+}
+static int handle_pending_upload_approve(cr_session *session, const cr_packet *p) {
+    char id[37]; if (pending_upload_require_admin(session) || pending_upload_packet_id(p,id)) return send_error(session,p->transaction_id,1);
+    cr_server *s=session->server; int lockfd=pending_upload_lock(s); if(lockfd<0)return send_error(session,p->transaction_id,1);
+    json_object *root=pending_upload_load(s); if(!root){pending_upload_unlock(lockfd);return send_error(session,p->transaction_id,1);}
+    size_t count=json_object_array_length(root),index=count; json_object *record=NULL;
+    for(size_t i=0;i<count;i++){json_object*o=json_object_array_get_idx(root,i),*v=NULL;if(json_object_object_get_ex(o,"id",&v)&&json_object_is_type(v,json_type_string)&&!strcasecmp(json_object_get_string(v),id)){index=i;record=o;break;}}
+    if(!record){json_object_put(root);pending_upload_unlock(lockfd);return send_error(session,p->transaction_id,1);}
+    const char *payload=NULL,*target=NULL,*hex=NULL;json_object *v=NULL;
+    int indexable=0;char payload_copy[PATH_MAX],target_copy[PATH_MAX],hex_copy[8193];
+    if(pending_upload_json_string(record,"payloadFilesystemPath",&payload)||
+       pending_upload_json_string(record,"targetFilesystemPath",&target)||
+       pending_upload_json_string(record,"legacyPathHex",&hex)||
+       strlen(payload)>=sizeof(payload_copy)||strlen(target)>=sizeof(target_copy)||strlen(hex)>=sizeof(hex_copy)||
+       !json_object_object_get_ex(record,"indexable",&v)||!json_object_is_type(v,json_type_boolean)){
+        json_object_put(root);pending_upload_unlock(lockfd);return send_error(session,p->transaction_id,1);
+    }
+    strcpy(payload_copy,payload);strcpy(target_copy,target);strcpy(hex_copy,hex);
+    indexable=json_object_get_boolean(v);
+    struct stat st;if(lstat(payload_copy,&st)||lstat(target_copy,&st)==0||errno!=ENOENT||rename_upload_noreplace(payload_copy,target_copy)){
+        json_object_put(root);pending_upload_unlock(lockfd);return send_error(session,p->transaction_id,1);
+    }
+    (void)pending_upload_remove_record(root,index);
+    if(pending_upload_save(s,root))log_msg("Pending upload manifest cleanup failed after approval");
+    json_object_put(root);pending_upload_unlock(lockfd);
+    char parent[PATH_MAX];snprintf(parent,sizeof(parent),"%s",payload_copy);char*slash=strrchr(parent,'/');if(slash){*slash=0;(void)rmdir(parent);}
+    if(indexable){
+        uint8_t path[4096];size_t path_len=0;
+        if(!pending_upload_unhex(hex_copy,path,sizeof(path),&path_len)&&file_search_index_incremental_available(s)&&
+           cr_file_search_index_upsert_subtree(&s->file_index,target_copy,path,path_len,&s->metadata,&s->search_index_exclusions)){
+            log_msg("File-search index update failed for approved Guest upload");
+            invalidate_file_search_index(s,"approved Guest upload");
+        }
+    }
+    log_msg("Pending Guest upload approved: %s",target_copy);
+    return send_task_complete(session,p->transaction_id);
+}
+static int handle_pending_upload_reject(cr_session *session, const cr_packet *p) {
+    char id[37]; if (pending_upload_require_admin(session) || pending_upload_packet_id(p,id)) return send_error(session,p->transaction_id,1);
+    cr_server *s=session->server; int lockfd=pending_upload_lock(s); if(lockfd<0)return send_error(session,p->transaction_id,1);
+    json_object *root=pending_upload_load(s); if(!root){pending_upload_unlock(lockfd);return send_error(session,p->transaction_id,1);}
+    size_t count=json_object_array_length(root),index=count;json_object*record=NULL;
+    for(size_t i=0;i<count;i++){json_object*o=json_object_array_get_idx(root,i),*v=NULL;if(json_object_object_get_ex(o,"id",&v)&&json_object_is_type(v,json_type_string)&&!strcasecmp(json_object_get_string(v),id)){index=i;record=o;break;}}
+    const char *payload=NULL;
+    if(!record||pending_upload_json_string(record,"payloadFilesystemPath",&payload)){
+        json_object_put(root);pending_upload_unlock(lockfd);return send_error(session,p->transaction_id,1);
+    }
+    char payload_copy[PATH_MAX];if(strlen(payload)>=sizeof(payload_copy)){json_object_put(root);pending_upload_unlock(lockfd);return send_error(session,p->transaction_id,1);}strcpy(payload_copy,payload);
+    if(recursive_remove_path(payload_copy)){json_object_put(root);pending_upload_unlock(lockfd);return send_error(session,p->transaction_id,1);}
+    (void)pending_upload_remove_record(root,index);
+    if(pending_upload_save(s,root))log_msg("Pending upload manifest cleanup failed after rejection");
+    json_object_put(root);pending_upload_unlock(lockfd);
+    char*slash=strrchr(payload_copy,'/');if(slash){*slash=0;(void)rmdir(payload_copy);}
+    log_msg("Pending Guest upload rejected: %s",id);
+    return send_task_complete(session,p->transaction_id);
+}
+
 static int serve_upload(cr_server*s,cr_transfer_stream*stream,cr_session*session,uint32_t transfer_id){
     cr_buffer parent,target,relative;cr_buffer_init(&parent);cr_buffer_init(&target);cr_buffer_init(&relative);int rc=-1,committed=0;char stage[PATH_MAX]="";
     if(cr_transfer_read_string16(stream,&parent,4096)||cr_transfer_read_string16(stream,&target,4096)||!target.len)goto done;
@@ -5054,8 +5378,10 @@ static int serve_upload(cr_server*s,cr_transfer_stream*stream,cr_session*session
     configure_transfer(s,transfer_id,target.data,target.len,0);
     if(!account_perm(session,PERM_UPLOAD_ANYWHERE)&&!path_is_upload_folder(s,session,parent.data,parent.len))goto done;
     char parentfs[PATH_MAX],targetfs[PATH_MAX];int parent_folder=0;if(resolve_legacy_path_ex(s,session,parent.data,parent.len,parentfs,sizeof(parentfs),1)||resource_kind(parentfs,&parent_folder,NULL,NULL)||!parent_folder||resolve_legacy_path_ex(s,session,target.data,target.len,targetfs,sizeof(targetfs),0))goto done;
+    pthread_mutex_lock(&s->state.mutex);int requires_approval=session->mode==CR_MODE_GUEST&&s->state.advanced.guest_upload_approval_enabled;pthread_mutex_unlock(&s->state.mutex);
     struct stat target_st;int exists=lstat(targetfs,&target_st)==0;
-    if(exists){uint8_t st=1;if(cr_transfer_send(stream,&st,1))goto done;rc=0;goto done;}
+    int pending_reserved=pending_upload_target_reserved(s,targetfs);if(pending_reserved<0)goto done;
+    if(exists||pending_reserved){uint8_t st=1;if(cr_transfer_send(stream,&st,1))goto done;rc=0;goto done;}
     uint8_t status=0;if(cr_transfer_send(stream,&status,1))goto done;uint8_t overwrite=0;if(cr_transfer_read_u8(stream,&overwrite)||overwrite!=0)goto done;
     uint64_t total=0;uint32_t count=0;if(cr_transfer_read_u64(stream,&total)||cr_transfer_read_u32(stream,&count)||!count||count>1000000||total>(1ULL<<50))goto done;configure_transfer(s,transfer_id,target.data,target.len,total);
     const uint8_t*target_leaf=NULL;size_t target_leaf_len=0;if(legacy_leaf(target.data,target.len,&target_leaf,&target_leaf_len))goto done;char expected_root[1024];if(cr_macroman_to_utf8(target_leaf,target_leaf_len,expected_root,sizeof(expected_root))||!safe_component(expected_root))goto done;
@@ -5088,13 +5414,21 @@ static int serve_upload(cr_server*s,cr_transfer_stream*stream,cr_session*session
         uint64_t actual=0;if(regular_file_size(write_path,&actual)||actual!=full)goto done;if(i>0&&strcmp(write_path,local)){if(unlink(local)&&errno!=ENOENT)goto done;if(rename(write_path,local))goto done;}
     }
     if(accounted!=total||root_kind<0||lstat(stage,&target_st))goto done;
-    if(rename_upload_noreplace(stage,targetfs))goto done;
-    committed=1;
-    if(file_search_index_incremental_available(s)&&!session_uses_legacy_files_root(s,session)&&!session->files_root_path[0]&&cr_file_search_index_upsert_subtree(&s->file_index,targetfs,target.data,target.len,&s->metadata,&s->search_index_exclusions)){
-        log_msg("File-search index upload update failed");
-        invalidate_file_search_index(s,"incremental upload failure");
+    if(requires_approval){
+        int is_folder=root_kind==1;
+        if(queue_guest_upload_for_approval(s,session,stage,parentfs,targetfs,target.data,target.len,total,is_folder))goto done;
+        committed=1;
+        send_guest_upload_pending_notice(s,session->user_id,target.data,target.len,is_folder);
+        log_msg("Upload completed for user %u and is awaiting approval",session->user_id);
+    }else{
+        if(rename_upload_noreplace(stage,targetfs))goto done;
+        committed=1;
+        if(file_search_index_incremental_available(s)&&!session_uses_legacy_files_root(s,session)&&!session->files_root_path[0]&&cr_file_search_index_upsert_subtree(&s->file_index,targetfs,target.data,target.len,&s->metadata,&s->search_index_exclusions)){
+            log_msg("File-search index upload update failed");
+            invalidate_file_search_index(s,"incremental upload failure");
+        }
+        log_msg("Upload completed for user %u",session->user_id);
     }
-    log_msg("Upload completed for user %u",session->user_id);
     rc=0;
 done:cr_buffer_free(&relative);cr_buffer_free(&parent);cr_buffer_free(&target);return committed?0:(rc==0?1:-1);
 }
@@ -6301,6 +6635,8 @@ static json_object *http_settings_json(cr_server *s) {
                            json_object_new_int(s->state.advanced.max_folder_download_depth));
     json_object_object_add(o, "fileWatcherGuestsEnabled",
                            json_object_new_boolean(s->state.advanced.file_watcher_guests_enabled));
+    json_object_object_add(o, "guestUploadApprovalEnabled",
+                           json_object_new_boolean(s->state.advanced.guest_upload_approval_enabled));
     json_object_object_add(o, "filesRoot", json_object_new_string(s->state.storage_root));
     json_object_object_add(o, "legacyFilesRoot", json_object_new_string(s->state.legacy_storage_root));
     pthread_mutex_unlock(&s->state.mutex);
@@ -6347,7 +6683,9 @@ static int http_patch_settings(cr_server *s, json_object *body) {
     int description_set = http_json_string(body, "description", &description);
     int file_watcher_guests_enabled = 0;
     int file_watcher_guests_set = http_json_bool(body, "fileWatcherGuestsEnabled", &file_watcher_guests_enabled);
-    if (server_name_set < 0 || description_set < 0 || file_watcher_guests_set < 0 ||
+    int guest_upload_approval_enabled = 0;
+    int guest_upload_approval_set = http_json_bool(body, "guestUploadApprovalEnabled", &guest_upload_approval_enabled);
+    if (server_name_set < 0 || description_set < 0 || file_watcher_guests_set < 0 || guest_upload_approval_set < 0 ||
         (server_name_set && (!*server_name || strlen(server_name) > 255)) ||
         (description_set && strlen(description) > CR_MAX_IDENTITY_TEXT))
         return -1;
@@ -6404,6 +6742,9 @@ static int http_patch_settings(cr_server *s, json_object *body) {
     if (file_watcher_guests_set)
         json_object_object_add(advanced, "fileWatcherGuestsEnabled",
                                json_object_new_boolean(file_watcher_guests_enabled));
+    if (guest_upload_approval_set)
+        json_object_object_add(advanced, "guestUploadApprovalEnabled",
+                               json_object_new_boolean(guest_upload_approval_enabled));
     for (size_t i = 0; i < sizeof(numbers) / sizeof(numbers[0]); i++) {
         if (!numbers[i].set) continue;
         if (!strcmp(numbers[i].key, "searchIndexRebuildIntervalHours"))
@@ -7089,7 +7430,9 @@ int cr_server_init(cr_server **out, const cr_server_config *config) {
     if (cr_state_open_at_root(&s->state, config->state_path, config->instance_root)) {
         pthread_cond_destroy(&s->transfer_cond); pthread_mutex_destroy(&s->mutex); free(s); return -1;
     }
-    if(join_path_component(s->bot_rss_db_path,sizeof(s->bot_rss_db_path),s->state.database_dir,"bot-rss.db")){
+    if(join_path_component(s->bot_rss_db_path,sizeof(s->bot_rss_db_path),s->state.database_dir,"bot-rss.db") ||
+       join_path_component(s->pending_upload_manifest_path,sizeof(s->pending_upload_manifest_path),s->state.database_dir,"pending-uploads.json") ||
+       join_path_component(s->pending_upload_lock_path,sizeof(s->pending_upload_lock_path),s->state.database_dir,"pending-uploads.lock")){
         cr_state_close(&s->state);pthread_cond_destroy(&s->transfer_cond);pthread_mutex_destroy(&s->mutex);free(s);return-1;
     }
 

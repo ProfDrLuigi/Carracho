@@ -961,6 +961,19 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         target: nil,
         action: nil
     )
+    let adminGuestUploadApprovalCheckbox = NSButton(
+        checkboxWithTitle: L("Guest uploads require approval"),
+        target: nil,
+        action: nil
+    )
+    let adminPendingUploadsTable = NSTableView()
+    let adminPendingUploadsApproveButton = NSButton(title: L("Approve"), target: nil, action: nil)
+    let adminPendingUploadsRejectButton = NSButton(title: L("Reject"), target: nil, action: nil)
+    let adminPendingUploadsRefreshButton = NSButton(title: L("Refresh"), target: nil, action: nil)
+    let adminPendingUploadsStatusLabel = NSTextField(labelWithString: "")
+    var adminPendingUploads: [LegacyPendingUpload] = []
+    var advancedRemoteGuestUploadApprovalSupported = false
+    var pendingUploadsLoading = false
     let adminLegacyFilesRootField = NSTextField(string: "")
     let adminLegacyFilesRootStatusLabel = NSTextField(labelWithString: "")
     let adminSearchIndexExclusionsView = NSTextView()
@@ -6755,6 +6768,25 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
                 channelMemberTable.reloadData()
                 renderActiveChannelTranscript()
             }
+        case let .guestUploadAwaitingApproval(path, isFolder):
+            let displayName = LegacyPath.displayName(path)
+            let status = isFolder
+                ? LF("Folder upload completed and awaits approval: %@", displayName)
+                : LF("Upload completed and awaits approval: %@", displayName)
+            fileTransferLabel.stringValue = status
+            appendLine("\n" + status)
+
+            let alert = NSAlert()
+            alert.alertStyle = .informational
+            alert.messageText = isFolder
+                ? L("Folder upload awaits approval")
+                : L("Upload awaits approval")
+            alert.informativeText = isFolder
+                ? LF("The folder %@ was uploaded completely. It will become visible on the server only after an Administrator approves it.", displayName)
+                : LF("The file %@ was uploaded completely. It will become visible on the server only after an Administrator approves it.", displayName)
+            alert.addButton(withTitle: L("OK"))
+            if let window = view.window { alert.beginSheetModal(for: window) }
+            else { alert.runModal() }
         case let .ownPermissionsChanged(permissionWord0, permissionWord1):
             guard var login = lastLoginResult else { break }
             let changed = login.session.permissionWord0 != permissionWord0 ||
@@ -7001,6 +7033,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         if tableView === adminBotCommandTable { return remoteBotCommandRuleDraft.count }
         if tableView === adminBotRSSTable { return remoteBotRSSFeedDraft.count }
         if tableView === adminBotFileWatcherTable { return remoteBotFileWatcherDraft.count }
+        if tableView === adminPendingUploadsTable { return adminPendingUploads.count }
         return 0
     }
 
@@ -7014,6 +7047,36 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         }
         if tableView === adminBotFileWatcherTable {
             return botFileWatcherCell(identifier: identifier, row: row)
+        }
+        if tableView === adminPendingUploadsTable, row < adminPendingUploads.count {
+            let item = adminPendingUploads[row]
+            let text: String
+            let alignment: NSTextAlignment
+            var icon: NSImage?
+            switch identifier {
+            case "pendingName":
+                text = item.destination
+                icon = symbolImage(item.isFolder ? "folder.fill" : "doc.fill",
+                                   fallback: item.isFolder ? NSImage.folderName : NSImage.multipleDocumentsName)
+                alignment = .left
+            case "pendingUploader":
+                text = item.uploader
+                alignment = .left
+            case "pendingSize":
+                text = item.isFolder ? "—" : ByteCountFormatter.string(fromByteCount: Int64(clamping: item.size), countStyle: .file)
+                alignment = .right
+            case "pendingDate":
+                text = DateFormatter.localizedString(from: item.uploadedAt, dateStyle: .short, timeStyle: .short)
+                alignment = .left
+            default:
+                return nil
+            }
+            let cell = tableCell(text: text, image: icon, fontSize: 11.5, alignment: alignment)
+            cell.toolTip = identifier == "pendingName"
+                ? LF("Uploaded by %@ · %@", item.uploader,
+                     DateFormatter.localizedString(from: item.uploadedAt, dateStyle: .medium, timeStyle: .short))
+                : text
+            return cell
         }
         if tableView === privateMessageConversationTable, identifier == "conversation", row < displayedMessageCenterRows.count {
             let content: NSView
@@ -7388,6 +7451,10 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         }
         if table === adminBotFileWatcherTable {
             updateBotFileWatcherButtons()
+            return
+        }
+        if table === adminPendingUploadsTable {
+            updatePendingUploadButtons()
             return
         }
         if table === fileTable {

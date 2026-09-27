@@ -221,6 +221,14 @@ enum LegacyCommand {
     static let botTestRSSFeed: UInt32 = 0xf0000706
     static let botRSSFeedTestReply: UInt32 = 0xf0000707
     static let botSetFileWatchers: UInt32 = 0xf0000708
+    /// Modern-only Guest upload moderation.
+    static let pendingUploadListRequest: UInt32 = 0xf0000a00
+    static let pendingUploadListReply: UInt32 = 0xf0000a01
+    static let pendingUploadApprove: UInt32 = 0xf0000a02
+    static let pendingUploadReject: UInt32 = 0xf0000a03
+    /// Modern-only asynchronous notice sent to a Guest after a completed upload
+    /// has been accepted into the server's approval queue.
+    static let guestUploadPendingNotice: UInt32 = 0xf0000a04
     /// Modern-only administrator request to permanently remove a non-Public room.
     /// Modern-only message editing (Classic packet layouts are never modified).
     static let messageEdit: UInt32 = 0xf0000901
@@ -349,6 +357,77 @@ struct LegacyBotRSSPreview: Equatable {
     }
 }
 
+
+struct LegacyPendingUpload: Equatable, Identifiable {
+    static let maximumCount = 4096
+    static let maximumTextBytes = 4096
+
+    var id: UUID
+    var uploadedAt: Date
+    var size: UInt64
+    var isFolder: Bool
+    var uploader: String
+    var destination: String
+
+    static func encodeList(_ uploads: [LegacyPendingUpload]) throws -> Data {
+        guard uploads.count <= maximumCount else {
+            throw LegacyProtocolError.invalidLength("too many pending uploads")
+        }
+        var data = LegacyWire.uint16BE(UInt16(uploads.count))
+        for item in uploads {
+            let uploader = Data(item.uploader.utf8)
+            let destination = Data(item.destination.utf8)
+            guard uploader.count <= maximumTextBytes, destination.count <= maximumTextBytes else {
+                throw LegacyProtocolError.invalidLength("pending upload text is too long")
+            }
+            data.append(try LegacyWire.string16(Data(item.id.uuidString.lowercased().utf8)))
+            data.append(LegacyWire.uint64BE(UInt64(max(0, item.uploadedAt.timeIntervalSince1970))))
+            data.append(LegacyWire.uint64BE(item.size))
+            data.append(item.isFolder ? 1 : 0)
+            data.append(try LegacyWire.string16(uploader))
+            data.append(try LegacyWire.string16(destination))
+        }
+        return data
+    }
+
+    static func decodeList(_ data: Data) throws -> [LegacyPendingUpload] {
+        var cursor = LegacyByteCursor(data)
+        let count = Int(try cursor.readUInt16BE())
+        guard count <= maximumCount else {
+            throw LegacyProtocolError.invalidRecord("too many pending uploads")
+        }
+        var result: [LegacyPendingUpload] = []
+        result.reserveCapacity(count)
+        for _ in 0..<count {
+            let idData = try cursor.readString16()
+            let seconds = try cursor.readUInt64BE()
+            let size = try cursor.readUInt64BE()
+            let folder = try cursor.readUInt8()
+            let uploaderData = try cursor.readString16()
+            let destinationData = try cursor.readString16()
+            guard folder <= 1,
+                  idData.count <= 36,
+                  uploaderData.count <= maximumTextBytes,
+                  destinationData.count <= maximumTextBytes,
+                  let idText = String(data: idData, encoding: .utf8),
+                  let id = UUID(uuidString: idText),
+                  let uploader = String(data: uploaderData, encoding: .utf8),
+                  let destination = String(data: destinationData, encoding: .utf8) else {
+                throw LegacyProtocolError.invalidRecord("invalid pending upload")
+            }
+            result.append(LegacyPendingUpload(
+                id: id,
+                uploadedAt: Date(timeIntervalSince1970: TimeInterval(seconds)),
+                size: size,
+                isFolder: folder == 1,
+                uploader: uploader,
+                destination: destination
+            ))
+        }
+        try cursor.requireEnd()
+        return result
+    }
+}
 
 struct LegacyBotFileWatcher: Equatable, Codable, Identifiable {
     static let maximumCount = 32

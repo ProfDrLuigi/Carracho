@@ -208,6 +208,7 @@ enum LegacyControlEvent {
     case bannerChanged
     case mediaDeleted(UUID)
     case fileLabelChanged(path: Data, label: LegacyFileLabel)
+    case guestUploadAwaitingApproval(path: Data, isFolder: Bool)
     case forcedDisconnect
     case unhandled(LegacyPacket)
 }
@@ -1820,6 +1821,37 @@ final class LegacyControlClient {
         } catch { completion(.failure(error)) }
     }
 
+    func requestPendingUploads(completion: @escaping (Result<[LegacyPendingUpload], Error>) -> Void) {
+        sendRequest(command: LegacyCommand.pendingUploadListRequest, fields: []) { result in
+            do {
+                let packet = try result.get()
+                guard packet.command == LegacyCommand.pendingUploadListReply,
+                      let field = packet.firstField(type: 1) else {
+                    throw LegacyControlClientError.protocolFailure("ungültige Pending-Upload-Antwort")
+                }
+                completion(.success(try LegacyPendingUpload.decodeList(field.value)))
+            } catch {
+                completion(.failure(error))
+            }
+        }
+    }
+
+    func approvePendingUpload(_ id: UUID, completion: @escaping (Result<Void, Error>) -> Void) {
+        sendTaskCompleteRequest(
+            command: LegacyCommand.pendingUploadApprove,
+            fields: [LegacyTLV(type: 1, value: Data(id.uuidString.lowercased().utf8))],
+            completion: completion
+        )
+    }
+
+    func rejectPendingUpload(_ id: UUID, completion: @escaping (Result<Void, Error>) -> Void) {
+        sendTaskCompleteRequest(
+            command: LegacyCommand.pendingUploadReject,
+            fields: [LegacyTLV(type: 1, value: Data(id.uuidString.lowercased().utf8))],
+            completion: completion
+        )
+    }
+
     func requestServerSettings(fields: [UInt32],
                                completion: @escaping (Result<[UInt32: Data], Error>) -> Void) {
         let requestFields = fields.map { LegacyTLV(type: $0, value: Data()) }
@@ -2339,6 +2371,14 @@ final class LegacyControlClient {
                     throw LegacyControlClientError.protocolFailure("invalid file-label-changed event")
                 }
                 onEvent?(.fileLabelChanged(path: path, label: try LegacyFileLabel.decode(labelData)))
+            case LegacyCommand.guestUploadPendingNotice:
+                guard let path = packet.firstField(type: 1)?.value,
+                      !path.isEmpty, path.count <= LegacyPath.maximumWireLength,
+                      let kind = packet.firstField(type: 2)?.value,
+                      kind.count == 1, let kindByte = kind.first, kindByte <= 1 else {
+                    throw LegacyControlClientError.protocolFailure("invalid Guest upload pending notice")
+                }
+                onEvent?(.guestUploadAwaitingApproval(path: path, isFolder: kindByte == 1))
             case LegacyCommand.userPresenceState:
                 guard let idField = packet.firstField(type: LegacyPresenceStateField.userID),
                       let stateField = packet.firstField(type: LegacyPresenceStateField.state),

@@ -2070,3 +2070,32 @@
 "A message cannot be empty." = "A message cannot be empty.";
 "Image attachments cannot be changed when editing a message." = "Image attachments cannot be changed when editing a message.";
 "Message could not be edited: %@" = "Message could not be edited: %@";
+
+// Guest upload approval
+"Guest uploads require approval" = "Guest uploads require approval";
+"Guest Upload Approval" = "Guest Upload Approval";
+"File / Destination" = "File / Destination";
+"Uploader" = "Uploader";
+"Uploaded" = "Uploaded";
+"Approve" = "Approve";
+"Reject" = "Reject";
+"When enabled, completed Guest uploads stay hidden until an Administrator approves them. Account Holder and Administrator uploads are published immediately." = "When enabled, completed Guest uploads stay hidden until an Administrator approves them. Account Holder and Administrator uploads are published immediately.";
+"This server does not support Guest upload approval." = "This server does not support Guest upload approval.";
+"Loading pending uploads…" = "Loading pending uploads…";
+"Pending upload moderation is unavailable on this server." = "Pending upload moderation is unavailable on this server.";
+"Start the local server to manage pending uploads." = "Start the local server to manage pending uploads.";
+"No pending Guest uploads" = "No pending Guest uploads";
+"%@ pending Guest upload(s)" = "%@ pending Guest upload(s)";
+"Could not load pending Guest uploads: %@" = "Could not load pending Guest uploads: %@";
+"Guest upload approved: %@" = "Guest upload approved: %@";
+"Guest upload rejected: %@" = "Guest upload rejected: %@";
+"Reject Guest Upload?" = "Reject Guest Upload?";
+"This permanently deletes the pending upload %@." = "This permanently deletes the pending upload %@.";
+
+// Guest upload pending notice
+"Folder upload completed and awaits approval: %@" = "Folder upload completed and awaits approval: %@";
+"Upload completed and awaits approval: %@" = "Upload completed and awaits approval: %@";
+"Folder upload awaits approval" = "Folder upload awaits approval";
+"Upload awaits approval" = "Upload awaits approval";
+"The folder %@ was uploaded completely. It will become visible on the server only after an Administrator approves it." = "The folder %@ was uploaded completely. It will become visible on the server only after an Administrator approves it.";
+"The file %@ was uploaded completely. It will become visible on the server only after an Administrator approves it." = "The file %@ was uploaded completely. It will become visible on the server only after an Administrator approves it.";

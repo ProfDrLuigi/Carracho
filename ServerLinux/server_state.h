@@ -104,6 +104,7 @@ typedef struct cr_advanced {
     uint16_t max_file_transfers_per_user;
     uint16_t max_folder_download_depth;
     int file_watcher_guests_enabled;
+    int guest_upload_approval_enabled;
     uint8_t news_expiration_hour;
     uint8_t news_expiration_minute;
     uint32_t tracker_advertisement_flags;
@@ -123,6 +124,7 @@ typedef struct cr_startup_persistent_settings {
     uint16_t max_file_transfers_per_user;
     uint16_t max_folder_download_depth;
     int file_watcher_guests_enabled;
+    int guest_upload_approval_enabled;
     uint8_t news_expiration_hour;
     uint8_t news_expiration_minute;
     char files_root[PATH_MAX];
