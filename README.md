@@ -18,11 +18,11 @@ The modern transport protects far more than login traffic: chat/control packets,
 
 See the collapsible **Security and modern encryption** section below for the protocol details.
 
-### Current release: 1.1.0
+### Current release: 1.1.1
 
-Carracho 1.1.0 introduces optional **Guest Upload Approval** across the macOS and native Linux servers. Completed Guest uploads can remain hidden until an Administrator approves or rejects them, with persistent pending state, safe destination reservation, remote Administration controls, and explicit feedback to modern Guest uploaders. Folder uploads are reported as awaiting approval only after the complete folder tree has actually been received and verified.
+Carracho 1.1.1 improves **Classic/Legacy compatibility visibility** and fixes **Modern Only authentication**. Modern clients show the connected server's actual **Legacy Mode = On / Off** state, Classic users are clearly marked with **`@ Legacy`**, and modern accounts authenticate through the PBKDF2 verifier while retained Legacy credentials remain available for a later switch back to Legacy Compatible mode. The compatibility and authentication behavior is implemented consistently by both the Swift/macOS and native Linux servers.
 
-The full release notes are available in [`README_1.1.0.md`](README_1.1.0.md).
+The full release notes are available in [`README_1.1.1.md`](README_1.1.1.md).
 
 ## At a glance
 

@@ -25,6 +25,17 @@
     <body>
         
 
+        <p><span class="header" lang="en">New in 1.1.1</span></p>
+        <ul>
+            <span class="newstext">
+                <li>Updated the macOS client to version 1.1.1 (build 12).</li>
+                <li>Added a third server-header line showing <strong>Legacy Mode = On</strong> or <strong>Legacy Mode = Off</strong>, so modern users can immediately see whether the connected server allows Classic/Legacy clients.</li>
+                <li>The Legacy Mode value comes from the server's actual compatibility configuration rather than being inferred from currently connected users. Older modern servers that do not advertise the capability simply omit the line.</li>
+                <li>Changing the server authentication mode from Advanced Administration now updates the displayed Legacy Mode state immediately after the setting is saved.</li>
+                <li>Classic/Legacy users now show <code>@ Legacy</code> in the status row of the modern user list, making historical-client connections easy to identify without changing normal modern user status messages.</li>
+                <li>Fixed Modern Only login. The modern client now authenticates using a verifier-based PBKDF2-SHA256/HMAC challenge-response flow and no longer depends on the retained Legacy credential.</li>
+        </ul></span>
+
         <p><span class="header" lang="en">New in 1.1.0</span></p>
         <ul>
             <span class="newstext">

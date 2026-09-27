@@ -132,6 +132,22 @@ final class ModernServerBackend {
         return valid && account?.isLocalLoginOnly != true ? account : nil
     }
 
+    struct ModernAuthenticationAttempt {
+        let account: ServerAccount?
+        let verifier: ServerPasswordVerifier
+    }
+
+    func prepareModernAuthentication(login: String) -> ModernAuthenticationAttempt {
+        queue.sync {
+            guard let account = state.accounts.first(where: { Self.sameName($0.login, login) }),
+                  account.isLocalLoginOnly != true,
+                  let verifier = account.passwordVerifier else {
+                return ModernAuthenticationAttempt(account: nil, verifier: dummyVerifier)
+            }
+            return ModernAuthenticationAttempt(account: account, verifier: verifier)
+        }
+    }
+
     /// Returns password-equivalent material only while legacy compatibility is enabled.
     func legacyPasswordForLogin(_ login: String) -> String? {
         queue.sync {
@@ -457,7 +473,12 @@ final class ModernServerBackend {
                     }
                     state.accounts[index].passwordVerifier = ServerPasswordHasher.makeVerifier(password: password, iterations: iterations)
                 }
-                state.accounts[index].legacyPassword = nil
+            }
+        } else {
+            for account in state.accounts where !account.isLocalLoginOnly && account.legacyPassword == nil {
+                throw ServerStateError.invalidValue(
+                    "Account “\(account.login)” has no retained Legacy credential. Reset its password before enabling Legacy Compatible mode."
+                )
             }
         }
         state.authentication.mode = mode
@@ -496,21 +517,22 @@ final class ModernServerBackend {
                                          authenticationMode: ServerAuthenticationMode,
                                          iterations: UInt32) throws {
         if let explicitPassword {
-            if authenticationMode == .legacyCompatible {
-                guard let classic = explicitPassword.data(using: .macOSRoman), classic.count <= 64 else {
-                    throw ServerStateError.invalidValue("Legacy-compatible passwords must be representable in MacRoman and may not exceed 64 bytes.")
-                }
-            } else if explicitPassword.utf8.count > 1024 {
+            if explicitPassword.utf8.count > 1024 {
                 throw ServerStateError.invalidValue("Password exceeds 1024 UTF-8 bytes.")
             }
             account.passwordVerifier = ServerPasswordHasher.makeVerifier(password: explicitPassword, iterations: iterations)
-            account.legacyPassword = authenticationMode == .legacyCompatible ? explicitPassword : nil
+            if let classic = explicitPassword.data(using: .macOSRoman), classic.count <= 64 {
+                account.legacyPassword = explicitPassword
+            } else if authenticationMode == .legacyCompatible {
+                throw ServerStateError.invalidValue("Legacy-compatible passwords must be representable in MacRoman and may not exceed 64 bytes.")
+            } else {
+                account.legacyPassword = nil
+            }
         } else if let existing {
             account.passwordVerifier = existing.passwordVerifier
-            account.legacyPassword = authenticationMode == .legacyCompatible ? existing.legacyPassword : nil
+            account.legacyPassword = existing.legacyPassword
         } else if let legacyPassword = account.legacyPassword {
             account.passwordVerifier = ServerPasswordHasher.makeVerifier(password: legacyPassword, iterations: iterations)
-            if authenticationMode == .modernOnly { account.legacyPassword = nil }
         } else if account.passwordVerifier == nil {
             throw ServerStateError.invalidValue("A password is required for a new account.")
         }

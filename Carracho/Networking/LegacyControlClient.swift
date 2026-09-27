@@ -101,6 +101,7 @@ struct LegacyServerInfo {
     var activeFileTransfers: UInt16? = nil
     var maxFileTransfersPerUser: UInt16? = nil
     var activeFileTransfersForUser: UInt16? = nil
+    var legacyCompatibilityEnabled: Bool? = nil
 }
 
 struct LegacyChannelState: Equatable {
@@ -410,6 +411,15 @@ final class LegacyControlClient {
                     let activeTransfers = try packet.firstField(type: LegacyServerInfoField.activeFileTransfers)?.uint16BE()
                     let maxUserTransfers = try packet.firstField(type: LegacyServerInfoField.maxFileTransfersPerUser)?.uint16BE()
                     let activeUserTransfers = try packet.firstField(type: LegacyServerInfoField.activeFileTransfersForUser)?.uint16BE()
+                    let legacyCompatibilityEnabled: Bool?
+                    if let field = packet.firstField(type: LegacyServerInfoField.legacyCompatibilityEnabled) {
+                        guard field.value.count == 1, let value = field.value.first, value <= 1 else {
+                            throw LegacyControlClientError.protocolFailure("invalid legacy compatibility server-info field")
+                        }
+                        legacyCompatibilityEnabled = value == 1
+                    } else {
+                        legacyCompatibilityEnabled = nil
+                    }
                     return .success(LegacyServerInfo(
                         serverName: Self.macRomanString(packet.firstField(type: LegacyServerInfoField.serverName)?.value),
                         location: Self.macRomanString(packet.firstField(type: LegacyServerInfoField.serverLocation)?.value),
@@ -420,7 +430,8 @@ final class LegacyControlClient {
                         maxSimultaneousFileTransfers: maxTransfers,
                         activeFileTransfers: activeTransfers,
                         maxFileTransfersPerUser: maxUserTransfers,
-                        activeFileTransfersForUser: activeUserTransfers
+                        activeFileTransfersForUser: activeUserTransfers,
+                        legacyCompatibilityEnabled: legacyCompatibilityEnabled
                     ))
                 } catch {
                     return .failure(error)
@@ -1948,6 +1959,7 @@ final class LegacyControlClient {
     private struct Credentials {
         let login: Data
         let password: Data
+        let passwordString: String
         let nickname: Data
     }
 
@@ -1965,7 +1977,7 @@ final class LegacyControlClient {
         guard let nicknameData = effectiveNickname.data(using: .macOSRoman), nicknameData.count <= 64 else {
             throw LegacyControlClientError.invalidInput("Der Nickname muss in MacRoman darstellbar und höchstens 64 Byte lang sein.")
         }
-        return Credentials(login: loginData, password: passwordData, nickname: nicknameData)
+        return Credentials(login: loginData, password: passwordData, passwordString: password, nickname: nicknameData)
     }
 
     private func beginHandshake(credentials: Credentials) {
@@ -2018,6 +2030,14 @@ final class LegacyControlClient {
                 throw LegacyControlClientError.missingField(1)
             }
 
+            let supportsVerifierLogin = !negotiatedLegacyCrypto &&
+                challengePacket.firstField(type: LegacyModernAuthenticationField.capability)?.value ==
+                    Data([LegacyModernAuthenticationField.version])
+            if supportsVerifierLogin {
+                beginModernVerifierLogin(credentials: credentials, challenge: challengeField.value)
+                return
+            }
+
             let derivedKey = try LegacyAuthentication.deriveSessionKey(password: credentials.password,
                                                                        challenge: challengeField.value)
             let digest = LegacyMD5.hexDigestASCII(derivedKey)
@@ -2031,8 +2051,72 @@ final class LegacyControlClient {
                 loginFields.append(LegacyTLV(type: 5, value: ephemeral.publicKey))
                 loginFields.append(contentsOf: Self.clientMetadataFields())
             }
-            let loginPacket = LegacyPacket(command: LegacyCommand.login, transactionID: 0, fields: loginFields)
-            state = .authenticating
+            sendLoginPacket(fields: loginFields, derivedKey: derivedKey,
+                            challenge: challengeField.value, ephemeral: ephemeral)
+        } catch {
+            fail(error)
+        }
+    }
+
+    private func beginModernVerifierLogin(credentials: Credentials, challenge: Data) {
+        let ephemeral = CarrachoModernCrypto.makeEphemeralKeyPair()
+        let begin = LegacyPacket(command: LegacyCommand.modernAuthBegin, transactionID: 0,
+                                 fields: [LegacyTLV(type: 1, value: credentials.login)])
+        do {
+            let frame = try LegacyControlCodec.encode(begin, key: LegacyAuthentication.initialControlKey)
+            sendRaw(frame) { [weak self] error in
+                guard let self else { return }
+                if let error { self.fail(error); return }
+                self.receiveControlPacket(key: LegacyAuthentication.initialControlKey,
+                                          timeout: Self.handshakeTimeout,
+                                          operation: "Modern-Auth-Challenge") { [weak self] result in
+                    guard let self else { return }
+                    do {
+                        let packet = try result.get()
+                        if packet.command == LegacyCommand.error { throw try self.serverError(from: packet) }
+                        guard packet.command == LegacyCommand.modernAuthChallenge,
+                              let salt = packet.firstField(type: LegacyModernAuthenticationField.salt)?.value,
+                              salt.count == ServerPasswordHasher.saltLength,
+                              let iterationsField = packet.firstField(type: LegacyModernAuthenticationField.iterations),
+                              iterationsField.value.count == 4 else {
+                            throw LegacyControlClientError.protocolFailure("invalid modern authentication challenge")
+                        }
+                        let iterations = try iterationsField.uint32BE()
+                        guard iterations > 0 else {
+                            throw LegacyControlClientError.protocolFailure("invalid modern authentication iteration count")
+                        }
+                        let verifier = ServerPasswordHasher.makeVerifier(password: credentials.passwordString,
+                                                                         iterations: iterations, salt: salt)
+                        let proof = try CarrachoModernCrypto.modernLoginProof(
+                            authKey: verifier.derivedKey, challenge: challenge,
+                            login: credentials.login, clientPublicKey: ephemeral.publicKey)
+                        let sessionKey = try CarrachoModernCrypto.modernLoginSessionKey(
+                            authKey: verifier.derivedKey, challenge: challenge,
+                            login: credentials.login, clientPublicKey: ephemeral.publicKey)
+                        var fields = [
+                            LegacyTLV(type: 1, value: credentials.login),
+                            LegacyTLV(type: 2, value: proof),
+                            LegacyTLV(type: 4, value: credentials.nickname),
+                            LegacyTLV(type: 5, value: ephemeral.publicKey),
+                        ]
+                        fields.append(contentsOf: Self.clientMetadataFields())
+                        self.sendLoginPacket(fields: fields, derivedKey: sessionKey,
+                                             challenge: challenge, ephemeral: ephemeral)
+                    } catch {
+                        self.fail(error)
+                    }
+                }
+            }
+        } catch {
+            fail(error)
+        }
+    }
+
+    private func sendLoginPacket(fields: [LegacyTLV], derivedKey: Data, challenge: Data,
+                                 ephemeral: CarrachoModernCrypto.EphemeralKeyPair?) {
+        let loginPacket = LegacyPacket(command: LegacyCommand.login, transactionID: 0, fields: fields)
+        state = .authenticating
+        do {
             let frame = try LegacyControlCodec.encode(loginPacket, key: LegacyAuthentication.initialControlKey)
             sendRaw(frame) { [weak self] error in
                 guard let self else { return }
@@ -2040,7 +2124,8 @@ final class LegacyControlClient {
                 self.receiveControlPacket(key: LegacyAuthentication.initialControlKey,
                                           timeout: Self.handshakeTimeout,
                                           operation: "Login-Antwort") { reply in
-                    self.handleLoginReply(reply, derivedKey: derivedKey, challenge: challengeField.value, ephemeral: ephemeral)
+                    self.handleLoginReply(reply, derivedKey: derivedKey,
+                                          challenge: challenge, ephemeral: ephemeral)
                 }
             }
         } catch {

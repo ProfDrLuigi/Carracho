@@ -231,6 +231,9 @@ enum LegacyCommand {
     static let guestUploadPendingNotice: UInt32 = 0xf0000a04
     /// Modern-only asynchronous queue-count notification for connected Administrators.
     static let pendingUploadQueueChanged: UInt32 = 0xf0000a05
+    /// Modern verifier-based authentication preflight.
+    static let modernAuthBegin: UInt32 = 0xf0000b00
+    static let modernAuthChallenge: UInt32 = 0xf0000b01
     /// Modern-only administrator request to permanently remove a non-Public room.
     /// Modern-only message editing (Classic packet layouts are never modified).
     static let messageEdit: UInt32 = 0xf0000901
@@ -686,6 +689,16 @@ struct LegacyLoginSessionInfo: Equatable {
 }
 
 
+enum LegacyModernAuthenticationField {
+    /// One-byte capability version advertised in the initial login challenge.
+    static let capability: UInt32 = 0xf0000b00
+    /// PBKDF2-SHA256 account salt.
+    static let salt: UInt32 = 0xf0000b01
+    /// PBKDF2 iteration count, UInt32 big-endian.
+    static let iterations: UInt32 = 0xf0000b02
+    static let version: UInt8 = 1
+}
+
 enum LegacyServerInfoField {
     static let serverName: UInt32 = 2
     static let serverLocation: UInt32 = 6
@@ -702,6 +715,8 @@ enum LegacyServerInfoField {
     static let activeFileTransfers: UInt32 = 0xf0000103
     static let maxFileTransfersPerUser: UInt32 = 0xf0000104
     static let activeFileTransfersForUser: UInt32 = 0xf0000105
+    /// Modern public server capability: one byte, 1 when Classic/Legacy clients are allowed.
+    static let legacyCompatibilityEnabled: UInt32 = 0xf0000106
 }
 
 

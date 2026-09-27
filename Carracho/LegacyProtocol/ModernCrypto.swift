@@ -77,6 +77,27 @@ enum CarrachoModernCrypto {
         }
     }
 
+    static func modernLoginProof(authKey: Data, challenge: Data, login: Data, clientPublicKey: Data) throws -> Data {
+        guard authKey.count == 32, challenge.count == 12, !login.isEmpty, clientPublicKey.count == ephemeralPublicKeyLength else { throw Error.authenticationFailed }
+        var transcript = Data("carracho/modern-login-proof/v1".utf8)
+        transcript.append(challenge); transcript.append(login); transcript.append(clientPublicKey)
+        return Data(HMAC<SHA256>.authenticationCode(for: transcript, using: SymmetricKey(data: authKey)))
+    }
+
+    static func verifyModernLoginProof(_ proof: Data, authKey: Data, challenge: Data, login: Data, clientPublicKey: Data) throws {
+        guard proof.count == 32, authKey.count == 32, challenge.count == 12, !login.isEmpty, clientPublicKey.count == ephemeralPublicKeyLength else { throw Error.authenticationFailed }
+        var transcript = Data("carracho/modern-login-proof/v1".utf8)
+        transcript.append(challenge); transcript.append(login); transcript.append(clientPublicKey)
+        guard HMAC<SHA256>.isValidAuthenticationCode(proof, authenticating: transcript, using: SymmetricKey(data: authKey)) else { throw Error.authenticationFailed }
+    }
+
+    static func modernLoginSessionKey(authKey: Data, challenge: Data, login: Data, clientPublicKey: Data) throws -> Data {
+        guard authKey.count == 32, challenge.count == 12, !login.isEmpty, clientPublicKey.count == ephemeralPublicKeyLength else { throw Error.invalidKey }
+        var transcript = Data("carracho/modern-login-session/v1".utf8)
+        transcript.append(challenge); transcript.append(login); transcript.append(clientPublicKey)
+        return Data(HMAC<SHA256>.authenticationCode(for: transcript, using: SymmetricKey(data: authKey)))
+    }
+
     static func handshakeAuthenticator(sessionKey: Data, challenge: Data, clientPublicKey: Data,
                                        serverPublicKey: Data, sessionSalt: Data) throws -> Data {
         guard !sessionKey.isEmpty else { throw Error.invalidKey }

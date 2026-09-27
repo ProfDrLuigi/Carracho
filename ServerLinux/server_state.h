@@ -40,6 +40,12 @@ typedef struct cr_account {
     char profile_name[512];
     char legacy_password[512];
     int has_legacy_password;
+    uint8_t password_salt[16];
+    size_t password_salt_len;
+    uint32_t password_iterations;
+    uint8_t password_derived_key[32];
+    size_t password_derived_key_len;
+    int has_password_verifier;
     cr_account_mode mode;
     char group_id[64];
     cr_personal_mode personal;

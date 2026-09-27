@@ -145,6 +145,39 @@ done:
   return rc;
 }
 
+static int modern_login_hmac(const char *domain, const uint8_t auth_key[32],
+                             const uint8_t challenge[12], const uint8_t *login,
+                             size_t login_len, const uint8_t client_public_key[32],
+                             uint8_t out[32]) {
+  if (!domain || !auth_key || !challenge || !login || !login_len ||
+      !client_public_key || !out)
+    return -1;
+  cr_buffer transcript;
+  cr_buffer_init(&transcript);
+  unsigned int n = 0;
+  int rc = -1;
+  if (cr_buffer_append(&transcript, domain, strlen(domain)) ||
+      cr_buffer_append(&transcript, challenge, 12) ||
+      cr_buffer_append(&transcript, login, login_len) ||
+      cr_buffer_append(&transcript, client_public_key, 32))
+    goto done;
+  if (HMAC(EVP_sha256(), auth_key, 32, transcript.data, transcript.len, out, &n) && n == 32)
+    rc = 0;
+done:
+  cr_buffer_free(&transcript);
+  return rc;
+}
+
+int cr_modern_login_proof(const uint8_t auth_key[32], const uint8_t challenge[12], const uint8_t *login,
+                          size_t login_len, const uint8_t client_public_key[32], uint8_t out[32]) {
+  return modern_login_hmac("carracho/modern-login-proof/v1", auth_key, challenge, login, login_len, client_public_key, out);
+}
+
+int cr_modern_login_session_key(const uint8_t auth_key[32], const uint8_t challenge[12], const uint8_t *login,
+                                size_t login_len, const uint8_t client_public_key[32], uint8_t out[32]) {
+  return modern_login_hmac("carracho/modern-login-session/v1", auth_key, challenge, login, login_len, client_public_key, out);
+}
+
 static int derive_pair(const uint8_t *session_key,size_t session_key_len,const uint8_t *salt,size_t salt_len,
                        const char *left_info,const char *right_info,int server_role,uint8_t send_key[32],uint8_t receive_key[32]){
     uint8_t c2s[32],s2c[32];

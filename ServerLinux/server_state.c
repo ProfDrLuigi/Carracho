@@ -403,7 +403,16 @@ int cr_state_apply_authentication_mode_locked(cr_server_state *s, int legacy_com
                     if (!verifier) return -1;
                     json_object_object_add(account, "passwordVerifier", verifier);
                 }
-                json_object_object_del(account, "legacyPassword");
+            }
+        }
+    } else {
+        json_object *accounts = NULL;
+        if (json_object_object_get_ex(s->root, "accounts", &accounts) && json_object_is_type(accounts, json_type_array)) {
+            for (size_t i = 0; i < json_object_array_length(accounts); ++i) {
+                json_object *account = json_object_array_get_idx(accounts, i), *legacy = NULL;
+                if (!account || !json_object_is_type(account, json_type_object)) return -1;
+                if (json_bool_default(account, "localLoginOnly", 0)) continue;
+                if (!json_object_object_get_ex(account, "legacyPassword", &legacy) || !json_object_is_type(legacy, json_type_string)) return -1;
             }
         }
     }
@@ -532,6 +541,26 @@ int cr_state_refresh_parsed_locked(cr_server_state*s){
         for(size_t i=0;i<n;i++){
             json_object*a=json_object_array_get_idx(arr,i);cr_account*dst=&s->accounts[s->account_count];memset(dst,0,sizeof(*dst));copy_json_string(a,"id",dst->id,sizeof(dst->id),"");copy_json_string(a,"login",dst->login,sizeof(dst->login),"");copy_json_string(a,"name",dst->name,sizeof(dst->name),"");copy_json_string(a,"profileName",dst->profile_name,sizeof(dst->profile_name),"");copy_json_string(a,"groupID",dst->group_id,sizeof(dst->group_id),"");
             if(json_object_object_get_ex(a,"legacyPassword",&v)&&json_object_is_type(v,json_type_string)){snprintf(dst->legacy_password,sizeof(dst->legacy_password),"%s",json_object_get_string(v));dst->has_legacy_password=1;}
+            json_object*verifier=NULL;
+            if(json_object_object_get_ex(a,"passwordVerifier",&verifier)&&json_object_is_type(verifier,json_type_object)){
+                json_object*algorithm=NULL,*iterations=NULL,*saltv=NULL,*keyv=NULL;
+                if(json_object_object_get_ex(verifier,"algorithm",&algorithm)&&json_object_is_type(algorithm,json_type_string)&&
+                   !strcmp(json_object_get_string(algorithm),"pbkdf2-sha256")&&
+                   json_object_object_get_ex(verifier,"iterations",&iterations)&&json_object_is_type(iterations,json_type_int)&&
+                   json_object_object_get_ex(verifier,"salt",&saltv)&&json_object_is_type(saltv,json_type_string)&&
+                   json_object_object_get_ex(verifier,"derivedKey",&keyv)&&json_object_is_type(keyv,json_type_string)){
+                    int64_t rounds=json_object_get_int64(iterations);uint8_t*salt=NULL,*key=NULL;size_t salt_len=0,key_len=0;
+                    if(rounds>0&&rounds<=UINT32_MAX&&
+                       !base64_decode(json_object_get_string(saltv),&salt,&salt_len)&&
+                       !base64_decode(json_object_get_string(keyv),&key,&key_len)&&salt_len==16&&key_len==32){
+                        memcpy(dst->password_salt,salt,16);dst->password_salt_len=16;
+                        dst->password_iterations=(uint32_t)rounds;
+                        memcpy(dst->password_derived_key,key,32);dst->password_derived_key_len=32;
+                        dst->has_password_verifier=1;
+                    }
+                    free(salt);free(key);
+                }
+            }
             char personal[64];copy_json_string(a,"personalDirectory",personal,sizeof(personal),"none");dst->personal=!strcmp(personal,"rootDirectory")?CR_PERSONAL_ROOT:!strcmp(personal,"nestedInRoot")?CR_PERSONAL_NESTED:CR_PERSONAL_NONE;
             dst->mode=json_legacy_mode(a,"mode");uint64_t direct=json_permission_bits(a);const cr_account_group*account_group=NULL;if(dst->group_id[0]){for(size_t gi=0;gi<s->account_group_count;gi++)if(!strcasecmp(s->account_groups[gi].id,dst->group_id)){account_group=&s->account_groups[gi];dst->mode=account_group->mode;break;}}
             json_object*colorv=NULL;if(json_object_object_get_ex(a,"colorRGB",&colorv)&&json_object_is_type(colorv,json_type_int)){int64_t color=json_object_get_int64(colorv);if(color>=0&&color<=0x00ffffff){dst->color_rgb=(uint32_t)color;dst->has_color=1;}}if(!dst->has_color){dst->color_rgb=account_group?account_group->color_rgb:default_group_color(dst->mode);dst->has_color=1;}
@@ -930,8 +959,16 @@ int cr_state_account_upsert(cr_server_state *s, const char *old_login, const cha
     }
     json_object_object_add(record,"login",json_object_new_string(login));
     json_object_object_add(record,"name",json_object_new_string(name));
-    if(local_only)json_object_object_del(record,"legacyPassword");
-    else if(s->legacy_compatible)json_object_object_add(record,"legacyPassword",json_object_new_string(password));else json_object_object_del(record,"legacyPassword");
+    if(local_only){
+        json_object_object_del(record,"legacyPassword");
+    } else if(!preserve_password){
+        if(strlen(password)<=64){
+            json_object_object_add(record,"legacyPassword",json_object_new_string(password));
+        } else {
+            if(s->legacy_compatible){if(verifier)json_object_put(verifier);pthread_mutex_unlock(&s->mutex);return-1;}
+            json_object_object_del(record,"legacyPassword");
+        }
+    }
     if(!preserve_password)json_object_object_add(record,"passwordVerifier",verifier);
     json_object_object_add(record,"mode",json_object_new_string(mode_json_name(effective_mode)));
     json_object_object_add(record,"groupID",json_object_new_string(group->id));
@@ -1060,8 +1097,11 @@ int cr_state_account_change_password(cr_server_state *s,const char *account_id,c
         }
     }
     if(!record||json_bool_default(record,"localLoginOnly",0)){pthread_mutex_unlock(&s->mutex);json_object_put(verifier);return-1;}
-    if(s->legacy_compatible)json_object_object_add(record,"legacyPassword",json_object_new_string(password));
-    else json_object_object_del(record,"legacyPassword");
+    if(strlen(password)<=64)json_object_object_add(record,"legacyPassword",json_object_new_string(password));
+    else{
+        if(s->legacy_compatible){pthread_mutex_unlock(&s->mutex);json_object_put(verifier);return-1;}
+        json_object_object_del(record,"legacyPassword");
+    }
     json_object_object_add(record,"passwordVerifier",verifier);
     char now[64];cr_now_iso8601(now);json_object_object_add(record,"modifiedAt",json_object_new_string(now));
     int rc=cr_state_save_locked(s);if(rc==0)rc=cr_state_refresh_parsed_locked(s);

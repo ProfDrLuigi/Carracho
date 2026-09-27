@@ -93,6 +93,12 @@ int cr_handshake_authenticator(const uint8_t *session_key, size_t session_key_le
                                const uint8_t challenge[12], const uint8_t client_public_key[32],
                                const uint8_t server_public_key[32],
                                const uint8_t session_salt[CR_MODERN_SESSION_SALT], uint8_t out[32]);
+int cr_modern_login_proof(const uint8_t auth_key[32], const uint8_t challenge[12],
+                          const uint8_t *login, size_t login_len,
+                          const uint8_t client_public_key[32], uint8_t out[32]);
+int cr_modern_login_session_key(const uint8_t auth_key[32], const uint8_t challenge[12],
+                                const uint8_t *login, size_t login_len,
+                                const uint8_t client_public_key[32], uint8_t out[32]);
 int cr_derive_control_keys(const uint8_t *session_key, size_t session_key_len,
                            const uint8_t salt[CR_MODERN_SESSION_SALT], int server_role,
                            uint8_t send_key[32], uint8_t receive_key[32]);

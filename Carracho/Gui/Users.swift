@@ -669,7 +669,11 @@ extension ViewController {
         // Apply it afterwards so awake users never inherit a visible zZZ indicator.
         sleepIndicator.isHidden = !sleeping
 
-        let status = Self.macRomanString(userStatusMessages[user.userID] ?? Data())
+        // Classic/Legacy clients cannot publish a modern status message. Use the otherwise
+        // unused status row to make their transport generation explicit in the modern user list.
+        let status = user.isLegacyTransport
+            ? "@ Legacy"
+            : Self.macRomanString(userStatusMessages[user.userID] ?? Data())
         let labelViews: [NSView]
         if status.isEmpty {
             // No fake blank second line: a single-line name stack is centered vertically next to

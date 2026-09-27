@@ -179,7 +179,7 @@ struct ServerAccount: Codable, Equatable, Identifiable {
     var login: String
     var name: String
     /// Password-equivalent material required only by the reconstructed legacy challenge/response path.
-    /// It is removed from persisted state when authentication mode is `modernOnly`.
+    /// It remains persisted in `modernOnly` so switching Legacy Mode back on does not require a password reset.
     var legacyPassword: String?
     /// Salted, iterated verifier used by the modern authentication path.
     var passwordVerifier: ServerPasswordVerifier?

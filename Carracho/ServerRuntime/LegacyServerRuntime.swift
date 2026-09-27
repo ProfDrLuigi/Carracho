@@ -1081,7 +1081,7 @@ final class LegacyServerRuntime {
         stateLock.unlock()
         return [
             "serverName": state.identity.name,
-            "software": "Carracho Server 1.1.0",
+            "software": "Carracho Server 1.1.1",
             "uptimeSeconds": NSNumber(value: max(0, Int64(Date().timeIntervalSince(start ?? Date())))),
             "usersOnline": userCount,
             "maxConnections": Int(state.advanced.maxConnections),
@@ -1782,6 +1782,42 @@ final class LegacyServerRuntime {
         return LegacyAuthenticatedSession(account: account, nickname: effectiveNickname, sessionKey: sessionKey)
     }
 
+    fileprivate func prepareModernAuthentication(loginData: Data) -> ModernServerBackend.ModernAuthenticationAttempt? {
+        guard loginData.count <= 63,
+              let login = String(data: loginData, encoding: .macOSRoman) else { return nil }
+        return backend.prepareModernAuthentication(login: login)
+    }
+
+    fileprivate func authenticateModern(attempt: ModernServerBackend.ModernAuthenticationAttempt,
+                                        loginData: Data,
+                                        proof: Data,
+                                        nickname: Data,
+                                        clientPublicKey: Data,
+                                        challenge: Data) throws -> LegacyAuthenticatedSession? {
+        guard loginData.count <= 63, proof.count == 32, nickname.count <= 255,
+              clientPublicKey.count == CarrachoModernCrypto.ephemeralPublicKeyLength else { return nil }
+        do {
+            try CarrachoModernCrypto.verifyModernLoginProof(
+                proof,
+                authKey: attempt.verifier.derivedKey,
+                challenge: challenge,
+                login: loginData,
+                clientPublicKey: clientPublicKey
+            )
+        } catch {
+            return nil
+        }
+        guard let account = attempt.account else { return nil }
+        let sessionKey = try CarrachoModernCrypto.modernLoginSessionKey(
+            authKey: attempt.verifier.derivedKey,
+            challenge: challenge,
+            login: loginData,
+            clientPublicKey: clientPublicKey
+        )
+        let effectiveNickname = nickname.isEmpty ? loginData : nickname
+        return LegacyAuthenticatedSession(account: account, nickname: effectiveNickname, sessionKey: sessionKey)
+    }
+
     fileprivate func registerAuthenticated(_ session: LegacyServerSession,
                                            authenticated: LegacyAuthenticatedSession) -> LegacyLoginRegistration {
         stateLock.lock()
@@ -2009,10 +2045,8 @@ final class LegacyServerRuntime {
             let ownActiveTransfers = session.userID.map { activeFileTransfersByUser[$0, default: 0] } ?? 0
             stateLock.unlock()
             let ticks = began.map { UInt64(max(0, Date().timeIntervalSince($0)) * 60) } ?? 0
-            let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.1.0"
-            try session.sendAuthenticated(LegacyPacket(command: LegacyCommand.serverInfo,
-                                                        transactionID: packet.transactionID,
-                                                        fields: [
+            let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.1.1"
+            var fields = [
                 LegacyTLV(type: LegacyServerInfoField.serverName, value: Self.macRoman(state.identity.name)),
                 LegacyTLV(type: LegacyServerInfoField.serverLocation, value: Self.macRoman(state.identity.location)),
                 LegacyTLV(type: LegacyServerInfoField.systemOperator, value: Self.macRoman(state.identity.operatorName)),
@@ -2028,7 +2062,18 @@ final class LegacyServerRuntime {
                           value: LegacyWire.uint16BE(state.advanced.maxFileTransfersPerUser)),
                 LegacyTLV(type: LegacyServerInfoField.activeFileTransfersForUser,
                           value: LegacyWire.uint16BE(UInt16(clamping: ownActiveTransfers))),
-            ]))
+            ]
+            if !session.isLegacyTransport {
+                fields.append(LegacyTLV(
+                    type: LegacyServerInfoField.legacyCompatibilityEnabled,
+                    value: Data([state.authentication.mode == .legacyCompatible ? 1 : 0])
+                ))
+            }
+            try session.sendAuthenticated(LegacyPacket(
+                command: LegacyCommand.serverInfo,
+                transactionID: packet.transactionID,
+                fields: fields
+            ))
 
         case LegacyCommand.directory:
             let path = packet.firstField(type: 1)?.value ?? Data()
@@ -5916,24 +5961,70 @@ private final class LegacyServerSession {
 
             var generator = SystemRandomNumberGenerator()
             let challenge = Data((0..<12).map { _ in UInt8.random(in: .min ... .max, using: &generator) })
+            var challengeFields = [LegacyTLV(type: 1, value: challenge)]
+            if modernTransport {
+                challengeFields.append(LegacyTLV(
+                    type: LegacyModernAuthenticationField.capability,
+                    value: Data([LegacyModernAuthenticationField.version])
+                ))
+            }
             let challengePacket = LegacyPacket(command: LegacyCommand.challenge, transactionID: 0,
-                                               fields: [LegacyTLV(type: 1, value: challenge)])
+                                               fields: challengeFields)
             try send(packet: challengePacket, key: LegacyAuthentication.initialControlKey)
 
-            let loginFrame = try LegacySocket.readControlFrame(fd: fd)
-            let loginPacket = try LegacyControlCodec.decode(loginFrame, key: LegacyAuthentication.initialControlKey)
+            let firstFrame = try LegacySocket.readControlFrame(fd: fd)
+            let firstPacket = try LegacyControlCodec.decode(firstFrame, key: LegacyAuthentication.initialControlKey)
+            let loginPacket: LegacyPacket
+            var modernAttempt: ModernServerBackend.ModernAuthenticationAttempt?
+            var expectedModernLogin = Data()
+            if modernTransport, firstPacket.command == LegacyCommand.modernAuthBegin {
+                guard firstPacket.fields.count == 1,
+                      let beginLogin = firstPacket.firstField(type: 1),
+                      let runtime,
+                      let attempt = runtime.prepareModernAuthentication(loginData: beginLogin.value) else {
+                    throw LegacyServerRuntimeError.protocolFailure("invalid modern authentication preflight")
+                }
+                modernAttempt = attempt
+                expectedModernLogin = beginLogin.value
+                let authChallenge = LegacyPacket(
+                    command: LegacyCommand.modernAuthChallenge,
+                    transactionID: firstPacket.transactionID,
+                    fields: [
+                        LegacyTLV(type: LegacyModernAuthenticationField.salt, value: attempt.verifier.salt),
+                        LegacyTLV(type: LegacyModernAuthenticationField.iterations,
+                                  value: LegacyWire.uint32BE(attempt.verifier.iterations)),
+                    ]
+                )
+                try send(packet: authChallenge, key: LegacyAuthentication.initialControlKey)
+                let loginFrame = try LegacySocket.readControlFrame(fd: fd)
+                loginPacket = try LegacyControlCodec.decode(loginFrame, key: LegacyAuthentication.initialControlKey)
+            } else {
+                loginPacket = firstPacket
+            }
             guard loginPacket.command == LegacyCommand.login,
                   let loginField = loginPacket.firstField(type: 1),
                   let digestField = loginPacket.firstField(type: 2),
                   let nicknameField = loginPacket.firstField(type: 4) else {
                 throw LegacyServerRuntimeError.protocolFailure("invalid login packet")
             }
-            guard let runtime,
-                  let authenticated = try runtime.authenticateLegacy(loginData: loginField.value,
-                                                                     digest: digestField.value,
-                                                                     nickname: nicknameField.value,
-                                                                     picture: modernTransport ? nil : loginPacket.firstField(type: 5)?.value,
-                                                                     challenge: challenge) else {
+            if modernAttempt != nil, loginField.value != expectedModernLogin {
+                throw LegacyServerRuntimeError.protocolFailure("modern authentication login changed during handshake")
+            }
+            let clientPublicKey = modernTransport ? loginPacket.firstField(type: 5)?.value : nil
+            let authenticated: LegacyAuthenticatedSession?
+            if let modernAttempt {
+                guard let clientPublicKey else {
+                    throw LegacyServerRuntimeError.protocolFailure("modern login is missing the X25519 client public key")
+                }
+                authenticated = try runtime?.authenticateModern(
+                    attempt: modernAttempt, loginData: loginField.value, proof: digestField.value,
+                    nickname: nicknameField.value, clientPublicKey: clientPublicKey, challenge: challenge)
+            } else {
+                authenticated = try runtime?.authenticateLegacy(
+                    loginData: loginField.value, digest: digestField.value, nickname: nicknameField.value,
+                    picture: modernTransport ? nil : loginPacket.firstField(type: 5)?.value, challenge: challenge)
+            }
+            guard let runtime, let authenticated else {
                 runtime?.recordLoginFailure()
                 try send(packet: LegacyServerRuntime.errorPacket(transactionID: loginPacket.transactionID, code: 100),
                          key: LegacyAuthentication.initialControlKey)
@@ -5947,7 +6038,7 @@ private final class LegacyServerSession {
             var handshakeAuthenticator: Data?
             var transportKey = authenticated.sessionKey
             if modernTransport {
-                guard let clientPublicKey = loginPacket.firstField(type: 5)?.value,
+                guard let clientPublicKey,
                       clientPublicKey.count == CarrachoModernCrypto.ephemeralPublicKeyLength else {
                     throw LegacyServerRuntimeError.protocolFailure("modern login is missing the X25519 client public key")
                 }

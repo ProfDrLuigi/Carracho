@@ -853,7 +853,13 @@ extension ViewController {
             let snapshot = bandwidthSnapshot
             lock.unlock()
 
-            if didSaveCore { self.remoteAdvancedAuthenticationMode = authenticationMode }
+            if didSaveCore {
+                self.remoteAdvancedAuthenticationMode = authenticationMode
+                if self.lastServerInfo != nil {
+                    self.lastServerInfo?.legacyCompatibilityEnabled = authenticationMode == .legacyCompatible
+                    self.refreshShellChrome()
+                }
+            }
             if let snapshot { self.applyRemoteTransferMonitor(snapshot) }
 
             let finishSuccess = { [weak self] in
@@ -1374,6 +1380,10 @@ extension ViewController {
             switch result {
             case .success:
                 self.remoteAdvancedAuthenticationMode = authenticationMode
+                if self.lastServerInfo != nil {
+                    self.lastServerInfo?.legacyCompatibilityEnabled = authenticationMode == .legacyCompatible
+                    self.refreshShellChrome()
+                }
                 self.showAdminSaved(authenticationMode == .legacyCompatible
                     ? L("Advanced settings saved on the connected server. Accounts whose legacy password was previously removed may need a password reset for Classic clients.")
                     : L("Advanced settings saved on the connected server. Classic connections are now disabled."))

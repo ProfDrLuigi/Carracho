@@ -179,6 +179,11 @@
 #define CMD_PENDING_UPLOAD_REJECT 0xf0000a03u
 #define CMD_GUEST_UPLOAD_PENDING_NOTICE 0xf0000a04u
 #define CMD_PENDING_UPLOAD_QUEUE_CHANGED 0xf0000a05u
+#define CMD_MODERN_AUTH_BEGIN 0xf0000b00u
+#define CMD_MODERN_AUTH_CHALLENGE 0xf0000b01u
+#define MODERN_AUTH_FIELD_CAPABILITY 0xf0000b00u
+#define MODERN_AUTH_FIELD_SALT 0xf0000b01u
+#define MODERN_AUTH_FIELD_ITERATIONS 0xf0000b02u
 #define CMD_CHANNEL_DELETE 0xf0000800u
 #define CMD_CHANNEL_DELETED 0xf0000801u
 #define FILE_LABEL_FIELD 0xf0000600u
@@ -191,6 +196,7 @@
 #define SERVER_INFO_FIELD_ACTIVE_TRANSFERS 0xf0000103u
 #define SERVER_INFO_FIELD_MAX_USER_TRANSFERS 0xf0000104u
 #define SERVER_INFO_FIELD_ACTIVE_USER_TRANSFERS 0xf0000105u
+#define SERVER_INFO_FIELD_LEGACY_COMPATIBILITY 0xf0000106u
 #define MEDIA_CAP_ATTACHMENTS_V1 0x00000001u
 #define MEDIA_CAP_YOUTUBE_LINKS_V1 0x00000002u
 #define MEDIA_CAP_OWNER_DELETE_V1 0x00000004u
@@ -2266,8 +2272,8 @@ static void *bot_thread_main(void*opaque){
 
 static int handle_server_info(cr_session*s,const cr_packet*p){
     uint8_t a[1024],b[1024],c[1024],d[CR_MAX_IDENTITY_TEXT+1],uptime[4],max_total[2],active_total[2],max_user[2],active_user[2];
-    const uint8_t version[]="Carracho Server 1.1.0";
-    size_t an=0,bn=0,cn=0,dn=0;uint16_t limit_total=0,limit_user=0;
+    const uint8_t version[]="Carracho Server 1.1.1";
+    size_t an=0,bn=0,cn=0,dn=0;uint16_t limit_total=0,limit_user=0;uint8_t legacy_compatibility=0;
     pthread_mutex_lock(&s->server->state.mutex);
     int fail=cr_utf8_to_macroman(s->server->state.identity.name,a,sizeof(a),&an)||
              cr_utf8_to_macroman(s->server->state.identity.location,b,sizeof(b),&bn)||
@@ -2275,6 +2281,7 @@ static int handle_server_info(cr_session*s,const cr_packet*p){
              cr_utf8_to_macroman(s->server->state.identity.description,d,sizeof(d),&dn);
     limit_total=s->server->state.advanced.max_simultaneous_file_transfers;
     limit_user=s->server->state.advanced.max_file_transfers_per_user;
+    legacy_compatibility=(uint8_t)(s->server->state.legacy_compatible?1:0);
     pthread_mutex_unlock(&s->server->state.mutex);
     if(fail)return send_error(s,p->transaction_id,200);
     size_t total=0,user=0;pthread_mutex_lock(&s->server->mutex);total=s->server->active_file_transfers;
@@ -2287,10 +2294,11 @@ static int handle_server_info(cr_session*s,const cr_packet*p){
     cr_tlv_out f[]={{2,a,(uint16_t)an},{6,b,(uint16_t)bn},{7,c,(uint16_t)cn},{8,d,(uint16_t)dn},
                     {SERVER_INFO_FIELD_SOFTWARE_VERSION,version,(uint16_t)(sizeof(version)-1)},{SERVER_INFO_FIELD_UPTIME_TICKS,uptime,4},
                     {SERVER_INFO_FIELD_MAX_TRANSFERS,max_total,2},{SERVER_INFO_FIELD_ACTIVE_TRANSFERS,active_total,2},
-                    {SERVER_INFO_FIELD_MAX_USER_TRANSFERS,max_user,2},{SERVER_INFO_FIELD_ACTIVE_USER_TRANSFERS,active_user,2}};
+                    {SERVER_INFO_FIELD_MAX_USER_TRANSFERS,max_user,2},{SERVER_INFO_FIELD_ACTIVE_USER_TRANSFERS,active_user,2},
+                    {SERVER_INFO_FIELD_LEGACY_COMPATIBILITY,&legacy_compatibility,1}};
     /* Server 1.0b13 sends exactly fields 2/6/7/8. Original clients do not safely
        skip the modern 0xf000... extension fields appended by current Carracho. */
-    return session_send(s,CMD_SERVER_INFO,p->transaction_id,f,s->modern_transport?10:4);
+    return session_send(s,CMD_SERVER_INFO,p->transaction_id,f,s->modern_transport?11:4);
 }
 static int handle_directory(cr_session*s,const cr_packet*p){const cr_tlv*path=cr_packet_field(p,1);const uint8_t*pv=path?path->value:NULL;size_t pn=path?path->length:0;cr_buffer listing,labels;if(encode_directory(s->server,s,pv,pn,&listing,&labels)){cr_buffer_free(&listing);cr_buffer_free(&labels);return send_error(s,p->transaction_id,200);}if(listing.len>UINT16_MAX||labels.len>UINT16_MAX){cr_buffer_free(&listing);cr_buffer_free(&labels);return send_error(s,p->transaction_id,200);}cr_tlv_out f[2];size_t n=0;f[n++]=(cr_tlv_out){2,listing.data,(uint16_t)listing.len};if(s->modern_transport)f[n++]=(cr_tlv_out){DIRECTORY_LABELS_FIELD,labels.data,(uint16_t)labels.len};int rc=session_send(s,CMD_DIRECTORY,p->transaction_id,f,n);cr_buffer_free(&listing);cr_buffer_free(&labels);return rc;}
 static int handle_channel_list(cr_session*s,const cr_packet*p){cr_buffer b;if(encode_channel_list(s->server,&b))return-1;if(b.len>UINT16_MAX){cr_buffer_free(&b);return send_error(s,p->transaction_id,200);}cr_tlv_out f={0x0a,b.data,(uint16_t)b.len};int rc=session_send(s,CMD_CHANNEL_LIST,p->transaction_id,&f,1);cr_buffer_free(&b);return rc;}
@@ -4648,6 +4656,37 @@ static int authenticate(cr_session *s, const cr_packet *p, const uint8_t challen
     }
     int rc=register_authenticated(s,&copy,nick->value,nick->length,key,keylen);free(copy.picture);return rc;
 }
+
+static int authenticate_modern_verifier(cr_session *s, const cr_packet *p,
+                                        const uint8_t challenge[12],
+                                        const uint8_t *expected_login, size_t expected_login_len,
+                                        const uint8_t auth_key[32]) {
+    const cr_tlv *login=cr_packet_field(p,1),*proof=cr_packet_field(p,2),*nick=cr_packet_field(p,4),*client_key=cr_packet_field(p,5);
+    if(!login||!proof||!nick||!client_key||login->length>63||proof->length!=32||nick->length>255||client_key->length!=32||
+       login->length!=expected_login_len||memcmp(login->value,expected_login,expected_login_len))return-1;
+    uint8_t expected[32],session_key[32];
+    if(cr_modern_login_proof(auth_key,challenge,login->value,login->length,client_key->value,expected)||
+       cr_modern_login_session_key(auth_key,challenge,login->value,login->length,client_key->value,session_key))return-1;
+    uint8_t diff=0;for(size_t i=0;i<32;i++)diff|=(uint8_t)(expected[i]^proof->value[i]);
+    if(diff){OPENSSL_cleanse(session_key,sizeof(session_key));return 1;}
+    char user[512];if(cr_macroman_to_utf8(login->value,login->length,user,sizeof(user))){OPENSSL_cleanse(session_key,sizeof(session_key));return-1;}
+    cr_account copy;memset(&copy,0,sizeof(copy));int valid=0;
+    pthread_mutex_lock(&s->server->state.mutex);
+    int idx=cr_state_find_account(&s->server->state,user);
+    if(idx>=0){cr_account*a=&s->server->state.accounts[idx];
+        if(!a->local_login_only&&a->has_password_verifier&&a->password_derived_key_len==32){
+            uint8_t keydiff=0;for(size_t i=0;i<32;i++)keydiff|=(uint8_t)(a->password_derived_key[i]^auth_key[i]);
+            if(!keydiff){copy=*a;copy.picture=NULL;valid=1;
+                if(a->picture_len){copy.picture=malloc(a->picture_len);if(!copy.picture){pthread_mutex_unlock(&s->server->state.mutex);OPENSSL_cleanse(session_key,sizeof(session_key));return-1;}memcpy(copy.picture,a->picture,a->picture_len);copy.picture_len=a->picture_len;}
+            }
+        }
+    }
+    pthread_mutex_unlock(&s->server->state.mutex);
+    if(!valid){OPENSSL_cleanse(session_key,sizeof(session_key));return 1;}
+    int rc=register_authenticated(s,&copy,nick->value,nick->length,session_key,sizeof(session_key));
+    OPENSSL_cleanse(session_key,sizeof(session_key));free(copy.picture);return rc;
+}
+
 static int recv_authenticated_packet(cr_session*s,cr_packet*p,cr_buffer*plain){
     if(!s->modern_transport)return cr_recv_packet(s->fd,s->key,s->key_len,p,plain);
     uint8_t header[CR_AEAD_HEADER_LENGTH];
@@ -4669,10 +4708,26 @@ static void *session_main(void*opaque){
     uint16_t client_version=cr_read_be16(hello+11);if(client_version!=1&&client_version!=2)goto done;s->modern_transport=client_version==2;
     if(!s->modern_transport){pthread_mutex_lock(&s->server->state.mutex);int legacy_allowed=s->server->state.legacy_compatible;pthread_mutex_unlock(&s->server->state.mutex);if(!legacy_allowed){log_msg("Rejected legacy connection from %s: modern-only authentication enabled",s->peer_ip);goto done;}}
     if(cr_write_all(s->fd,s->modern_transport?k_server_hello_modern:k_server_hello,sizeof(k_server_hello)))goto done;
-    uint8_t challenge[12];if(RAND_bytes(challenge,sizeof(challenge))!=1)goto done;cr_tlv_out ch={1,challenge,12};if(session_send_key(s,k_initial_key,sizeof(k_initial_key),CMD_CHALLENGE,0,&ch,1))goto done;
-    cr_packet p;cr_buffer plain;cr_buffer_init(&plain);if(cr_recv_packet(s->fd,k_initial_key,sizeof(k_initial_key),&p,&plain)||p.command!=CMD_LOGIN){cr_buffer_free(&plain);goto done;}
+    uint8_t challenge[12],auth_version=1;if(RAND_bytes(challenge,sizeof(challenge))!=1)goto done;cr_tlv_out ch[2]={{1,challenge,12},{MODERN_AUTH_FIELD_CAPABILITY,&auth_version,1}};if(session_send_key(s,k_initial_key,sizeof(k_initial_key),CMD_CHALLENGE,0,ch,s->modern_transport?2:1))goto done;
+    cr_packet p;cr_buffer plain;cr_buffer_init(&plain);if(cr_recv_packet(s->fd,k_initial_key,sizeof(k_initial_key),&p,&plain)){cr_buffer_free(&plain);goto done;}
+    int modern_preflight=0;uint8_t modern_auth_key[32]={0},modern_login[64]={0};size_t modern_login_len=0;
+    if(s->modern_transport&&p.command==CMD_MODERN_AUTH_BEGIN){
+        const cr_tlv*begin_login=cr_packet_field(&p,1);if(!begin_login||p.field_count!=1||!begin_login->length||begin_login->length>63){cr_buffer_free(&plain);goto done;}
+        modern_preflight=1;modern_login_len=begin_login->length;memcpy(modern_login,begin_login->value,modern_login_len);
+        uint8_t salt[16];uint32_t iterations=210000;int have_verifier=0;char user[512];
+        if(cr_macroman_to_utf8(begin_login->value,begin_login->length,user,sizeof(user))==0){
+            pthread_mutex_lock(&s->server->state.mutex);int idx=cr_state_find_account(&s->server->state,user);
+            if(idx>=0){cr_account*a=&s->server->state.accounts[idx];if(!a->local_login_only&&a->has_password_verifier&&a->password_salt_len==16&&a->password_derived_key_len==32&&a->password_iterations){memcpy(salt,a->password_salt,16);memcpy(modern_auth_key,a->password_derived_key,32);iterations=a->password_iterations;have_verifier=1;}}
+            pthread_mutex_unlock(&s->server->state.mutex);
+        }
+        if(!have_verifier){if(RAND_bytes(salt,sizeof(salt))!=1||RAND_bytes(modern_auth_key,sizeof(modern_auth_key))!=1){cr_buffer_free(&plain);goto done;}}
+        uint8_t rounds[4];cr_write_be32(rounds,iterations);cr_tlv_out af[]={{MODERN_AUTH_FIELD_SALT,salt,16},{MODERN_AUTH_FIELD_ITERATIONS,rounds,4}};
+        if(session_send_key(s,k_initial_key,sizeof(k_initial_key),CMD_MODERN_AUTH_CHALLENGE,p.transaction_id,af,2)){cr_buffer_free(&plain);goto done;}
+        cr_buffer_free(&plain);cr_buffer_init(&plain);if(cr_recv_packet(s->fd,k_initial_key,sizeof(k_initial_key),&p,&plain)){cr_buffer_free(&plain);goto done;}
+    }
+    if(p.command!=CMD_LOGIN){cr_buffer_free(&plain);goto done;}
     uint8_t client_public_key[32]={0};if(s->modern_transport){const cr_tlv*client_key=cr_packet_field(&p,5);if(!client_key||client_key->length!=32){cr_buffer_free(&plain);goto done;}memcpy(client_public_key,client_key->value,32);}
-    int auth=authenticate(s,&p,challenge);if(auth==0)capture_client_metadata(s,&p);cr_buffer_free(&plain);if(auth!=0){cr_state_stat_add(&s->server->state,"incorrectLogins",1);uint8_t code[2];cr_write_be16(code,100);cr_tlv_out ef={1,code,2};session_send_key(s,k_initial_key,sizeof(k_initial_key),CMD_ERROR,p.transaction_id,&ef,1);goto done;}
+    int auth=modern_preflight?authenticate_modern_verifier(s,&p,challenge,modern_login,modern_login_len,modern_auth_key):authenticate(s,&p,challenge);OPENSSL_cleanse(modern_auth_key,sizeof(modern_auth_key));if(auth==0)capture_client_metadata(s,&p);cr_buffer_free(&plain);if(auth!=0){cr_state_stat_add(&s->server->state,"incorrectLogins",1);uint8_t code[2];cr_write_be16(code,100);cr_tlv_out ef={1,code,2};session_send_key(s,k_initial_key,sizeof(k_initial_key),CMD_ERROR,p.transaction_id,&ef,1);goto done;}
     uint8_t modern_master[32]={0};
     if(s->modern_transport){
         uint8_t private_key[32],shared[32];
@@ -6343,7 +6398,7 @@ static json_object *http_status_json(cr_server *s) {
     time_t now = time(NULL);
     int64_t uptime = now > s->started_at ? (int64_t)(now - s->started_at) : 0;
     json_object_object_add(root, "serverName", json_object_new_string(server_name));
-    json_object_object_add(root, "software", json_object_new_string("Carracho Server 1.1.0"));
+    json_object_object_add(root, "software", json_object_new_string("Carracho Server 1.1.1"));
     json_object_object_add(root, "uptimeSeconds", json_object_new_int64(uptime));
     json_object_object_add(root, "usersOnline", json_object_new_int64((int64_t)online));
     json_object_object_add(root, "maxConnections", json_object_new_int(max_connections));

@@ -523,9 +523,6 @@ enum ServerStateMigrator {
                     iterations: passwordIterations
                 )
             }
-            if state.authentication.mode == .modernOnly {
-                state.accounts[index].legacyPassword = nil
-            }
         }
         state.formatVersion = ServerState.currentFormatVersion
         return state
@@ -601,9 +598,6 @@ enum ServerStateValidator {
         var accountNames = Set<String>()
         for account in state.accounts {
             try validate(account: account)
-            if state.authentication.mode == .modernOnly, account.legacyPassword != nil {
-                throw ServerStateError.invalidValue("Modern-only state must not retain legacy password material.")
-            }
             guard let groupID = account.groupID,
                   let group = state.accountGroups.first(where: { $0.id == groupID }) else {
                 throw ServerStateError.invalidValue("Account “\(account.login)” has no valid Classic account group.")

@@ -805,6 +805,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
     let rightServerUsersValue = NSTextField(labelWithString: "0")
     let rightEndpointValue = NSTextField(labelWithString: "—")
     let rightServerDescriptionValue = NSTextField(wrappingLabelWithString: "—")
+    let rightServerLegacyModeValue = NSTextField(labelWithString: "")
     let rightBannerImageView = NSImageView()
     var serverBannerWidthConstraint: NSLayoutConstraint?
     var remoteServerUptimeSeconds: TimeInterval?
@@ -2656,7 +2657,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
             navigation.bottomAnchor.constraint(equalTo: scrollContent.bottomAnchor),
             scrollContent.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
         ])
-        let version = infoLabel(L("Carracho 1.1.0"))
+        let version = infoLabel(L("Carracho 1.1.1"))
         version.font = .systemFont(ofSize: 10)
         appearancePopup.removeAllItems()
         appearancePopup.addItems(withTitles: [L("System Appearance"), L("Light"), L("Dark")])
@@ -2806,6 +2807,12 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         rightServerDescriptionValue.lineBreakMode = .byTruncatingTail
         rightServerDescriptionValue.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
+        rightServerLegacyModeValue.font = .systemFont(ofSize: 11.5, weight: .medium)
+        rightServerLegacyModeValue.textColor = CarrachoTheme.secondaryText
+        rightServerLegacyModeValue.maximumNumberOfLines = 1
+        rightServerLegacyModeValue.lineBreakMode = .byTruncatingTail
+        rightServerLegacyModeValue.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
         let settings = NSButton()
         settings.target = self
         settings.action = #selector(menuSettings(_:))
@@ -2851,11 +2858,12 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         actions.setContentHuggingPriority(.required, for: .horizontal)
         actions.setContentCompressionResistancePriority(.required, for: .horizontal)
         rightServerDescriptionValue.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        rightServerLegacyModeValue.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
-        let labels = verticalStack([serverTitleLabel, rightServerDescriptionValue], spacing: 3)
+        let labels = verticalStack([serverTitleLabel, rightServerDescriptionValue, rightServerLegacyModeValue], spacing: 3)
         labels.setContentHuggingPriority(.defaultLow, for: .horizontal)
         labels.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        for row in [serverTitleLabel, rightServerDescriptionValue] {
+        for row in [serverTitleLabel, rightServerDescriptionValue, rightServerLegacyModeValue] {
             row.widthAnchor.constraint(equalTo: labels.widthAnchor).isActive = true
         }
 
@@ -7893,6 +7901,17 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         rightServerDescriptionValue.stringValue = description
         rightServerDescriptionValue.toolTip = description.isEmpty ? nil : description
         rightServerDescriptionValue.isHidden = description.isEmpty
+        if connected, let legacyEnabled = lastServerInfo?.legacyCompatibilityEnabled {
+            rightServerLegacyModeValue.stringValue = legacyEnabled ? "Legacy Mode = On" : "Legacy Mode = Off"
+            rightServerLegacyModeValue.toolTip = legacyEnabled
+                ? "Classic/Legacy clients are allowed to connect to this server."
+                : "Classic/Legacy clients are not allowed to connect to this server."
+            rightServerLegacyModeValue.isHidden = false
+        } else {
+            rightServerLegacyModeValue.stringValue = ""
+            rightServerLegacyModeValue.toolTip = nil
+            rightServerLegacyModeValue.isHidden = true
+        }
         serverBannerHost?.isHidden = rightBannerImageView.image == nil
         serverBannerSeparator?.isHidden = rightBannerImageView.image == nil
         updateServerBannerHeaderWidth()
