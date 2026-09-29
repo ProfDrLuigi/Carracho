@@ -25,7 +25,7 @@
     "description":"Carracho Dev Server",
     "trackers":[
       {
-        "name":"wired",
+        "name":"carracho",
         "address":"carracho.istation.pw",
         "enabled":false,
         "reservedString":"",
