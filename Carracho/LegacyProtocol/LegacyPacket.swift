@@ -234,6 +234,9 @@ enum LegacyCommand {
     /// Modern verifier-based authentication preflight.
     static let modernAuthBegin: UInt32 = 0xf0000b00
     static let modernAuthChallenge: UInt32 = 0xf0000b01
+    /// Modern-only Private Message reactions.
+    static let privateMessageReactionSet: UInt32 = 0xf0000910
+    static let privateMessageReactionChanged: UInt32 = 0xf0000911
     /// Modern-only administrator request to permanently remove a non-Public room.
     /// Modern-only message editing (Classic packet layouts are never modified).
     static let messageEdit: UInt32 = 0xf0000901
@@ -748,6 +751,17 @@ enum LegacyMessageEdit {
               let text = String(data: data, encoding: .ascii),
               text == text.lowercased() else { return nil }
         return UUID(uuidString: text)
+    }
+}
+
+enum LegacyPrivateMessageReaction {
+    static let capability: UInt32 = 0xf0000912
+    static let peerUserID: UInt32 = 1
+    static let messageID: UInt32 = 2
+    static let reaction: UInt32 = 3
+
+    static func valid(_ value: UInt8) -> Bool {
+        value == 0 || LegacyNewsReactionKind(rawValue: value) != nil
     }
 }
 

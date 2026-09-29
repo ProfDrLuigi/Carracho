@@ -20,7 +20,7 @@ See the collapsible **Security and modern encryption** section below for the pro
 
 ### Current release: 1.1.1
 
-Carracho 1.1.1 improves **Classic/Legacy compatibility visibility** and fixes **Modern Only authentication**. Modern clients show the connected server's actual **Legacy Mode = On / Off** state, Classic users are clearly marked with **`@ Legacy`**, and modern accounts authenticate through the PBKDF2 verifier while retained Legacy credentials remain available for a later switch back to Legacy Compatible mode. The compatibility and authentication behavior is implemented consistently by both the Swift/macOS and native Linux servers.
+Carracho 1.1.1 improves **Classic/Legacy compatibility visibility**, fixes **Modern Only authentication**, tightens Guest messaging permissions, and adds **Private Message reactions** for modern clients. Modern clients show the connected server's actual **Legacy Mode = On / Off** state, Classic users are clearly marked with **`@ Legacy`**, retained Legacy credentials survive mode switches, Guest accounts can no longer send offline messages, and modern PMs can use the same reaction set as News. The behavior is implemented consistently by both the Swift/macOS and native Linux servers.
 
 The full release notes are available in [`README_1.1.1.md`](README_1.1.1.md).
 

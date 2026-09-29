@@ -299,7 +299,9 @@ extension ViewController {
             messages: conversation.entries.map {
                 MessageCenterStoredPrivateMessage(id: $0.id, userID: conversation.userID,
                                                   timestamp: $0.timestamp, outgoing: $0.outgoing,
-                                                  message: $0.message)
+                                                  message: $0.message, edited: $0.edited, editable: $0.editable,
+                                                  reactable: $0.reactable, myReaction: $0.myReaction,
+                                                  peerReaction: $0.peerReaction)
             }
         )
     }
@@ -312,7 +314,9 @@ extension ViewController {
             isLegacyTransport: conversation.isLegacyTransport,
             entries: conversation.messages.map {
                 PrivateMessageEntry(id: $0.id, timestamp: $0.timestamp, outgoing: $0.outgoing,
-                                    message: $0.message, edited: $0.edited, editable: $0.editable)
+                                    message: $0.message, edited: $0.edited, editable: $0.editable,
+                                    reactable: $0.reactable, myReaction: $0.myReaction,
+                                    peerReaction: $0.peerReaction)
             },
             unreadCount: conversation.unreadCount,
             draftText: conversation.draftText,
@@ -364,7 +368,9 @@ extension ViewController {
         guard let scope = messageCenterPersistenceScope else { return }
         let stored = MessageCenterStoredPrivateMessage(id: entry.id, userID: conversation.userID,
                                                        timestamp: entry.timestamp, outgoing: entry.outgoing,
-                                                       message: entry.message, edited: entry.edited, editable: entry.editable)
+                                                       message: entry.message, edited: entry.edited, editable: entry.editable,
+                                                       reactable: entry.reactable, myReaction: entry.myReaction,
+                                                       peerReaction: entry.peerReaction)
         do {
             try messageCenterStore.insertPrivateMessage(stored, conversation: storedConversation(conversation), scope: scope)
         } catch {
@@ -396,11 +402,11 @@ extension ViewController {
     }
 
     @objc func sendOfflineMessage(_ sender: Any?) {
-        guard client.isConnected else { return }
+        guard canSendOfflineMessages else { return }
         userOfflineMessageButton.isEnabled = false
         client.requestOfflineMessageRecipients { [weak self] result in
             guard let self else { return }
-            self.userOfflineMessageButton.isEnabled = self.client.isConnected
+            self.updateUserActionButtons()
             switch result {
             case let .failure(error):
                 self.showError(LF("Recipient list could not be loaded: %@", Self.displayMessage(for: error)))
@@ -868,10 +874,10 @@ extension ViewController {
     }
 
     func appendPrivateMessage(userID: UInt32, message: Data, outgoing: Bool, timestamp: Date = Date(),
-                              id: UUID = UUID(), editable: Bool = false) {
+                              id: UUID = UUID(), editable: Bool = false, reactable: Bool = false) {
         var conversation = ensurePrivateConversation(userID: userID)
         let entry = PrivateMessageEntry(id: id, timestamp: timestamp, outgoing: outgoing, message: message,
-                                        editable: editable)
+                                        editable: editable, reactable: reactable)
         conversation.entries.append(entry)
         if conversation.entries.count > 500 { conversation.entries.removeFirst(conversation.entries.count - 500) }
         conversation.lastActivity = timestamp
@@ -903,6 +909,75 @@ extension ViewController {
         privateMessageConversations[edit.scope] = conversation
         persistPrivateMessage(changed, conversation: conversation)
         refreshPrivateMessageCenter(scrollToBottom: false)
+    }
+
+    func applyPrivateMessageReaction(_ change: LegacyPrivateMessageReactionChanged) {
+        guard var conversation = privateMessageConversations[change.peerUserID],
+              let index = conversation.entries.firstIndex(where: { $0.id == change.messageID }),
+              conversation.entries[index].reactable else { return }
+        conversation.entries[index].peerReaction = change.reaction == 0 ? nil : change.reaction
+        let changed = conversation.entries[index]
+        privateMessageConversations[change.peerUserID] = conversation
+        persistPrivateMessage(changed, conversation: conversation)
+        if selectedPrivateConversationID == change.peerUserID {
+            refreshPrivateMessageCenter(scrollToBottom: false)
+        }
+    }
+
+    @objc func presentPrivateMessageReactionMenu(_ sender: NSButton) {
+        guard let raw = sender.identifier?.rawValue else { return }
+        let parts = raw.split(separator: ":", maxSplits: 1)
+        guard parts.count == 2, let userID = UInt32(parts[0]),
+              let messageID = UUID(uuidString: String(parts[1])),
+              let conversation = privateMessageConversations[userID],
+              let entry = conversation.entries.first(where: { $0.id == messageID && $0.reactable }),
+              client.supportsPrivateMessageReactions,
+              client.isConnected, liveUsers[userID]?.isLegacyTransport == false else { return }
+        let menu = NSMenu(title: L("Reactions"))
+        for kind in LegacyNewsReactionKind.allCases {
+            let item = NSMenuItem(title: kind.emoji, action: #selector(setPrivateMessageReactionFromMenu(_:)), keyEquivalent: "")
+            item.target = self
+            item.state = entry.myReaction == kind.rawValue ? .on : .off
+            item.representedObject = "\(userID):\(messageID.uuidString):\(kind.rawValue)"
+            menu.addItem(item)
+        }
+        if entry.myReaction != nil {
+            menu.addItem(.separator())
+            let remove = NSMenuItem(title: L("Remove My Reaction"), action: #selector(setPrivateMessageReactionFromMenu(_:)), keyEquivalent: "")
+            remove.target = self
+            remove.representedObject = "\(userID):\(messageID.uuidString):0"
+            menu.addItem(remove)
+        }
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.height), in: sender)
+    }
+
+    @objc func setPrivateMessageReactionFromMenu(_ sender: NSMenuItem) {
+        guard let payload = sender.representedObject as? String else { return }
+        let parts = payload.split(separator: ":", maxSplits: 2)
+        guard parts.count == 3, let userID = UInt32(parts[0]),
+              let messageID = UUID(uuidString: String(parts[1])), let raw = UInt8(parts[2]),
+              var conversation = privateMessageConversations[userID],
+              let index = conversation.entries.firstIndex(where: { $0.id == messageID && $0.reactable }),
+              client.supportsPrivateMessageReactions, client.isConnected,
+              liveUsers[userID]?.isLegacyTransport == false else { return }
+        let requested: UInt8 = raw != 0 && conversation.entries[index].myReaction == raw ? 0 : raw
+        client.setPrivateMessageReaction(peerUserID: userID, messageID: messageID, reaction: requested) { [weak self] result in
+            guard let self else { return }
+            switch result {
+            case .success:
+                guard var current = self.privateMessageConversations[userID],
+                      let currentIndex = current.entries.firstIndex(where: { $0.id == messageID }) else { return }
+                current.entries[currentIndex].myReaction = requested == 0 ? nil : requested
+                let changed = current.entries[currentIndex]
+                self.privateMessageConversations[userID] = current
+                self.persistPrivateMessage(changed, conversation: current)
+                if self.selectedPrivateConversationID == userID {
+                    self.refreshPrivateMessageCenter(scrollToBottom: false)
+                }
+            case let .failure(error):
+                self.showError(LF("Reaction could not be sent: %@", Self.displayMessage(for: error)))
+            }
+        }
     }
 
     @objc func editPrivateMessageFromButton(_ sender: NSButton) {
@@ -1081,10 +1156,34 @@ extension ViewController {
             edit.identifier = NSUserInterfaceItemIdentifier(String(conversation.userID) + ":" + entry.id.uuidString)
             headerViews.append(edit)
         }
+        if entry.reactable, !conversation.isLegacyTransport, client.supportsPrivateMessageReactions,
+           client.isConnected, liveUsers[conversation.userID]?.isLegacyTransport == false {
+            let react = NSButton(title: L("☺ React"), target: self, action: #selector(presentPrivateMessageReactionMenu(_:)))
+            react.bezelStyle = .inline
+            react.controlSize = .small
+            react.font = .systemFont(ofSize: 10)
+            react.identifier = NSUserInterfaceItemIdentifier(String(conversation.userID) + ":" + entry.id.uuidString)
+            headerViews.append(react)
+        }
         let header = horizontalStack(headerViews, spacing: 8)
 
         let body = messageCenterBodyView(fromWire: entry.message, allowMedia: !conversation.isLegacyTransport)
-        let stack = verticalStack([header, body], spacing: 5)
+        var contentViews: [NSView] = [header, body]
+        var reactionViews: [NSView] = []
+        if let raw = entry.myReaction, let kind = LegacyNewsReactionKind(rawValue: raw) {
+            let label = NSTextField(labelWithString: L("You") + " " + kind.emoji)
+            label.font = .systemFont(ofSize: 10, weight: .medium)
+            label.textColor = CarrachoTheme.secondaryText
+            reactionViews.append(label)
+        }
+        if let raw = entry.peerReaction, let kind = LegacyNewsReactionKind(rawValue: raw) {
+            let label = NSTextField(labelWithString: conversation.nickname + " " + kind.emoji)
+            label.font = .systemFont(ofSize: 10, weight: .medium)
+            label.textColor = CarrachoTheme.secondaryText
+            reactionViews.append(label)
+        }
+        if !reactionViews.isEmpty { contentViews.append(horizontalStack(reactionViews, spacing: 10)) }
+        let stack = verticalStack(contentViews, spacing: 5)
         stack.translatesAutoresizingMaskIntoConstraints = false
         card.addSubview(stack)
         NSLayoutConstraint.activate([
@@ -1448,9 +1547,10 @@ extension ViewController {
         }
         guard !data.isEmpty else { return }
         privateMessageSendButton.isEnabled = false
-        let messageID = client.supportsMessageEditing &&
-            privateMessageConversations[userID]?.isLegacyTransport == false &&
-            LegacyMediaReference.references(inWire: data).isEmpty ? UUID() : nil
+        let modernPeer = privateMessageConversations[userID]?.isLegacyTransport == false
+        let messageID = modernPeer && (client.supportsMessageEditing || client.supportsPrivateMessageReactions) ? UUID() : nil
+        let editable = messageID != nil && client.supportsMessageEditing && LegacyMediaReference.references(inWire: data).isEmpty
+        let reactable = messageID != nil && client.supportsPrivateMessageReactions
         client.sendPrivateMessage(to: userID, message: data, messageID: messageID) { [weak self] result in
             guard let self else { return }
             switch result {
@@ -1465,7 +1565,7 @@ extension ViewController {
                 }
                 self.privateMessageComposerStatusLabel.textColor = CarrachoTheme.secondaryText
                 self.appendPrivateMessage(userID: userID, message: data, outgoing: true,
-                                          id: messageID ?? UUID(), editable: messageID != nil)
+                                          id: messageID ?? UUID(), editable: editable, reactable: reactable)
             case let .failure(error):
                 self.privateMessageComposerStatusLabel.stringValue = LF("Message could not be sent: %@", Self.displayMessage(for: error))
                 self.privateMessageComposerStatusLabel.textColor = .systemRed

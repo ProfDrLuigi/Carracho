@@ -26,8 +26,8 @@
     "trackers":[
       {
         "name":"wired",
-        "address":"wired.istation.pw",
-        "enabled":true,
+        "address":"carracho.istation.pw",
+        "enabled":false,
         "reservedString":"",
         "reservedValue":0
       }
@@ -35,7 +35,7 @@
   },
   "searchIndexRebuildIntervalHours":0,
   "httpAdmin":{
-    "enabled":true,
+    "enabled":false,
     "bind":"127.0.0.1",
     "port":6780
   }

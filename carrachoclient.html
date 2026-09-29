@@ -34,6 +34,10 @@
                 <li>Changing the server authentication mode from Advanced Administration now updates the displayed Legacy Mode state immediately after the setting is saved.</li>
                 <li>Classic/Legacy users now show <code>@ Legacy</code> in the status row of the modern user list, making historical-client connections easy to identify without changing normal modern user status messages.</li>
                 <li>Fixed Modern Only login. The modern client now authenticates using a verifier-based PBKDF2-SHA256/HMAC challenge-response flow and no longer depends on the retained Legacy credential.</li>
+                <li>Guest accounts no longer see the <strong>Send Offline Messages</strong> action. If an account is changed to Guest while connected, an open offline-message composer is closed immediately.</li>
+                <li>Removed the visible server address/IP column from Tracker result tables. The address remains internal and is still used when connecting to the selected server.</li>
+                <li>Added reactions to modern Private Messages in Message Center. A <strong>☺ React</strong> action offers the same reactions as News, each participant can keep one reaction per message, and reaction state is persisted locally with the conversation history.</li>
+                <li>Modern Private Messages now use a shared message UUID for reaction-capable conversations, including messages with media attachments. Existing five-minute edit restrictions remain unchanged.</li>
         </ul></span>
 
         <p><span class="header" lang="en">New in 1.1.0</span></p>

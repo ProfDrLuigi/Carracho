@@ -81,9 +81,12 @@
 #define CMD_PRIVATE_MESSAGE 0x00000006u
 #define CMD_MESSAGE_EDIT 0xf0000901u
 #define CMD_MESSAGE_EDITED 0xf0000904u
+#define CMD_PRIVATE_MESSAGE_REACTION_SET 0xf0000910u
+#define CMD_PRIVATE_MESSAGE_REACTION_CHANGED 0xf0000911u
 #define FIELD_MESSAGE_ID 0xf0000900u
 #define FIELD_MESSAGE_EDIT_CAPABILITY 0xf0000902u
 #define FIELD_MESSAGE_SENT_AT 0xf0000903u
+#define FIELD_PRIVATE_MESSAGE_REACTION_CAPABILITY 0xf0000912u
 #ifndef MESSAGE_EDIT_WINDOW
 #define MESSAGE_EDIT_WINDOW 300
 #endif
@@ -1357,13 +1360,14 @@ static int send_login_success(cr_session*s){
     pthread_mutex_unlock(&s->server->state.mutex);
     if(state_fail){cr_buffer_free(&users);return-1;}
     cr_account tmp;memset(&tmp,0,sizeof(tmp));tmp.permission_bits=s->permission_bits;cr_account_permission_bytes(&tmp,perms);if(!s->modern_transport)perms[PERM_POST_NEWS/8]&=(uint8_t)~(0x80u>>(PERM_POST_NEWS%8));cr_write_be32(session_info,s->user_id);memcpy(session_info+4,perms,8);cr_write_be16(maxtr,max_transfers);cr_write_be16(ver,s->modern_transport?3:2);
-    cr_tlv_out f[17];size_t n=0;f[n++]=(cr_tlv_out){1,session_info,12};f[n++]=(cr_tlv_out){2,server_name,(uint16_t)sn};f[n++]=(cr_tlv_out){3,users.data,(uint16_t)users.len};
+    cr_tlv_out f[18];size_t n=0;f[n++]=(cr_tlv_out){1,session_info,12};f[n++]=(cr_tlv_out){2,server_name,(uint16_t)sn};f[n++]=(cr_tlv_out){3,users.data,(uint16_t)users.len};
     cr_buffer agreement;cr_buffer_init(&agreement);if(agreement_enabled){cr_buffer_append_u32(&agreement,(uint32_t)an);cr_buffer_append(&agreement,agreement_text,an);cr_buffer_append_u32(&agreement,(uint32_t)asn);if(asn)cr_buffer_append(&agreement,agreement_style,asn);f[n++]=(cr_tlv_out){4,agreement.data,(uint16_t)agreement.len};}
     uint8_t media_caps[4];cr_write_be32(media_caps,s->modern_transport?MEDIA_CAP_CURRENT:0);
     const char*files_root_name=s->files_root_name[0]?s->files_root_name:"Allgemein";size_t files_root_name_len=strlen(files_root_name);if(!files_root_name_len||files_root_name_len>64){cr_buffer_free(&agreement);cr_buffer_free(&users);return-1;}
     f[n++]=(cr_tlv_out){0x21,maxtr,2};f[n++]=(cr_tlv_out){5,ver,2};f[n++]=(cr_tlv_out){LOGIN_FIELD_MEDIA_CAPABILITIES,media_caps,4};f[n++]=(cr_tlv_out){LOGIN_FIELD_FILES_ROOT_NAME,(const uint8_t*)files_root_name,(uint16_t)files_root_name_len};if(s->modern_transport){
-    static const uint8_t editing_capability=1;
+    static const uint8_t editing_capability=1,reaction_capability=1;
     f[n++]=(cr_tlv_out){FIELD_MESSAGE_EDIT_CAPABILITY,&editing_capability,1};
+    f[n++]=(cr_tlv_out){FIELD_PRIVATE_MESSAGE_REACTION_CAPABILITY,&reaction_capability,1};
     if(legacy_users.len>UINT16_MAX){cr_buffer_free(&legacy_users);cr_buffer_free(&agreement);cr_buffer_free(&users);return-1;}f[n++]=(cr_tlv_out){LOGIN_FIELD_LEGACY_USER_IDS,legacy_users.data,(uint16_t)legacy_users.len};f[n++]=(cr_tlv_out){6,s->modern_salt,CR_MODERN_SESSION_SALT};f[n++]=(cr_tlv_out){7,s->modern_server_public_key,32};f[n++]=(cr_tlv_out){8,s->modern_handshake_authenticator,32};}int rc=session_send_key(s,k_initial_key,sizeof(k_initial_key),CMD_LOGIN_SUCCESS,0,f,n);cr_buffer_free(&legacy_users);cr_buffer_free(&agreement);cr_buffer_free(&users);return rc;
 }
 
@@ -2979,32 +2983,31 @@ static int handle_private_message(cr_session *s, const cr_packet *p) {
         if(!classic_ready||!classic_len)target=NULL;
         else{wire=classic;wire_len=classic_len;}
     }
-    if(target&&media_count){
-        char message_id[33];
-        if(media_message_id(message_id)||
-           bind_media_tokens(s->server,s,message->value,message->length,4,
-                             CR_MEDIA_KIND_PRIVATE_MESSAGE,target->account_id,message_id,
-                             time(NULL)+30*24*60*60))target=NULL;
-    }
-    const cr_tlv*edit_id=s->modern_transport?cr_packet_field(p,FIELD_MESSAGE_ID):NULL;
-    if(edit_id&&!valid_edit_id(edit_id)){
+    const cr_tlv*message_id=s->modern_transport?cr_packet_field(p,FIELD_MESSAGE_ID):NULL;
+    if(message_id&&!valid_edit_id(message_id)){
         pthread_mutex_unlock(&s->server->mutex);
         return p->transaction_id?send_error(s,p->transaction_id,1):0;
     }
+    int shared_id=message_id&&target&&target->modern_transport;
+    if(target&&media_count){
+        char media_scope_id[33];
+        if(media_message_id(media_scope_id)||
+           bind_media_tokens(s->server,s,message->value,message->length,4,
+                             CR_MEDIA_KIND_PRIVATE_MESSAGE,target->account_id,media_scope_id,
+                             time(NULL)+30*24*60*60))target=NULL;
+    }
     time_t sent_at=time(NULL);uint8_t sent_bytes[8];cr_write_be64(sent_bytes,(uint64_t)sent_at);
-    int editable=0;
-    if(edit_id&&target&&target->modern_transport&&!media_count&&(!extra||!extra->length)){
-        if(record_edit_locked(s->server,edit_id,s->user_id,2,target_id,sent_at)){
+    if(shared_id&&!media_count&&(!extra||!extra->length)){
+        if(record_edit_locked(s->server,message_id,s->user_id,2,target_id,sent_at)){
             pthread_mutex_unlock(&s->server->mutex);
             return p->transaction_id?send_error(s,p->transaction_id,1):0;
         }
-        editable=1;
     }
     cr_tlv_out fields[5]; size_t n=0;
     fields[n++] = (cr_tlv_out){1,uid,4}; fields[n++] = (cr_tlv_out){2,wire,(uint16_t)wire_len};
     if (extra && extra->length) fields[n++] = (cr_tlv_out){3,extra->value,extra->length};
-    if(editable){
-        fields[n++]=(cr_tlv_out){FIELD_MESSAGE_ID,edit_id->value,36};
+    if(shared_id){
+        fields[n++]=(cr_tlv_out){FIELD_MESSAGE_ID,message_id->value,36};
         fields[n++]=(cr_tlv_out){FIELD_MESSAGE_SENT_AT,sent_bytes,8};
     }
     int target_is_bot = target && target == s->server->bot_session && target->local_only;
@@ -3017,7 +3020,26 @@ static int handle_private_message(cr_session *s, const cr_packet *p) {
 }
 
 
+static int handle_private_message_reaction(cr_session*s,const cr_packet*p){
+    const cr_tlv*peer=cr_packet_field(p,1),*message_id=cr_packet_field(p,2),*reaction=cr_packet_field(p,3);
+    if(!s->modern_transport||!peer||peer->length!=4||!valid_edit_id(message_id)||
+       !reaction||reaction->length!=1||reaction->value[0]>6)
+        return p->transaction_id?send_error(s,p->transaction_id,1):0;
+    uint32_t peer_id=cr_read_be32(peer->value);
+    if(peer_id==s->user_id)return p->transaction_id?send_error(s,p->transaction_id,1):0;
+    uint8_t sender[4];cr_write_be32(sender,s->user_id);
+    cr_tlv_out fields[]={{1,sender,4},{2,message_id->value,36},{3,reaction->value,1}};
+    pthread_mutex_lock(&s->server->mutex);
+    cr_session*target=find_session_locked(s->server,peer_id);
+    int rc=(!target||!target->modern_transport)?-1:session_send(target,CMD_PRIVATE_MESSAGE_REACTION_CHANGED,0,fields,3);
+    pthread_mutex_unlock(&s->server->mutex);
+    if(rc)return p->transaction_id?send_error(s,p->transaction_id,1):0;
+    return send_task_complete(s,p->transaction_id);
+}
+
+
 static int handle_offline_message_send(cr_session *s,const cr_packet *p){
+    if(s->mode==CR_MODE_GUEST)return send_error(s,p->transaction_id,1);
     const cr_tlv *login=cr_packet_field(p,1),*message=cr_packet_field(p,2);
     if(!login||!login->length||login->length>63||!message||!message->length||message->length>4096)return send_error(s,p->transaction_id,1);
     char recipient_login[256],recipient_id[64];recipient_id[0]=0;int recipient_accepts=0;
@@ -3031,6 +3053,7 @@ static int handle_offline_message_send(cr_session *s,const cr_packet *p){
 }
 
 static int handle_offline_message_recipients(cr_session*s,const cr_packet*p){
+    if(s->mode==CR_MODE_GUEST)return send_error(s,p->transaction_id,1);
     cr_buffer *records=calloc(CR_MAX_ACCOUNTS,sizeof(*records));cr_tlv_out *fields=calloc(CR_MAX_ACCOUNTS,sizeof(*fields));if(!records||!fields){free(records);free(fields);return send_error(s,p->transaction_id,1);}size_t n=0;int failed=0;
     pthread_mutex_lock(&s->server->state.mutex);
     for(size_t i=0;i<s->server->state.account_count&&n<CR_MAX_ACCOUNTS;i++){
@@ -4570,7 +4593,7 @@ if(p->command==CMD_IDLE_KEEPALIVE&&p->transaction_id==0&&p->reserved==0&&p->fiel
 record_request_event(s,p);switch(p->command){
 case CMD_SERVER_INFO:return handle_server_info(s,p);case CMD_DIRECTORY:return handle_directory(s,p);
 case CMD_DISCONNECT_USER:return handle_disconnect_user(s,p,0);case CMD_BAN_USER:return handle_disconnect_user(s,p,1);
-case CMD_PRIVATE_MESSAGE:return handle_private_message(s,p);case CMD_MESSAGE_EDIT:return handle_message_edit(s,p);case CMD_OFFLINE_MESSAGE_SEND:return handle_offline_message_send(s,p);case CMD_OFFLINE_MESSAGE_FETCH:return handle_offline_message_fetch(s,p);case CMD_OFFLINE_MESSAGE_ACK:return handle_offline_message_ack(s,p);case CMD_OFFLINE_MESSAGE_RECIPIENTS:return handle_offline_message_recipients(s,p);case CMD_OFFLINE_MESSAGE_PREFERENCE:return handle_offline_message_preference(s,p);case CMD_EXTENDED_OWN_USER_INFO:return handle_extended_own_user_info(s,p);
+case CMD_PRIVATE_MESSAGE:return handle_private_message(s,p);case CMD_PRIVATE_MESSAGE_REACTION_SET:return handle_private_message_reaction(s,p);case CMD_MESSAGE_EDIT:return handle_message_edit(s,p);case CMD_OFFLINE_MESSAGE_SEND:return handle_offline_message_send(s,p);case CMD_OFFLINE_MESSAGE_FETCH:return handle_offline_message_fetch(s,p);case CMD_OFFLINE_MESSAGE_ACK:return handle_offline_message_ack(s,p);case CMD_OFFLINE_MESSAGE_RECIPIENTS:return handle_offline_message_recipients(s,p);case CMD_OFFLINE_MESSAGE_PREFERENCE:return handle_offline_message_preference(s,p);case CMD_EXTENDED_OWN_USER_INFO:return handle_extended_own_user_info(s,p);
 case CMD_USER_INFO:return handle_user_info(s,p);case CMD_USER_UPDATE:return handle_user_update(s,p);case CMD_PRESENCE:return handle_presence(s,p);
 case CMD_CREATE_FOLDER:return handle_create_folder(s,p);case CMD_DELETE_FILE:return handle_delete_file(s,p);case CMD_FILE_INFO:return handle_file_info(s,p);case CMD_SET_FILE_INFO:return handle_set_file_info(s,p);case CMD_FILE_LABEL_SET:return handle_set_file_label(s,p);case CMD_MOVE_FILE:return handle_move_file(s,p);case CMD_EMPTY_TRASH:return handle_empty_trash(s,p);
 case CMD_FLAT_NEWS_POST:return handle_flat_news_post(s,p);case CMD_FLAT_NEWS_LIST:return handle_flat_news_list(s,p);case CMD_FLAT_NEWS_DELETE:return handle_flat_news_delete(s,p);case CMD_FLAT_NEWS_CLEAR:return handle_flat_news_clear(s,p);

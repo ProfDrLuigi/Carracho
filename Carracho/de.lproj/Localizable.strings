@@ -2103,3 +2103,4 @@
 // Pending-upload bookmark alert
 "1 Guest upload is awaiting approval" = "1 Guest-Upload wartet auf Freigabe";
 "%@ Guest uploads are awaiting approval" = "%@ Guest-Uploads warten auf Freigabe";
+"Reaction could not be sent: %@" = "Reaktion konnte nicht gesendet werden: %@";

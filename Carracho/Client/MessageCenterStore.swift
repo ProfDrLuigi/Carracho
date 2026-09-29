@@ -31,6 +31,9 @@ struct MessageCenterStoredPrivateMessage: Equatable {
     var message: Data
     var edited: Bool = false
     var editable: Bool = false
+    var reactable: Bool = false
+    var myReaction: UInt8? = nil
+    var peerReaction: UInt8? = nil
 }
 
 struct MessageCenterStoredConversation: Equatable {
@@ -115,7 +118,7 @@ final class MessageCenterStore {
             }
 
             let messageSQL = """
-                SELECT id, peer_user_id, sent_at, outgoing, body, edited, editable
+                SELECT id, peer_user_id, sent_at, outgoing, body, edited, editable, reactable, my_reaction, peer_reaction
                 FROM private_messages
                 WHERE server_host=? AND server_port=? AND account_login=?
                 ORDER BY sent_at ASC, id ASC
@@ -138,7 +141,12 @@ final class MessageCenterStore {
                     outgoing: sqlite3_column_int(messageStatement, 3) != 0,
                     message: columnBlob(messageStatement!, 4),
                     edited: sqlite3_column_int(messageStatement, 5) != 0,
-                    editable: sqlite3_column_int(messageStatement, 6) != 0
+                    editable: sqlite3_column_int(messageStatement, 6) != 0,
+                    reactable: sqlite3_column_int(messageStatement, 7) != 0,
+                    myReaction: sqlite3_column_type(messageStatement, 8) == SQLITE_NULL
+                        ? nil : UInt8(clamping: sqlite3_column_int(messageStatement, 8)),
+                    peerReaction: sqlite3_column_type(messageStatement, 9) == SQLITE_NULL
+                        ? nil : UInt8(clamping: sqlite3_column_int(messageStatement, 9))
                 ))
                 conversations[userID] = conversation
             }
@@ -197,8 +205,8 @@ final class MessageCenterStore {
                 try upsertConversation(conversation, scope: scope, db: db)
                 let sql = """
                     INSERT OR REPLACE INTO private_messages
-                    (id, server_host, server_port, account_login, peer_user_id, sent_at, outgoing, body, edited, editable)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (id, server_host, server_port, account_login, peer_user_id, sent_at, outgoing, body, edited, editable, reactable, my_reaction, peer_reaction)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """
                 var statement: OpaquePointer?
                 try prepare(db, sql, &statement)
@@ -212,8 +220,19 @@ final class MessageCenterStore {
                 guard sqlite3_bind_int(statement, 9, message.edited ? 1 : 0) == SQLITE_OK else {
                     throw databaseError(db)
                 }
-                guard sqlite3_bind_int(statement, 10, message.editable ? 1 : 0) == SQLITE_OK else {
+                guard sqlite3_bind_int(statement, 10, message.editable ? 1 : 0) == SQLITE_OK,
+                      sqlite3_bind_int(statement, 11, message.reactable ? 1 : 0) == SQLITE_OK else {
                     throw databaseError(db)
+                }
+                if let reaction = message.myReaction {
+                    guard sqlite3_bind_int(statement, 12, Int32(reaction)) == SQLITE_OK else { throw databaseError(db) }
+                } else {
+                    guard sqlite3_bind_null(statement, 12) == SQLITE_OK else { throw databaseError(db) }
+                }
+                if let reaction = message.peerReaction {
+                    guard sqlite3_bind_int(statement, 13, Int32(reaction)) == SQLITE_OK else { throw databaseError(db) }
+                } else {
+                    guard sqlite3_bind_null(statement, 13) == SQLITE_OK else { throw databaseError(db) }
                 }
                 try stepDone(statement!, db: db)
 
@@ -435,12 +454,15 @@ final class MessageCenterStore {
                     body BLOB NOT NULL,
                     edited INTEGER NOT NULL DEFAULT 0,
                     editable INTEGER NOT NULL DEFAULT 0,
+                    reactable INTEGER NOT NULL DEFAULT 0,
+                    my_reaction INTEGER,
+                    peer_reaction INTEGER,
                     FOREIGN KEY (server_host, server_port, account_login, peer_user_id)
                         REFERENCES conversations(server_host, server_port, account_login, peer_user_id)
                         ON DELETE CASCADE
                 )
                 """)
-            // Existing installations have no edited column. Migrate in place.
+            // Existing installations are migrated in place as Message Center features gain local metadata.
             var schema: OpaquePointer?
             try prepare(db, "PRAGMA table_info(private_messages)", &schema)
             var columns = Set<String>()
@@ -453,6 +475,15 @@ final class MessageCenterStore {
             }
             if !columns.contains("editable") {
                 try exec(db, "ALTER TABLE private_messages ADD COLUMN editable INTEGER NOT NULL DEFAULT 0")
+            }
+            if !columns.contains("reactable") {
+                try exec(db, "ALTER TABLE private_messages ADD COLUMN reactable INTEGER NOT NULL DEFAULT 0")
+            }
+            if !columns.contains("my_reaction") {
+                try exec(db, "ALTER TABLE private_messages ADD COLUMN my_reaction INTEGER")
+            }
+            if !columns.contains("peer_reaction") {
+                try exec(db, "ALTER TABLE private_messages ADD COLUMN peer_reaction INTEGER")
             }
             try exec(db, "CREATE INDEX IF NOT EXISTS private_messages_conversation_idx ON private_messages(server_host, server_port, account_login, peer_user_id, sent_at)")
             try exec(db, """

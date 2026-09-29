@@ -147,6 +147,12 @@ struct LegacyMessageEdited: Equatable {
     var message: Data
 }
 
+struct LegacyPrivateMessageReactionChanged: Equatable {
+    var peerUserID: UInt32
+    var messageID: UUID
+    var reaction: UInt8
+}
+
 struct LegacyUserInfoReply: Equatable {
     var userID: UInt32
     var nickname: Data
@@ -188,6 +194,7 @@ enum LegacyControlEvent {
     case presence(userID: UInt32, sleeping: Bool)
     case privateMessage(LegacyPrivateMessage)
     case messageEdited(LegacyMessageEdited)
+    case privateMessageReactionChanged(LegacyPrivateMessageReactionChanged)
     case offlineMessagesAvailable(Int)
     case broadcastMessage(LegacyBroadcastMessage)
     case userUpdated(userID: UInt32, nickname: Data, picture: Data, statusMessage: Data?)
@@ -254,6 +261,7 @@ final class LegacyControlClient {
     // 0x1c20 / 60 = 120 seconds.
     private static let classicIdleKeepAliveInterval: TimeInterval = 120
     private(set) var supportsMessageEditing = false
+    private(set) var supportsPrivateMessageReactions = false
 
     private static func runtimeCPUArchitecture() -> String {
         var info = utsname()
@@ -387,6 +395,7 @@ final class LegacyControlClient {
         connectTimeoutWorkItem = nil
         stopClassicIdleKeepAlive()
         supportsMessageEditing = false
+        supportsPrivateMessageReactions = false
         self.connection = nil
         sessionKey = nil
         modernControlChannel = nil
@@ -994,14 +1003,27 @@ final class LegacyControlClient {
         }
         var fields = [LegacyTLV(type: 1, value: LegacyWire.uint32BE(userID)), LegacyTLV(type: 2, value: wireMessage)]
         if !secondaryPayload.isEmpty { fields.append(LegacyTLV(type: 3, value: secondaryPayload)) }
-        if supportsMessageEditing, let messageID {
+        if (supportsMessageEditing || supportsPrivateMessageReactions), let messageID {
             fields.append(LegacyTLV(type: LegacyMessageEdit.messageID, value: LegacyMessageEdit.identifier(messageID)))
         }
-        if supportsMessageEditing {
+        if supportsMessageEditing || supportsPrivateMessageReactions {
             sendTaskCompleteRequest(command: LegacyCommand.privateMessage, fields: fields, completion: completion)
         } else {
             sendOneWay(command: LegacyCommand.privateMessage, fields: fields, completion: completion)
         }
+    }
+
+    func setPrivateMessageReaction(peerUserID: UInt32, messageID: UUID, reaction: UInt8,
+                                   completion: @escaping (Result<Void, Error>) -> Void) {
+        guard supportsPrivateMessageReactions, LegacyPrivateMessageReaction.valid(reaction) else {
+            completion(.failure(LegacyControlClientError.invalidInput("Private Message reactions are not supported by this server.")))
+            return
+        }
+        sendTaskCompleteRequest(command: LegacyCommand.privateMessageReactionSet, fields: [
+            LegacyTLV(type: LegacyPrivateMessageReaction.peerUserID, value: LegacyWire.uint32BE(peerUserID)),
+            LegacyTLV(type: LegacyPrivateMessageReaction.messageID, value: LegacyMessageEdit.identifier(messageID)),
+            LegacyTLV(type: LegacyPrivateMessageReaction.reaction, value: Data([reaction])),
+        ], completion: completion)
     }
 
     func editMessage(id: UUID, message: Data,
@@ -2147,6 +2169,8 @@ final class LegacyControlClient {
             let loginResult = try parseLoginSuccess(packet)
             supportsMessageEditing = !negotiatedLegacyCrypto &&
                 packet.firstField(type: LegacyMessageEdit.capability)?.value == Data([1])
+            supportsPrivateMessageReactions = !negotiatedLegacyCrypto &&
+                packet.firstField(type: LegacyPrivateMessageReaction.capability)?.value == Data([1])
             let modernSalt = packet.firstField(type: 6)?.value
             let transportKey: Data
             if negotiatedLegacyCrypto {
@@ -2291,6 +2315,19 @@ final class LegacyControlClient {
                     throw LegacyControlClientError.protocolFailure("invalid edited-message event")
                 }
                 onEvent?(.messageEdited(LegacyMessageEdited(id: id, kind: kind, scope: scope, message: message)))
+            case LegacyCommand.privateMessageReactionChanged:
+                guard let peer = packet.firstField(type: LegacyPrivateMessageReaction.peerUserID),
+                      peer.value.count == 4,
+                      let messageID = LegacyMessageEdit.parseIdentifier(
+                        packet.firstField(type: LegacyPrivateMessageReaction.messageID)?.value),
+                      let reactionField = packet.firstField(type: LegacyPrivateMessageReaction.reaction),
+                      reactionField.value.count == 1,
+                      let reaction = reactionField.value.first,
+                      LegacyPrivateMessageReaction.valid(reaction) else {
+                    throw LegacyControlClientError.protocolFailure("invalid private-message reaction event")
+                }
+                onEvent?(.privateMessageReactionChanged(LegacyPrivateMessageReactionChanged(
+                    peerUserID: try peer.uint32BE(), messageID: messageID, reaction: reaction)))
             case LegacyCommand.broadcastMessage:
                 guard let message = packet.firstField(type: 1), let sender = packet.firstField(type: 2) else {
                     throw LegacyControlClientError.protocolFailure("unvollständiger Broadcast")
@@ -2694,6 +2731,7 @@ final class LegacyControlClient {
         sessionKey = nil
         modernControlChannel = nil
         negotiatedLegacyCrypto = false
+        supportsPrivateMessageReactions = false
         transferSession = nil
         currentNickname = nil
         oldConnection?.cancel()
@@ -2716,6 +2754,7 @@ final class LegacyControlClient {
             sessionKey = nil
             modernControlChannel = nil
             negotiatedLegacyCrypto = false
+            supportsPrivateMessageReactions = false
             transferSession = nil
             currentNickname = nil
             state = .idle

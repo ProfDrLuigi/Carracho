@@ -371,6 +371,9 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         var message: Data
         var edited: Bool = false
         var editable: Bool = false
+        var reactable: Bool = false
+        var myReaction: UInt8? = nil
+        var peerReaction: UInt8? = nil
     }
 
     struct PrivateMessageConversation {
@@ -1788,8 +1791,8 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         transferDownloadSpeedLabel.font = .monospacedDigitSystemFont(ofSize: 11, weight: .medium)
 
         configure(table: trackerBrowserTable, columns: [
-            ("name", "Server", 240), ("users", "Users", 75), ("address", "Address", 150),
-            ("description", "Description", 280), ("bandwidth", "Bandwidth", 145), ("visibility", "Visibility", 90),
+            ("name", "Server", 240), ("users", "Users", 75), ("description", "Description", 280),
+            ("bandwidth", "Bandwidth", 145), ("visibility", "Visibility", 90),
         ])
         trackerBrowserTable.target = self
         trackerBrowserTable.doubleAction = #selector(connectSelectedTrackerServer(_:))
@@ -3755,6 +3758,12 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
 
     var isRemoteAdministrator: Bool {
         client.isConnected && remotePermissionEnabled(LegacyAccountPermissionBit.administrator)
+    }
+
+    var canSendOfflineMessages: Bool {
+        client.isConnected &&
+            (remotePermissionEnabled(LegacyAccountPermissionBit.administrator) ||
+             remotePermissionEnabled(LegacyAccountPermissionBit.accountHolder))
     }
 
     var administrativeWorkspacePermissions: [(Workspace, Int)] {
@@ -6818,6 +6827,8 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
             } else if edit.kind == LegacyMessageEdit.privateMessage {
                 applyPrivateMessageEdit(edit)
             }
+        case let .privateMessageReactionChanged(change):
+            applyPrivateMessageReaction(change)
         case let .privateMessage(message):
             let sender = liveUsers[message.senderUserID].map { Self.macRomanString($0.nickname) }
                 ?? L("Unknown User")
@@ -6828,7 +6839,8 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
             appendLine("\n[" + L("Private") + "] <\(sender)> \(privateText)")
             appendPrivateMessage(userID: message.senderUserID, message: message.message,
                                  outgoing: false, timestamp: message.sentAt ?? Date(),
-                                 id: message.messageID ?? UUID())
+                                 id: message.messageID ?? UUID(),
+                                 reactable: message.messageID != nil && client.supportsPrivateMessageReactions)
         case let .userUpdated(userID, nickname, picture, statusMessage):
             if var user = liveUsers[userID] {
                 user.nickname = nickname
@@ -7289,7 +7301,6 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
             switch identifier {
             case "name": value = Self.macRomanString(entry.serverName)
             case "users": value = String(entry.users)
-            case "address": value = Self.trackerServerEndpoint(entry)
             case "description": value = Self.macRomanString(entry.description)
             case "bandwidth": value = LegacyTrackerProtocol.bandwidthTitle(for: entry.bandwidthCode) ?? (entry.bandwidthCode == 0 ? "—" : LF("Code %@", String(entry.bandwidthCode)))
             case "visibility": value = entry.isPrivate ? L("Private") : L("Public")
@@ -7652,7 +7663,6 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
             switch key {
             case "name": return Self.compareText(Self.macRomanString(lhs.serverName), Self.macRomanString(rhs.serverName))
             case "users": return Self.compareNumber(lhs.users, rhs.users)
-            case "address": return Self.compareText(Self.trackerServerEndpoint(lhs), Self.trackerServerEndpoint(rhs))
             case "description": return Self.compareText(Self.macRomanString(lhs.description), Self.macRomanString(rhs.description))
             case "bandwidth": return Self.compareNumber(lhs.bandwidthCode, rhs.bandwidthCode)
             case "visibility": return Self.compareText(lhs.isPrivate ? L("Private") : L("Public"), rhs.isPrivate ? L("Private") : L("Public"))

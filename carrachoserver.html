@@ -34,6 +34,8 @@
                 <li>The new capability is sent only to modern sessions. Classic clients continue to receive the historical Server Info field set unchanged.</li>
                 <li>Fixed Modern Only authentication on both macOS and native Linux. Modern accounts authenticate from the persisted PBKDF2-SHA256 verifier, while compatible Legacy credentials are retained in server state so switching Legacy Mode back on does not require password resets.</li>
                 <li>Switching between Legacy Compatible and Modern Only is now non-destructive for normal account credentials. Modern Only blocks Classic connections but no longer purges retained Legacy password data.</li>
+                <li>Guest accounts can no longer send offline messages. Both the macOS and native Linux servers reject Guest recipient-list and offline-message send requests while still allowing Guests to receive and read offline messages.</li>
+                <li>Added modern Private Message reaction routing on both macOS and native Linux. Servers advertise the capability to modern clients, relay reaction changes between connected modern peers, and leave Classic PM traffic unchanged.</li>
                 <li>Updated native Linux Server Info and HTTP status version reporting to Carracho Server 1.1.1, and updated the Bot RSS user agent to <code>Carracho-Bot-RSS/1.1.1</code> on both server implementations.</li>
         </ul></span>
 

@@ -2006,6 +2006,7 @@ final class LegacyServerRuntime {
         ]
         if modernSalt != nil {
             fields.append(LegacyTLV(type: LegacyMessageEdit.capability, value: Data([1])))
+            fields.append(LegacyTLV(type: LegacyPrivateMessageReaction.capability, value: Data([1])))
             fields.append(LegacyTLV(type: LegacyUserTransportCapability.loginFieldType,
                                     value: LegacyUserTransportCapability.encodeLegacyUserIDs(registration.legacyUserIDs)))
         }
@@ -2098,6 +2099,8 @@ final class LegacyServerRuntime {
             try handleBanUser(packet: packet, session: session)
         case LegacyCommand.privateMessage:
             try handlePrivateMessage(packet: packet, session: session)
+        case LegacyCommand.privateMessageReactionSet:
+            try handlePrivateMessageReaction(packet: packet, session: session)
         case LegacyCommand.messageEdit:
             try handleMessageEdit(packet: packet, session: session)
         case LegacyCommand.offlineMessageSend:
@@ -2278,7 +2281,7 @@ final class LegacyServerRuntime {
         case LegacyCommand.directory, LegacyCommand.createFolder, LegacyCommand.deleteFile,
              LegacyCommand.fileInfo, LegacyCommand.setFileInfo, LegacyCommand.fileLabelSet, LegacyCommand.moveFile,
              LegacyCommand.emptyTrash,
-             LegacyCommand.privateMessage, LegacyCommand.offlineMessageSend,
+             LegacyCommand.privateMessage, LegacyCommand.privateMessageReactionSet, LegacyCommand.offlineMessageSend,
              LegacyCommand.extendedOwnUserInfo, LegacyCommand.userUpdate,
              LegacyCommand.channelJoin, LegacyCommand.channelLeave, LegacyCommand.channelChat,
              LegacyCommand.messageEdit,
@@ -2434,6 +2437,16 @@ final class LegacyServerRuntime {
                   let targetAccount = target.account else {
                 throw LegacyServerRuntimeError.protocolFailure("private-message target is not connected")
             }
+            let sharedMessageID: UUID?
+            if !session.isLegacyTransport, !target.isLegacyTransport,
+               let idField = packet.firstField(type: LegacyMessageEdit.messageID) {
+                guard let parsed = LegacyMessageEdit.parseIdentifier(idField.value) else {
+                    throw LegacyServerRuntimeError.protocolFailure("invalid private-message identifier")
+                }
+                sharedMessageID = parsed
+            } else {
+                sharedMessageID = nil
+            }
             let mediaReferences = session.isLegacyTransport
                 ? []
                 : LegacyMediaReference.references(inWire: message)
@@ -2450,7 +2463,7 @@ final class LegacyServerRuntime {
                     maximum: LegacyMediaTransfer.maximumImagesPerPrivateMessage,
                     kind: .privateMessage,
                     scope: targetAccount.id.uuidString.lowercased(),
-                    messageID: UUID().uuidString.lowercased(),
+                    messageID: (sharedMessageID ?? UUID()).uuidString.lowercased(),
                     expiresAt: Date().addingTimeInterval(LegacyMediaTransfer.privateMessageLifetime)
                 )
             }
@@ -2464,10 +2477,7 @@ final class LegacyServerRuntime {
             } else {
                 wireMessage = message
             }
-            let editableID = !session.isLegacyTransport && !target.isLegacyTransport &&
-                mediaReferences.isEmpty && extra.isEmpty
-                ? LegacyMessageEdit.parseIdentifier(packet.firstField(type: LegacyMessageEdit.messageID)?.value)
-                : nil
+            let editableID = mediaReferences.isEmpty && extra.isEmpty ? sharedMessageID : nil
             let sentAt = Date()
             if let editableID, !registerEditableMessage(id: editableID, senderID: senderID,
                                                         kind: LegacyMessageEdit.privateMessage,
@@ -2479,8 +2489,8 @@ final class LegacyServerRuntime {
                 LegacyTLV(type: 2, value: wireMessage),
             ]
             if !extra.isEmpty { fields.append(LegacyTLV(type: 3, value: extra)) }
-            if let editableID {
-                fields.append(LegacyTLV(type: LegacyMessageEdit.messageID, value: LegacyMessageEdit.identifier(editableID)))
+            if let sharedMessageID {
+                fields.append(LegacyTLV(type: LegacyMessageEdit.messageID, value: LegacyMessageEdit.identifier(sharedMessageID)))
                 fields.append(LegacyTLV(type: LegacyMessageEdit.sentAt,
                                         value: LegacyWire.uint64BE(UInt64(sentAt.timeIntervalSince1970))))
             }
@@ -2497,10 +2507,46 @@ final class LegacyServerRuntime {
         }
     }
 
+    private func handlePrivateMessageReaction(packet: LegacyPacket, session: LegacyServerSession) throws {
+        do {
+            guard !session.isLegacyTransport,
+                  let senderID = session.userID,
+                  let peerField = packet.firstField(type: LegacyPrivateMessageReaction.peerUserID),
+                  peerField.value.count == 4,
+                  let messageID = LegacyMessageEdit.parseIdentifier(
+                    packet.firstField(type: LegacyPrivateMessageReaction.messageID)?.value),
+                  let reactionField = packet.firstField(type: LegacyPrivateMessageReaction.reaction),
+                  reactionField.value.count == 1,
+                  let reaction = reactionField.value.first,
+                  LegacyPrivateMessageReaction.valid(reaction) else {
+                throw LegacyServerRuntimeError.protocolFailure("invalid private-message reaction")
+            }
+            let peerUserID = try peerField.uint32BE()
+            guard peerUserID != senderID,
+                  let target = authenticatedSession(userID: peerUserID),
+                  !target.isLegacyTransport else {
+                throw LegacyServerRuntimeError.protocolFailure("private-message reaction target is unavailable or Classic")
+            }
+            let fields = [
+                LegacyTLV(type: LegacyPrivateMessageReaction.peerUserID, value: LegacyWire.uint32BE(senderID)),
+                LegacyTLV(type: LegacyPrivateMessageReaction.messageID, value: LegacyMessageEdit.identifier(messageID)),
+                LegacyTLV(type: LegacyPrivateMessageReaction.reaction, value: Data([reaction])),
+            ]
+            try target.sendAuthenticated(LegacyPacket(
+                command: LegacyCommand.privateMessageReactionChanged, transactionID: 0, fields: fields))
+            try sendTaskCompleteIfRequested(packet, to: session)
+        } catch {
+            if packet.transactionID != 0 {
+                try session.sendAuthenticated(Self.errorPacket(transactionID: packet.transactionID, code: 1))
+            }
+        }
+    }
+
     private func handleOfflineMessageSend(packet: LegacyPacket, session: LegacyServerSession) throws {
         do {
             guard let senderID = session.userID,
                   let senderAccount = session.account,
+                  senderAccount.mode != .guest,
                   let loginData = packet.firstField(type: 1)?.value,
                   !loginData.isEmpty, loginData.count <= 63,
                   let recipientLogin = String(data: loginData, encoding: .macOSRoman),
@@ -2551,7 +2597,9 @@ final class LegacyServerRuntime {
 
     private func handleOfflineMessageRecipients(packet: LegacyPacket, session: LegacyServerSession) throws {
         do {
-            guard let ownAccount = session.account else { throw LegacyServerRuntimeError.protocolFailure("missing account") }
+            guard let ownAccount = session.account, ownAccount.mode != .guest else {
+                throw LegacyServerRuntimeError.protocolFailure("Guests cannot send offline messages")
+            }
             let accounts = backend.offlineMessageRecipients().filter { $0.id != ownAccount.id }
             let fields = try accounts.map { account -> LegacyTLV in
                 let nicknameData: Data

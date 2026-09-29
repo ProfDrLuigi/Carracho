@@ -188,7 +188,13 @@ extension ViewController {
         let mayModerateSelection = selectedUser.map { $0.userID != ownUserID } ?? false
         userInfoButton.isEnabled = connected && selected
         userMessageButton.isEnabled = connected && selected
-        userOfflineMessageButton.isEnabled = connected
+        let offlineSendingAllowed = canSendOfflineMessages
+        userOfflineMessageButton.isHidden = connected && !offlineSendingAllowed
+        userOfflineMessageButton.isEnabled = offlineSendingAllowed
+        if connected, !offlineSendingAllowed, offlineMessageComposer != nil {
+            offlineMessageComposer?.close()
+            offlineMessageComposer = nil
+        }
         userDisconnectButton.isEnabled = connected && mayModerateSelection
             && remotePermissionEnabled(LegacyAccountPermissionBit.disconnectUsers)
         userBanButton.isEnabled = connected && mayModerateSelection

@@ -15,6 +15,9 @@ The Swift/macOS and native Linux servers expose the same compatibility state to 
 - Modern user status messages remain unchanged.
 - Fixed **Modern Only** authentication so modern accounts, including Administrators, authenticate independently of the retained Legacy credential.
 - Added verifier-based modern login using the existing PBKDF2-SHA256 account verifier and an HMAC challenge/response bound to the login challenge and X25519 client key.
+- Guest accounts can no longer send offline messages; the send action is hidden in the client and enforced by both server implementations.
+- Removed the visible server address/IP column from Tracker result tables; addresses remain internal for connecting to the selected server.
+- Added reactions to modern Private Messages in Message Center, using the same reaction set as News.
 - Updated Carracho and Carracho Server version reporting to **1.1.1 / build 12**.
 
 ## Carracho Client 1.1.1
@@ -42,6 +45,26 @@ The client does not infer this state from the currently connected users. It read
 Older modern servers that do not provide the new capability simply omit the Legacy Mode line rather than displaying an assumed value.
 
 When an Administrator changes the authentication mode from Advanced Administration, the displayed Legacy Mode state is refreshed immediately after the setting is saved.
+
+### Cleaner Tracker server list
+
+The Tracker result table no longer displays the server address/IP column. Server endpoints remain available internally for sorting fallback and connection handling, but the visible list now focuses on server name, user count, description, and the remaining Tracker metadata.
+
+### Private Message reactions
+
+Modern Private Messages now support reactions directly in Message Center. Each reactable message shows a **☺ React** action with the same reaction set used by News: 👍, ❤️, 😂, 🎉, 😮, and 😢. Each participant can keep one reaction per message, replace it with another reaction, or remove it again.
+
+Reaction changes are delivered live between the two connected modern clients. The Message Center keeps the local user's reaction and the peer's reaction separately and persists both in `messages.sqlite3`, so they remain visible after reopening the client.
+
+Modern Private Messages now use a shared wire message UUID whenever the server advertises PM reactions. This shared ID is also used for messages with media attachments, while the existing five-minute edit rules remain unchanged and still apply only to eligible text messages. Previously stored PMs whose UUID existed only locally are intentionally not marked as reactable because the other participant never received that historical identifier.
+
+The server only routes reaction events; it does not persist Private Message history or reaction state. Reactions require a current server and two connected modern clients. Classic Private Messages are unchanged and never receive the reaction capability or reaction packets. The Swift/macOS and native Linux servers implement the same reaction protocol.
+
+### Guest offline-message restriction
+
+Guest accounts can still receive and read offline messages, but they can no longer send them. The modern client hides the **Send Offline Messages** action completely for Guests and closes an already-open offline-message composer if the account is changed to Guest while connected.
+
+The restriction is also enforced server-side. Both the Swift/macOS and native Linux servers reject Guest requests to obtain the offline-message recipient list or send an offline message, so older or modified clients cannot bypass the UI restriction. Account Holders and Administrators keep the existing offline-message functionality.
 
 ### Modern Only login fix
 
