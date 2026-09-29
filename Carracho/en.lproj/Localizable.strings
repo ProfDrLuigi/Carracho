@@ -2104,3 +2104,7 @@
 "1 Guest upload is awaiting approval" = "1 Guest upload is awaiting approval";
 "%@ Guest uploads are awaiting approval" = "%@ Guest uploads are awaiting approval";
 "Reaction could not be sent: %@" = "Reaction could not be sent: %@";
+"Server Messages" = "Server Messages";
+"Show user sign-in and sign-out notifications" = "Show user sign-in and sign-out notifications";
+"Hide notifications that announce when users enter or leave a server. User presence and sounds are not affected." = "Hide notifications that announce when users enter or leave a server. User presence and sounds are not affected.";
+"Controls only the visual sign-in/sign-out notifications. The user list and configured event sounds continue to work." = "Controls only the visual sign-in/sign-out notifications. The user list and configured event sounds continue to work.";

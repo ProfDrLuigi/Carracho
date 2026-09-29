@@ -1796,6 +1796,7 @@ extension ViewController {
         // identity/download validation and persistence behavior.
         let shouldPersistGeneral = generalIdentityConfigured || clientSettingsGeneralWasVisited || resumeConnectionAfterIdentitySetup
         if !shouldPersistGeneral {
+            saveClientDisplayPreferencesFromSettings()
             saveClientSoundPreferencesFromSettings()
             closeClientSettingsWindow()
             return
@@ -1856,6 +1857,7 @@ extension ViewController {
         }
         applyGeneralIdentityToConnectedSessions(nickname: nicknameData, status: statusData,
                                                 email: emailData, aboutMe: aboutMeData, avatar: avatarView.avatarData)
+        saveClientDisplayPreferencesFromSettings()
         saveClientSoundPreferencesFromSettings()
         let shouldResumeConnection = resumeConnectionAfterIdentitySetup
         let bookmarkIDToResume = resumeConnectionBookmarkID

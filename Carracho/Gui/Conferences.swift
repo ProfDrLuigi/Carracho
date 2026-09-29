@@ -662,10 +662,9 @@ extension ViewController {
         for session in sessions {
             let active = activeChannel?.channelID == session.state.channelID
             let name = Self.macRomanString(session.state.name)
-            var suffix = "  \(session.members.count)"
-            if session.unreadCount > 0 { suffix += "  • \(session.unreadCount)" }
-            let button = CarrachoSidebarButton(title: "# \(name)\(suffix)", target: self,
+            let button = CarrachoSidebarButton(title: "# \(name)  \(session.members.count)", target: self,
                                                action: #selector(sidebarJoinedChannelPressed(_:)))
+            button.unreadBadgeCount = session.unreadCount
             button.tag = Int(session.state.channelID)
             // Joined rooms use the singular Conference asset. Do not use the
             // Conferences asset here; that belongs to the expandable category row.
@@ -682,6 +681,9 @@ extension ViewController {
             joinedChannelSidebarStack.addArrangedSubview(button)
             button.widthAnchor.constraint(equalTo: joinedChannelSidebarStack.widthAnchor).isActive = true
         }
+        let totalUnread = sessions.reduce(0) { min(999, $0 + $1.unreadCount) }
+        let conferencesCollapsed = conferencesSidebarContent?.isHidden ?? false
+        (conferencesSidebarHeader as? CarrachoSidebarButton)?.unreadBadgeCount = conferencesCollapsed ? totalUnread : 0
         channelDiscoverButton.isEnabled = client.isConnected
         channelNewButton.isEnabled = canJoinChatRooms && joinedChannels.count < Self.maximumJoinedChannels
     }
@@ -2021,6 +2023,7 @@ extension ViewController {
         session.unreadCount = 0
         joinedChannels[channelID] = session
         renderActiveChannelTranscript()
+        reloadJoinedChannelSidebar()
         reloadChannelTablePreservingSelection(preferredChannelID: channelID)
         reloadChannelView(reloadTables: false)
         view.window?.makeFirstResponder(channelMessageField)

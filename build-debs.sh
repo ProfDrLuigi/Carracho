@@ -213,6 +213,7 @@ write_server_package() {
     install -m 0755 .build/linux/carracho-server "$stage/opt/carracho/carracho-server"
     install -m 0600 ServerLinux/etc/carracho-server.json "$stage/opt/carracho/etc/carracho-server.json"
     install -m 0600 ServerLinux/etc/carracho-bot.json "$stage/opt/carracho/etc/carracho-bot.json"
+    install -m 0644 ServerLinux/etc/carracho-bot-avatar.png "$stage/opt/carracho/etc/carracho-bot-avatar.png"
 
     if [[ -n "$helper" ]]; then
         install -d -m 0755 "$stage/opt/carracho/libexec/carracho"
@@ -247,6 +248,7 @@ Carracho Server for Debian
 Runtime layout:
   /opt/carracho/carracho-server
   /opt/carracho/etc/
+  /opt/carracho/etc/carracho-bot-avatar.png
   /opt/carracho/db/
   /opt/carracho/logs/
   /opt/carracho/Files/
@@ -266,6 +268,7 @@ EOF
     cat > "$stage/DEBIAN/conffiles" <<'EOF'
 /opt/carracho/etc/carracho-server.json
 /opt/carracho/etc/carracho-bot.json
+/opt/carracho/etc/carracho-bot-avatar.png
 EOF
 
     local deps glibc_min package_version
@@ -316,6 +319,10 @@ for f in /opt/carracho/etc/carracho-server.json /opt/carracho/etc/carracho-bot.j
         chmod 0600 "$f"
     fi
 done
+if [ -f /opt/carracho/etc/carracho-bot-avatar.png ]; then
+    chown carracho:carracho /opt/carracho/etc/carracho-bot-avatar.png
+    chmod 0644 /opt/carracho/etc/carracho-bot-avatar.png
+fi
 
 ENV=/opt/carracho/etc/carracho-server.env
 token=""

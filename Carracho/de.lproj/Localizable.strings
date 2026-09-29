@@ -2104,3 +2104,7 @@
 "1 Guest upload is awaiting approval" = "1 Guest-Upload wartet auf Freigabe";
 "%@ Guest uploads are awaiting approval" = "%@ Guest-Uploads warten auf Freigabe";
 "Reaction could not be sent: %@" = "Reaktion konnte nicht gesendet werden: %@";
+"Server Messages" = "Servermeldungen";
+"Show user sign-in and sign-out notifications" = "An- und Abmeldemeldungen von Benutzern anzeigen";
+"Hide notifications that announce when users enter or leave a server. User presence and sounds are not affected." = "Blendet Meldungen aus, die anzeigen, wenn Benutzer einen Server betreten oder verlassen. Anwesenheitsstatus und Sounds bleiben unverändert.";
+"Controls only the visual sign-in/sign-out notifications. The user list and configured event sounds continue to work." = "Steuert nur die sichtbaren An- und Abmeldemeldungen. Benutzerliste und konfigurierte Ereignis-Sounds funktionieren weiterhin.";

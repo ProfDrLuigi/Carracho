@@ -202,6 +202,13 @@ if [ -f ".build/linux/etc/carracho-bot.json" ]; then
         ".build/linux/etc/carracho-bot.json"
 fi
 
+# Keep an administrator-selected Bot avatar across source installs/upgrades.
+# On a fresh install the staged default from ServerLinux/etc is deployed instead.
+if [ -f "$LIVE_ETC/carracho-bot-avatar.png" ]; then
+    echo "==> Preserving existing Bot avatar"
+    cp -p "$LIVE_ETC/carracho-bot-avatar.png" ".build/linux/etc/carracho-bot-avatar.png"
+fi
+
 echo "==> Verifying HTTP admin config in staged server JSON"
 python3 - <<'PY'
 import json
@@ -240,6 +247,10 @@ for config in "$LIVE_ETC/carracho-server.json" "$LIVE_ETC/carracho-bot.json"; do
         chmod u+rw "$config"
     fi
 done
+if [ -f "$LIVE_ETC/carracho-bot-avatar.png" ]; then
+    chown "$SERVICE_USER:$SERVICE_GROUP" "$LIVE_ETC/carracho-bot-avatar.png"
+    chmod 0644 "$LIVE_ETC/carracho-bot-avatar.png"
+fi
 
 echo "==> Configuring WebAdmin token/systemd"
 ensure_http_admin_token

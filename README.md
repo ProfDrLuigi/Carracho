@@ -18,11 +18,11 @@ The modern transport protects far more than login traffic: chat/control packets,
 
 See the collapsible **Security and modern encryption** section below for the protocol details.
 
-### Current release: 1.1.1
+### Current release: 1.1.2
 
-Carracho 1.1.1 improves **Classic/Legacy compatibility visibility**, fixes **Modern Only authentication**, tightens Guest messaging permissions, and adds **Private Message reactions** for modern clients. Modern clients show the connected server's actual **Legacy Mode = On / Off** state, Classic users are clearly marked with **`@ Legacy`**, retained Legacy credentials survive mode switches, Guest accounts can no longer send offline messages, and modern PMs can use the same reaction set as News. The behavior is implemented consistently by both the Swift/macOS and native Linux servers.
+Carracho 1.1.2 adds **Private Message reactions**, clearer **red unread badges** for Conferences and messaging, tighter **Guest offline-message restrictions**, a client option to hide user sign-in/sign-out notifications, and improved Linux server packaging that installs and preserves the Bot avatar. The macOS client and server are version **1.1.2 (build 13)**, with matching protocol support in the native Linux server.
 
-The full release notes are available in [`README_1.1.1.md`](README_1.1.1.md).
+The full release notes are available in [`README_1.1.2.md`](README_1.1.2.md).
 
 ## At a glance
 

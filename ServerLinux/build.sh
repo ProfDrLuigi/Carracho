@@ -20,6 +20,8 @@ fi
 if [ ! -e .build/linux/etc/carracho-bot.json ]; then
   cp ServerLinux/etc/carracho-bot.json .build/linux/etc/carracho-bot.json
 fi
+cp ServerLinux/etc/carracho-bot-avatar.png .build/linux/etc/carracho-bot-avatar.png
 printf 'built %s\n' "$ROOT/.build/linux/carracho-server"
 printf 'config %s\n' "$ROOT/.build/linux/etc/carracho-server.json"
 printf 'bot config %s\n' "$ROOT/.build/linux/etc/carracho-bot.json"
+printf 'bot avatar %s\n' "$ROOT/.build/linux/etc/carracho-bot-avatar.png"

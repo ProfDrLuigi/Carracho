@@ -1251,10 +1251,22 @@ extension ViewController {
     }
 
     func updateMessageCenterSidebarBadge() {
-        guard let button = sidebarButtons[.messageCenter] else { return }
         let unread = privateMessageUnreadCount
-        button.title = unread > 0 ? LF("Message Center  %@", String(unread)) : L("Message Center")
-        button.toolTip = unread > 0 ? (unread == 1 ? LF("%@ unread message", String(unread)) : LF("%@ unread messages", String(unread))) : L("Private conversations and offline messages")
+        if let button = sidebarButtons[.messageCenter] {
+            button.title = L("Message Center")
+            (button as? CarrachoSidebarButton)?.unreadBadgeCount = unread
+            button.toolTip = unread > 0
+                ? (unread == 1 ? LF("%@ unread message", String(unread)) : LF("%@ unread messages", String(unread)))
+                : L("Private conversations and offline messages")
+        }
+        userOfflineMessageButton.unreadBadgeCount = offlineMessageCenterUnreadCount
+        if offlineMessageCenterUnreadCount > 0 {
+            userOfflineMessageButton.toolTip = offlineMessageCenterUnreadCount == 1
+                ? LF("%@ unread offline message is waiting in Message Center.", String(offlineMessageCenterUnreadCount))
+                : LF("%@ unread offline messages are waiting in Message Center.", String(offlineMessageCenterUnreadCount))
+        } else {
+            userOfflineMessageButton.toolTip = L("Send an offline message to an account that accepts offline messages")
+        }
     }
 
     func refreshPrivateMessageCenter(scrollToBottom: Bool) {

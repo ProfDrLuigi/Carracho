@@ -25,6 +25,16 @@
     <body>
         
 
+        <p><span class="header" lang="en">New in 1.1.2</span></p>
+        <ul>
+            <span class="newstext">
+                <li>Updated Carracho Server for macOS to version 1.1.2 (build 13).</li>
+                <li>Added modern Private Message reaction routing on both macOS and native Linux. Servers advertise the capability, relay reaction changes between connected modern peers, and leave Classic PM traffic unchanged.</li>
+                <li>Guest accounts can no longer send offline messages. Both server implementations reject Guest recipient-list and offline-message send requests while still allowing Guests to receive and read offline messages.</li>
+                <li>Linux server builds and installers now include <code>etc/carracho-bot-avatar.png</code>. Fresh installs deploy the bundled 128 × 128 Bot avatar automatically, source upgrades preserve an existing customized avatar, and Debian packages treat the PNG as a managed configuration file.</li>
+                <li>Updated native Linux Server Info and HTTP status version reporting to Carracho Server 1.1.2, and updated the Bot RSS user agent to <code>Carracho-Bot-RSS/1.1.2</code> on both server implementations.</li>
+        </ul></span>
+
         <p><span class="header" lang="en">New in 1.1.1</span></p>
         <ul>
             <span class="newstext">
@@ -34,8 +44,6 @@
                 <li>The new capability is sent only to modern sessions. Classic clients continue to receive the historical Server Info field set unchanged.</li>
                 <li>Fixed Modern Only authentication on both macOS and native Linux. Modern accounts authenticate from the persisted PBKDF2-SHA256 verifier, while compatible Legacy credentials are retained in server state so switching Legacy Mode back on does not require password resets.</li>
                 <li>Switching between Legacy Compatible and Modern Only is now non-destructive for normal account credentials. Modern Only blocks Classic connections but no longer purges retained Legacy password data.</li>
-                <li>Guest accounts can no longer send offline messages. Both the macOS and native Linux servers reject Guest recipient-list and offline-message send requests while still allowing Guests to receive and read offline messages.</li>
-                <li>Added modern Private Message reaction routing on both macOS and native Linux. Servers advertise the capability to modern clients, relay reaction changes between connected modern peers, and leave Classic PM traffic unchanged.</li>
                 <li>Updated native Linux Server Info and HTTP status version reporting to Carracho Server 1.1.1, and updated the Bot RSS user agent to <code>Carracho-Bot-RSS/1.1.1</code> on both server implementations.</li>
         </ul></span>
 

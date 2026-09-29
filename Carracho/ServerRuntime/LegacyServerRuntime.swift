@@ -1081,7 +1081,7 @@ final class LegacyServerRuntime {
         stateLock.unlock()
         return [
             "serverName": state.identity.name,
-            "software": "Carracho Server 1.1.1",
+            "software": "Carracho Server 1.1.2",
             "uptimeSeconds": NSNumber(value: max(0, Int64(Date().timeIntervalSince(start ?? Date())))),
             "usersOnline": userCount,
             "maxConnections": Int(state.advanced.maxConnections),
@@ -2046,7 +2046,7 @@ final class LegacyServerRuntime {
             let ownActiveTransfers = session.userID.map { activeFileTransfersByUser[$0, default: 0] } ?? 0
             stateLock.unlock()
             let ticks = began.map { UInt64(max(0, Date().timeIntervalSince($0)) * 60) } ?? 0
-            let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.1.1"
+            let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.1.2"
             var fields = [
                 LegacyTLV(type: LegacyServerInfoField.serverName, value: Self.macRoman(state.identity.name)),
                 LegacyTLV(type: LegacyServerInfoField.serverLocation, value: Self.macRoman(state.identity.location)),

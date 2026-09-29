@@ -200,7 +200,19 @@ extension ViewController {
         let downloadsStack = verticalStack([downloadsTitle, folderRow], spacing: 8)
         pin(downloadsStack, in: downloadsCard, inset: 14)
 
-        let stack = verticalStack([identityCard, downloadsCard], spacing: 12)
+        let serverMessagesCard = clientSettingsCard()
+        let serverMessagesTitle = sectionCaption(L("Server Messages"))
+        let showPresence = NSButton(checkboxWithTitle: L("Show user sign-in and sign-out notifications"),
+                                    target: nil, action: nil)
+        showPresence.state = showUserPresenceNotifications ? .on : .off
+        showPresence.toolTip = L("Hide notifications that announce when users enter or leave a server. User presence and sounds are not affected.")
+        clientSettingsShowUserPresenceNotificationsCheckbox = showPresence
+        let serverMessagesHelp = infoLabel(L("Controls only the visual sign-in/sign-out notifications. The user list and configured event sounds continue to work."))
+        serverMessagesHelp.maximumNumberOfLines = 2
+        let serverMessagesStack = verticalStack([serverMessagesTitle, showPresence, serverMessagesHelp], spacing: 7)
+        pin(serverMessagesStack, in: serverMessagesCard, inset: 14)
+
+        let stack = verticalStack([identityCard, downloadsCard, serverMessagesCard], spacing: 12)
         stack.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(stack)
         NSLayoutConstraint.activate([
@@ -209,6 +221,7 @@ extension ViewController {
             stack.topAnchor.constraint(equalTo: container.topAnchor),
             identityCard.heightAnchor.constraint(equalToConstant: 300),
             downloadsCard.heightAnchor.constraint(equalToConstant: 90),
+            serverMessagesCard.heightAnchor.constraint(equalToConstant: 105),
         ])
         return container
     }
@@ -504,9 +517,15 @@ extension ViewController {
         if notifications.values.contains(true) { clientNotificationManager.prepareAuthorization() }
     }
 
-    func emitClientEvent(_ event: ClientSoundEvent, notificationTitle: String, notificationBody: String) {
+    func saveClientDisplayPreferencesFromSettings() {
+        guard let checkbox = clientSettingsShowUserPresenceNotificationsCheckbox else { return }
+        UserDefaults.standard.set(checkbox.state == .on, forKey: Self.showUserPresenceNotificationsDefaultsKey)
+    }
+
+    func emitClientEvent(_ event: ClientSoundEvent, notificationTitle: String, notificationBody: String,
+                         postNotification: Bool = true) {
         clientSoundPreferences.play(event)
-        guard clientSoundPreferences.notificationEnabled(for: event) else { return }
+        guard postNotification, clientSoundPreferences.notificationEnabled(for: event) else { return }
         clientNotificationManager.post(title: notificationTitle, body: notificationBody)
     }
 

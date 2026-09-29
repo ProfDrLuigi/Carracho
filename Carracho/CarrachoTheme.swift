@@ -673,6 +673,8 @@ final class CarrachoResizableColumnSplitView: NSView {
 /// A compact, vector mark that stays sharp in the sidebar and server header.
 final class CarrachoSidebarButton: NSButton {
     var sidebarSelected = false
+    /// Unread/new-item count shown as the same red/white badge used by server bookmarks.
+    var unreadBadgeCount = 0 { didSet { needsDisplay = true } }
     /// Adds the crossed-envelope mark used by Offline Messages without baking in a fixed color.
     var showsOfflineSlash = false { didSet { needsDisplay = true } }
     /// A separate disclosure mark keeps expandable rows aligned with the other sidebar icons.
@@ -710,9 +712,33 @@ final class CarrachoSidebarButton: NSButton {
             color.setStroke()
             slash.stroke()
         }
+        let badgeCount = max(0, unreadBadgeCount)
+        let badgeText = badgeCount > 99 ? "99+" : String(badgeCount)
+        let badgeFont = NSFont.systemFont(ofSize: 9.5, weight: .bold)
+        let badgeWidth: CGFloat = badgeCount > 99 ? 28 : 18
+        let badgeHeight: CGFloat = 16
+        let badgeTrailing: CGFloat = 8
         let titleX: CGFloat = hasDisclosure ? 60 : 44
+        let badgeReservedWidth: CGFloat = badgeCount > 0 ? badgeWidth + badgeTrailing + 5 : 8
         let attributes: [NSAttributedString.Key: Any] = [.font: font ?? NSFont.systemFont(ofSize: 13), .foregroundColor: color]
-        (title as NSString).draw(in: NSRect(x: titleX, y: (bounds.height - 17) / 2, width: max(0, bounds.width - titleX - 8), height: 17), withAttributes: attributes)
+        (title as NSString).draw(in: NSRect(x: titleX, y: (bounds.height - 17) / 2,
+                                           width: max(0, bounds.width - titleX - badgeReservedWidth), height: 17),
+                                 withAttributes: attributes)
+        if badgeCount > 0 {
+            let badgeRect = NSRect(x: bounds.width - badgeTrailing - badgeWidth,
+                                   y: (bounds.height - badgeHeight) / 2,
+                                   width: badgeWidth, height: badgeHeight)
+            NSColor.systemRed.setFill()
+            NSBezierPath(roundedRect: badgeRect, xRadius: 8, yRadius: 8).fill()
+            let paragraph = NSMutableParagraphStyle()
+            paragraph.alignment = .center
+            let badgeAttributes: [NSAttributedString.Key: Any] = [
+                .font: badgeFont, .foregroundColor: NSColor.white, .paragraphStyle: paragraph,
+            ]
+            (badgeText as NSString).draw(in: NSRect(x: badgeRect.minX, y: badgeRect.minY + 1,
+                                                    width: badgeRect.width, height: badgeRect.height - 1),
+                                         withAttributes: badgeAttributes)
+        }
     }
 }
 

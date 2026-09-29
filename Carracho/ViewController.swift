@@ -791,6 +791,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
     weak var clientSettingsEmailField: NSTextField?
     weak var clientSettingsAboutView: NSTextView?
     weak var clientSettingsDownloadFolderField: NSTextField?
+    weak var clientSettingsShowUserPresenceNotificationsCheckbox: NSButton?
     weak var clientSettingsAvatarView: AvatarDropView?
     var clientSettingsPendingDownloadFolderPath: String?
     var resumeConnectionAfterIdentitySetup = false
@@ -1291,6 +1292,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
     static let generalStatusDefaultsKey = "CarrachoGeneralStatus.v1"
     static let generalEmailDefaultsKey = "CarrachoGeneralEmail.v1"
     static let generalAboutMeDefaultsKey = "CarrachoGeneralAboutMe.v1"
+    static let showUserPresenceNotificationsDefaultsKey = "Carracho.ShowUserPresenceNotifications.v1"
     static let globalAvatarIdentity = LocalAvatarIdentity(host: "__carracho_global_profile__", port: 0, login: "profile")
     var remoteTransferSnapshot: [LegacyTransferInfoRecord] = []
     var remoteManagedTransferSnapshot: [LegacyManagedTransferRecord] = []
@@ -2660,7 +2662,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
             navigation.bottomAnchor.constraint(equalTo: scrollContent.bottomAnchor),
             scrollContent.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
         ])
-        let version = infoLabel(L("Carracho 1.1.1"))
+        let version = infoLabel(L("Carracho 1.1.2"))
         version.font = .systemFont(ofSize: 10)
         appearancePopup.removeAllItems()
         appearancePopup.addItems(withTitles: [L("System Appearance"), L("Light"), L("Dark")])
@@ -3434,6 +3436,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         conferencesSidebarContent?.isHidden = collapsed
         UserDefaults.standard.set(collapsed, forKey: Self.conferencesSidebarCollapsedDefaultsKey)
         updateCollapsibleSidebarNavigationButton(conferencesSidebarHeader, title: "Conferences", collapsed: collapsed)
+        reloadJoinedChannelSidebar()
     }
 
     @objc func toggleAdministrationSidebarSection(_ sender: Any?) {
@@ -6342,6 +6345,12 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         UserDefaults.standard.string(forKey: Self.generalAboutMeDefaultsKey) ?? ""
     }
 
+    var showUserPresenceNotifications: Bool {
+        let defaults = UserDefaults.standard
+        guard defaults.object(forKey: Self.showUserPresenceNotificationsDefaultsKey) != nil else { return true }
+        return defaults.bool(forKey: Self.showUserPresenceNotificationsDefaultsKey)
+    }
+
     var queuedClientTransferIDs: [UUID] {
         transferMonitorOrder.reversed().filter { id in
             guard let item = transferMonitorItems[id] else { return false }
@@ -6793,7 +6802,8 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
             let arrivedName = Self.macRomanString(user.nickname)
             emitClientEvent(.userSignedIn,
                             notificationTitle: L("User signed in"),
-                            notificationBody: LF("%@ is now online.", arrivedName))
+                            notificationBody: LF("%@ is now online.", arrivedName),
+                            postNotification: showUserPresenceNotifications)
             setSleepingState((user.flags & 0x0100) != 0, for: user.userID)
             if userStatusMessages[user.userID] == nil { userStatusMessages[user.userID] = Data() }
             refreshUserStatus(userID: user.userID)
@@ -6805,7 +6815,8 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
             let departedName = liveUsers[userID].map { Self.macRomanString($0.nickname) } ?? L("Unknown User")
             emitClientEvent(.userSignedOut,
                             notificationTitle: L("User signed out"),
-                            notificationBody: LF("%@ went offline.", departedName))
+                            notificationBody: LF("%@ went offline.", departedName),
+                            postNotification: showUserPresenceNotifications)
             freezeChannelTranscriptIdentity(for: userID)
             removeDisconnectedUserFromChannels(userID)
             liveUsers.removeValue(forKey: userID)
