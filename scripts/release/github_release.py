@@ -31,7 +31,12 @@ def request(token: str, method: str, url: str, data: bytes | None = None, conten
         payload = exc.read().decode("utf-8", "replace")
         if exc.code == 404:
             return 404, None
-        raise SystemExit(f"GitHub API {method} {url} failed ({exc.code}): {payload}") from exc
+
+        accepted = exc.headers.get("X-Accepted-GitHub-Permissions", "")
+        permission_hint = f" Required permissions: {accepted}." if accepted else ""
+        raise SystemExit(
+            f"GitHub API {method} {url} failed ({exc.code}): {payload}{permission_hint}"
+        ) from exc
 
 
 def main() -> None:

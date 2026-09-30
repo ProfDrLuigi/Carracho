@@ -64,18 +64,17 @@ project_value() {
 }
 
 load_github_token() {
-    if [ -n "${GITHUB_TOKEN:-}" ]; then
+    local inherited_github_token="${GITHUB_TOKEN:-}"
+
+    # Use a Carracho-specific override only when explicitly requested.
+    if [ -n "${CARRACHO_GITHUB_TOKEN:-}" ]; then
+        GITHUB_TOKEN="$CARRACHO_GITHUB_TOKEN"
+        GITHUB_TOKEN_SOURCE="CARRACHO_GITHUB_TOKEN"
+        export GITHUB_TOKEN GITHUB_TOKEN_SOURCE
         return 0
     fi
 
-    if command -v gh >/dev/null 2>&1; then
-        GITHUB_TOKEN="$(gh auth token 2>/dev/null || true)"
-        if [ -n "$GITHUB_TOKEN" ]; then
-            export GITHUB_TOKEN
-            return 0
-        fi
-    fi
-
+    # The release setup stores the authoritative publishing token here.
     GITHUB_TOKEN="$(
         security find-generic-password \
             -a "$GITHUB_ACCOUNT" \
@@ -83,10 +82,72 @@ load_github_token() {
             -w 2>/dev/null || true
     )"
 
-    [ -n "$GITHUB_TOKEN" ] \
-        || die "No GitHub publishing credential found. Run scripts/release/setup_github_token.sh once."
+    if [ -n "$GITHUB_TOKEN" ]; then
+        GITHUB_TOKEN_SOURCE="macOS Keychain ($GITHUB_KEYCHAIN_SERVICE)"
+        export GITHUB_TOKEN GITHUB_TOKEN_SOURCE
+        return 0
+    fi
 
-    export GITHUB_TOKEN
+    # Fallbacks are useful outside the normal Xcode release path, but they must
+    # not silently override the dedicated Carracho publishing credential.
+    if [ -n "$inherited_github_token" ]; then
+        GITHUB_TOKEN="$inherited_github_token"
+        GITHUB_TOKEN_SOURCE="GITHUB_TOKEN"
+        export GITHUB_TOKEN GITHUB_TOKEN_SOURCE
+        return 0
+    fi
+
+    if command -v gh >/dev/null 2>&1; then
+        GITHUB_TOKEN="$(gh auth token 2>/dev/null || true)"
+        if [ -n "$GITHUB_TOKEN" ]; then
+            GITHUB_TOKEN_SOURCE="gh auth token"
+            export GITHUB_TOKEN GITHUB_TOKEN_SOURCE
+            return 0
+        fi
+    fi
+
+    die "No GitHub publishing credential found. Run scripts/release/setup_github_token.sh once."
+}
+
+verify_github_release_permission() {
+    python3 - "$GITHUB_REPO" <<'PYTHON'
+import os
+import sys
+import urllib.error
+import urllib.request
+
+repo = sys.argv[1]
+token = os.environ.get("GITHUB_TOKEN", "")
+url = f"https://api.github.com/repos/{repo}/releases"
+
+request = urllib.request.Request(url, data=b"{}", method="POST")
+request.add_header("Accept", "application/vnd.github+json")
+request.add_header("Authorization", f"Bearer {token}")
+request.add_header("Content-Type", "application/json")
+request.add_header("X-GitHub-Api-Version", "2022-11-28")
+
+try:
+    with urllib.request.urlopen(request):
+        print("Unexpected success from GitHub release permission preflight", file=sys.stderr)
+        raise SystemExit(2)
+except urllib.error.HTTPError as exc:
+    accepted = exc.headers.get("X-Accepted-GitHub-Permissions", "")
+
+    if exc.code == 422:
+        print("GitHub release permission preflight: OK")
+        if accepted:
+            print(f"GitHub accepted permissions: {accepted}")
+        raise SystemExit(0)
+
+    payload = exc.read().decode("utf-8", "replace")
+    print(f"GitHub release permission preflight failed ({exc.code}): {payload}", file=sys.stderr)
+    if accepted:
+        print(f"Required GitHub permissions: {accepted}", file=sys.stderr)
+    raise SystemExit(1)
+except urllib.error.URLError as exc:
+    print(f"GitHub release permission preflight failed: {exc}", file=sys.stderr)
+    raise SystemExit(1)
+PYTHON
 }
 
 git_push_with_token() {
@@ -104,7 +165,7 @@ ASKPASS_EOF
     chmod 700 "$askpass"
 
     if GIT_ASKPASS="$askpass" GIT_TERMINAL_PROMPT=0 \
-        git -c safe.directory="$ROOT" "$@"; then
+        git -c safe.directory="$ROOT" -c credential.helper= "$@"; then
         rc=0
     else
         rc=$?
@@ -220,6 +281,10 @@ if [ -n "$DIRTY_STATUS" ]; then
 fi
 
 load_github_token
+echo "GitHub credential source: $GITHUB_TOKEN_SOURCE"
+
+say "Checking GitHub release permission"
+verify_github_release_permission
 
 say "Checking GitHub branch state"
 git_safe fetch origin "$BRANCH" --tags
