@@ -183,6 +183,49 @@ def first_paragraph_after(lines: list[str], start: int) -> str:
     return " ".join(paragraph)
 
 
+
+def ensure_client_changelog(path: Path, version: str, build: str, client_markdown: str) -> None:
+    content = path.read_text()
+    marker = f"New in {version}"
+    if marker in content:
+        return
+
+    lines = client_markdown.splitlines()
+    items: list[str] = [
+        f'                <li>Updated the macOS client to version {html.escape(version)} (build {html.escape(build)}).</li>'
+    ]
+    for index, line in enumerate(lines):
+        if not line.startswith("### "):
+            continue
+        title = line[4:].strip()
+        paragraph = first_paragraph_after(lines, index + 1)
+        if not paragraph:
+            continue
+        cleaned = re.sub(r"\*\*([^*]+)\*\*", r"\1", paragraph)
+        cleaned = re.sub(r"`([^`]+)`", r"\1", cleaned)
+        items.append(
+            "                <li><strong>"
+            + html.escape(title)
+            + "</strong> — "
+            + html.escape(cleaned)
+            + "</li>"
+        )
+
+    block = (
+        f'        <p><span class="header" lang="en">New in {html.escape(version)}</span></p>\n'
+        "        <ul>\n"
+        '            <span class="newstext">\n'
+        + "\n".join(items)
+        + "\n"
+        "        </ul></span>\n\n"
+    )
+    anchor = re.search(r'\s*<p><span class="header" lang="en">New in [^<]+</span></p>', content)
+    if not anchor:
+        raise SystemExit(f"Could not find release block anchor in {path}")
+    content = content[:anchor.start()] + "\n" + block + content[anchor.start():]
+    path.write_text(content)
+
+
 def ensure_server_changelog(path: Path, version: str, server_markdown: str) -> None:
     content = path.read_text()
     marker = f"New in {version}"
@@ -312,6 +355,7 @@ def main() -> None:
     parser.add_argument("--version", required=True)
     parser.add_argument("--build", required=True)
     parser.add_argument("--notes", type=Path, required=True)
+    parser.add_argument("--client-changelog", type=Path, required=True)
     parser.add_argument("--server-changelog", type=Path, required=True)
     parser.add_argument("--docs-index", type=Path, required=True)
     parser.add_argument("--docs-releases", type=Path, required=True)
@@ -323,16 +367,21 @@ def main() -> None:
     if expected_title not in markdown:
         raise SystemExit(f"{args.notes} does not describe Carracho {args.version}")
 
+    client_md = section(markdown, f"Carracho Client {args.version}")
     server_md = section(markdown, f"Carracho Server {args.version}")
     args.docs_releases.mkdir(parents=True, exist_ok=True)
     (args.docs_releases / f"{args.version}.html").write_text(
         standalone_html(f"Carracho {args.version}", markdown)
+    )
+    (args.docs_releases / f"Carracho-Client-{args.version}.html").write_text(
+        standalone_html(f"Carracho Client {args.version}", client_md)
     )
     (args.docs_releases / f"Carracho-Server-{args.version}.html").write_text(
         standalone_html(f"Carracho Server {args.version}", server_md)
     )
 
     summary = intro_summary(markdown)
+    ensure_client_changelog(args.client_changelog, args.version, args.build, client_md)
     ensure_server_changelog(args.server_changelog, args.version, server_md)
     update_homepage(args.docs_index, args.version, args.build, summary, highlights(markdown))
     update_root_readme(args.root_readme, args.version, args.build, summary)

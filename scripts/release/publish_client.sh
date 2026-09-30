@@ -5,7 +5,7 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT"
 
 PROJECT="$ROOT/Carracho.xcodeproj"
-SERVER_SCHEME="Carracho Server"
+CLIENT_SCHEME="Carracho"
 
 GITHUB_REPO="ProfDrLuigi/Carracho"
 GITHUB_ACCOUNT="ProfDrLuigi"
@@ -240,20 +240,20 @@ VERSION="$(project_value MARKETING_VERSION)"
 BUILD_NUMBER="$(project_value CURRENT_PROJECT_VERSION)"
 
 TAG="Carracho${VERSION}"
-ASSET_NAME="Carracho-Server-${VERSION}.zip"
+ASSET_NAME="Carracho-Client-${VERSION}.zip"
 RELEASE_NOTES="$ROOT/README_${VERSION}.md"
 
-WORK_ROOT="$ROOT/.build/publish-server/${VERSION}"
+WORK_ROOT="$ROOT/.build/publish-client/${VERSION}"
 DERIVED_DATA="$WORK_ROOT/DerivedData"
-FINAL_APP="$DERIVED_DATA/Build/Products/Release/Carracho Server.app"
+FINAL_APP="$DERIVED_DATA/Build/Products/Release/Carracho.app"
 FINAL_ZIP="$WORK_ROOT/$ASSET_NAME"
 NOTARY_ZIP="$WORK_ROOT/notarization.zip"
 FEED_DIR="$WORK_ROOT/feed"
 
 DOCS_RELEASES="$ROOT/docs/releases"
-DOCS_SERVER="$ROOT/docs/server"
+DOCS_CLIENT="$ROOT/docs/client"
 
-say "Preparing Carracho Server $VERSION (build $BUILD_NUMBER)"
+say "Preparing Carracho Client $VERSION (build $BUILD_NUMBER)"
 echo "Apple signing mode: $SIGNING_MODE"
 
 [ -f "$RELEASE_NOTES" ] || die "Missing $RELEASE_NOTES"
@@ -331,7 +331,7 @@ case "$SIGNING_MODE" in
 
         xcodebuild \
             -project "$PROJECT" \
-            -scheme "$SERVER_SCHEME" \
+            -scheme "$CLIENT_SCHEME" \
             -configuration Release \
             -derivedDataPath "$DERIVED_DATA" \
             CODE_SIGNING_ALLOWED=NO \
@@ -394,7 +394,7 @@ case "$SIGNING_MODE" in
 
         xcodebuild \
             -project "$PROJECT" \
-            -scheme "$SERVER_SCHEME" \
+            -scheme "$CLIENT_SCHEME" \
             -configuration Release \
             -derivedDataPath "$DERIVED_DATA" \
             CODE_SIGN_STYLE=Manual \
@@ -455,14 +455,14 @@ SPARKLE_TOOL="$(
     || die "Sparkle generate_appcast was not found in DerivedData"
 
 rm -rf "$FEED_DIR"
-mkdir -p "$FEED_DIR" "$DOCS_SERVER" "$DOCS_RELEASES"
+mkdir -p "$FEED_DIR" "$DOCS_CLIENT" "$DOCS_RELEASES"
 
 cp "$FINAL_ZIP" "$FEED_DIR/$ASSET_NAME"
-cp "$DOCS_RELEASES/Carracho-Server-${VERSION}.html" \
-   "$FEED_DIR/Carracho-Server-${VERSION}.html"
+cp "$DOCS_RELEASES/Carracho-Client-${VERSION}.html" \
+   "$FEED_DIR/Carracho-Client-${VERSION}.html"
 
-if [ -f "$DOCS_SERVER/appcast.xml" ]; then
-    cp "$DOCS_SERVER/appcast.xml" "$FEED_DIR/appcast.xml"
+if [ -f "$DOCS_CLIENT/appcast.xml" ]; then
+    cp "$DOCS_CLIENT/appcast.xml" "$FEED_DIR/appcast.xml"
 fi
 
 "$SPARKLE_TOOL" \
@@ -482,29 +482,29 @@ grep -Fq "sparkle:edSignature" "$FEED_DIR/appcast.xml" \
     || die "Generated appcast contains no EdDSA signature"
 xmllint --noout "$FEED_DIR/appcast.xml"
 
-cp "$FEED_DIR/appcast.xml" "$DOCS_SERVER/appcast.xml"
+cp "$FEED_DIR/appcast.xml" "$DOCS_CLIENT/appcast.xml"
 
-# Existing 1.1.2 Server installations still poll the historical feed URL.
+# Existing pre-GitHub Client installations still poll the historical feed URL.
 # If the old staging directory is mounted, keep it as a one-release bridge.
-LEGACY_FEED_DIR="${CARRACHO_LEGACY_SERVER_FEED_DIR:-/Volumes/Homeshare/Xcode/CarrachoServer/upload}"
+LEGACY_FEED_DIR="${CARRACHO_LEGACY_CLIENT_FEED_DIR:-/Volumes/Homeshare/Xcode/CarrachoClient/upload}"
 
 if [ -d "$LEGACY_FEED_DIR" ]; then
     say "Updating optional legacy feed bridge in $LEGACY_FEED_DIR"
 
-    cp "$DOCS_SERVER/appcast.xml" "$LEGACY_FEED_DIR/appcast.xml"
-    cp "$ROOT/carrachoserver.html" "$LEGACY_FEED_DIR/carrachoserver.html"
+    cp "$DOCS_CLIENT/appcast.xml" "$LEGACY_FEED_DIR/appcast.xml"
+    cp "$ROOT/carrachoclient.html" "$LEGACY_FEED_DIR/carrachoclient.html"
 
-    if [ -n "${CARRACHO_LEGACY_FEED_SYNC_COMMAND:-}" ] \
-        && [ -x "$CARRACHO_LEGACY_FEED_SYNC_COMMAND" ]; then
-        "$CARRACHO_LEGACY_FEED_SYNC_COMMAND"
+    if [ -n "${CARRACHO_LEGACY_CLIENT_FEED_SYNC_COMMAND:-}" ] \
+        && [ -x "$CARRACHO_LEGACY_CLIENT_FEED_SYNC_COMMAND" ]; then
+        "$CARRACHO_LEGACY_CLIENT_FEED_SYNC_COMMAND"
     fi
 fi
 
 git_safe diff --check
 
-if [ -n "$(git_safe status --porcelain -- docs/server/appcast.xml)" ]; then
-    git_safe add docs/server/appcast.xml
-    git_safe commit -m "Publish Carracho Server $VERSION appcast"
+if [ -n "$(git_safe status --porcelain -- docs/client/appcast.xml)" ]; then
+    git_safe add docs/client/appcast.xml
+    git_safe commit -m "Publish Carracho Client $VERSION appcast"
 fi
 
 say "Creating/verifying shared release tag $TAG"
@@ -609,13 +609,13 @@ python3 "$ROOT/scripts/release/github_release.py" \
 say "Publishing website and Sparkle appcast on $BRANCH"
 git_push_with_token push origin "$BRANCH"
 
-say "Copying published Server app to Desktop"
-DESKTOP_APP="$HOME/Desktop/Carracho Server.app"
+say "Copying published Client app to Desktop"
+DESKTOP_APP="$HOME/Desktop/Carracho.app"
 rm -rf "$DESKTOP_APP"
 ditto "$FINAL_APP" "$DESKTOP_APP"
 
 say "Publish complete"
 echo "GitHub Release: https://github.com/$GITHUB_REPO/releases/tag/$TAG"
-echo "Sparkle feed:   $PAGES_BASE/server/appcast.xml"
+echo "Sparkle feed:   $PAGES_BASE/client/appcast.xml"
 echo "Website:        $PAGES_BASE/"
 echo "Artifact:       $FINAL_ZIP"

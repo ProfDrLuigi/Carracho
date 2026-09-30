@@ -1,6 +1,16 @@
 # Carracho release automation
 
-The Xcode aggregate target **Publish Carracho Server** calls `publish_server.sh`.
+The Xcode aggregate targets **Publish Carracho** and **Publish Carracho Server** publish the macOS Client and Server through the same GitHub/Sparkle release flow.
+
+Both products use the same version tag and the same GitHub Release:
+
+```text
+Carracho<version>
+├── Carracho-Client-<version>.zip
+└── Carracho-Server-<version>.zip
+```
+
+Whichever product is published first creates the shared tag/release. Publishing the other product for the same version preserves the existing tag and adds or replaces only its own ZIP asset.
 
 ## One-time setup
 
@@ -12,47 +22,90 @@ Run:
 scripts/release/setup_github_token.sh
 ```
 
-Use a fine-grained GitHub token for `ProfDrLuigi/Carracho` with **Contents: Read and write** permission. The token is stored in the macOS Keychain, not in the repository.
-
-If `gh` is installed and authenticated, or `GITHUB_TOKEN` is supplied in the environment, the publisher can use those instead.
+Use a fine-grained GitHub token for `ProfDrLuigi/Carracho` with **Contents: Read and write** permission. The dedicated token is stored in the macOS Keychain service `Carracho-GitHub-Publish` and is preferred by both publishers.
 
 ### Apple signing / notarization
 
-Apple Developer ID signing is **optional**. The publisher defaults to:
+Apple Developer ID signing is optional. Both publishers default to:
 
 ```text
 CARRACHO_SIGNING_MODE=none
 ```
 
-In this mode Xcode builds the Release app with **Team: None** using `CODE_SIGNING_ALLOWED=NO`. No Developer ID certificate or Apple Team ID is required. After Xcode embeds Sparkle, the publisher re-seals the copied `Sparkle.framework` wrapper ad-hoc (preserving its nested helper/XPC signatures, entitlements and Hardened Runtime metadata) and then ad-hoc seals the outer Server app. This is required because `generate_appcast` performs structural Apple code-signing checks even when the application is distributed without Developer ID. `TeamIdentifier` remains unset. The publisher skips Developer ID notarization, stapling and Gatekeeper assessment. Sparkle EdDSA signing remains enabled and protects the update archive/appcast.
+In this mode Xcode builds with **Team: None** and no Developer ID certificate. After Sparkle is embedded, the publisher ad-hoc re-seals the Sparkle framework wrapper and the outer app bundle so Sparkle's archive verification succeeds. Developer ID notarization, stapling and Gatekeeper assessment are skipped.
 
-If a Developer ID certificate is available later, opt in with:
+To opt into Developer ID signing later:
 
 ```sh
+CARRACHO_SIGNING_MODE=developer-id scripts/release/publish_client.sh
 CARRACHO_SIGNING_MODE=developer-id scripts/release/publish_server.sh
 ```
 
-For that optional mode, store a notarytool profile once with `scripts/release/setup_notary.sh`.
+For that optional mode, configure the notarytool profile once with `scripts/release/setup_notary.sh`.
 
-**Important:** an app without Developer ID/notarization can trigger macOS Gatekeeper warnings when downloaded from the Internet. Sparkle signature verification does not replace Apple's Developer ID/notarization trust path.
+**Important:** Sparkle EdDSA signing protects update integrity but does not replace Apple's Developer ID/notarization trust path for direct Internet downloads.
 
 ### Sparkle signing
 
-The existing server `SUPublicEDKey` is retained. `generate_appcast` reads the matching EdDSA private key from the login Keychain account `ed25519` by default. Override the keychain account with `SPARKLE_KEY_ACCOUNT`.
+Client and Server use the existing `SUPublicEDKey`. `generate_appcast` reads the matching EdDSA private key from the login Keychain account `ed25519` by default. Override it with `SPARKLE_KEY_ACCOUNT`.
 
 ## Release prerequisites
 
-Before running the target:
+Before running either publisher:
 
-- set `MARKETING_VERSION` / `CURRENT_PROJECT_VERSION`;
-- add `README_<version>.md` with a `## Carracho Server <version>` section;
-- commit the source changes;
-- keep the tracked working tree clean.
+- Client and Server must use the same `MARKETING_VERSION` and `CURRENT_PROJECT_VERSION`;
+- `README_<version>.md` must contain `## Highlights`, `## Carracho Client <version>`, and `## Carracho Server <version>`;
+- source changes must be committed;
+- the tracked working tree must be clean.
 
-The target then prepares website/changelog metadata, builds the Release app using the selected Apple signing mode, creates the Sparkle archive/appcast, creates or updates the GitHub Release, uploads the ZIP, commits the generated appcast/website files, and pushes everything to GitHub.
+Both publishers render the same website/release metadata. They generate product-specific release-note pages:
 
-## Migrating the old Sparkle feed
+```text
+docs/releases/Carracho-Client-<version>.html
+docs/releases/Carracho-Server-<version>.html
+```
 
-Carracho Server 1.1.3 changes `SUFeedURL` from the historical `wired.istation.pw` feed to GitHub Pages. Existing 1.1.2 installations still poll the historical URL, so that old endpoint must expose the 1.1.3 bridge appcast once (or redirect to the GitHub Pages appcast).
+The Sparkle feeds stay separate:
 
-When `/Volumes/Homeshare/Xcode/CarrachoServer/upload` exists, the publisher copies the generated GitHub appcast and server changelog there. If `CARRACHO_LEGACY_FEED_SYNC_COMMAND` points to an executable, it is invoked afterwards so the historical endpoint can be synchronized without changing the new GitHub-first release flow.
+```text
+docs/client/appcast.xml
+docs/server/appcast.xml
+```
+
+Both feeds point their enclosure URLs at the corresponding ZIP asset inside the same GitHub Release.
+
+## Xcode targets
+
+**Publish Carracho** calls:
+
+```text
+scripts/release/publish_client.sh
+```
+
+**Publish Carracho Server** calls:
+
+```text
+scripts/release/publish_server.sh
+```
+
+Each publisher builds its own app, creates its ZIP/appcast, uploads its own asset to the shared GitHub Release, commits generated feed metadata, pushes `main`, and copies the published app to the Desktop.
+
+## Migrating the old Sparkle feeds
+
+The GitHub-first feeds are:
+
+```text
+https://profdrLuigi.github.io/Carracho/client/appcast.xml
+https://profdrLuigi.github.io/Carracho/server/appcast.xml
+```
+
+Older installations still polling `wired.istation.pw` need a bridge update once.
+
+When the legacy staging directories exist, the publishers copy the new appcast plus the corresponding historical changelog into them:
+
+```text
+/Volumes/Homeshare/Xcode/CarrachoClient/upload
+/Volumes/Homeshare/Xcode/CarrachoServer/upload
+```
+
+Optional sync hooks can be supplied with `CARRACHO_LEGACY_CLIENT_FEED_SYNC_COMMAND` and `CARRACHO_LEGACY_FEED_SYNC_COMMAND`.

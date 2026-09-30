@@ -11,7 +11,7 @@
 			isa = PBXAggregateTarget;
 			buildConfigurationList = 2A80A9C0305D5B9600ECFBC3 /* Build configuration list for PBXAggregateTarget "Publish Carracho" */;
 			buildPhases = (
-				2A80A9C3305D5BA600ECFBC3 /* ShellScript */,
+				2A80A9C3305D5BA600ECFBC3 /* Publish Client to GitHub */,
 			);
 			dependencies = (
 			);
@@ -357,7 +357,7 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
-		2A80A9C3305D5BA600ECFBC3 /* ShellScript */ = {
+		2A80A9C3305D5BA600ECFBC3 /* Publish Client to GitHub */ = {
 			isa = PBXShellScriptBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -366,13 +366,14 @@
 			);
 			inputPaths = (
 			);
+			name = "Publish Client to GitHub";
 			outputFileListPaths = (
 			);
 			outputPaths = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "MAIN_APP_PATH=\"${BUILD_DIR}/Release/Carracho.app\"\nUPLOAD_DIR=\"/Volumes/Homeshare/Xcode/CarrachoClient/upload\"\n\necho \"🔍 Prüfe Release-App:\"\necho \"$MAIN_APP_PATH\"\n\n# Sicherstellen, dass die Release-App überhaupt existiert\nif [ ! -d \"$MAIN_APP_PATH\" ]; then\n    echo \"❌ Release-App nicht gefunden:\"\n    echo \"$MAIN_APP_PATH\"\n    exit 1\nfi\n\n# Gatekeeper prüfen\nif ! spctl --assess --type execute --verbose=4 \"$MAIN_APP_PATH\"; then\n    echo \"❌ Gatekeeper hat die App abgelehnt.\"\n    exit 1\nfi\n\n# Gesamtes Bundle prüfen\nif ! codesign --verify --deep --strict --verbose=4 \"$MAIN_APP_PATH\"; then\n    echo \"❌ Signaturprüfung fehlgeschlagen.\"\n    exit 1\nfi\n\n# Einzelne ausführbare Dateien prüfen\nERROR_FILE=\"$(mktemp)\"\n\nfind \"$MAIN_APP_PATH\" -type f -perm -111 -print0 |\nwhile IFS= read -r -d '' file; do\n    if ! codesign --verify --verbose=4 \"$file\" >/dev/null 2>&1; then\n        echo \"❌ Fehlerhafte Signatur: $file\"\n        echo \"$file\" >> \"$ERROR_FILE\"\n    fi\ndone\n\nif [ -s \"$ERROR_FILE\" ]; then\n    echo \"❌ Mindestens eine Datei im Bundle ist falsch signiert.\"\n    rm -f \"$ERROR_FILE\"\n    exit 1\nfi\n\nrm -f \"$ERROR_FILE\"\n\n# Upload vorbereiten\nif [ -d \"$UPLOAD_DIR\" ]; then\n\n    # HTML-Datei kopieren\n    cp \"${SRCROOT}/carrachoclient.html\" \"$UPLOAD_DIR/\"\n\n    # Altes ZIP sicherheitshalber entfernen\n    rm -f \"$UPLOAD_DIR/carrachoclient.zip\"\n\n    # App als ZIP-Archiv erstellen\n    ditto -c -k --sequesterRsrc --keepParent \\\n        \"$MAIN_APP_PATH\" \\\n        \"$UPLOAD_DIR/carrachoclient.zip\"\nfi\n\n# Alte Desktop-Version entfernen\nDESKTOP_APP=\"$HOME/Desktop/Carracho.app\"\n\nif [ -d \"$DESKTOP_APP\" ]; then\n    rm -rf \"$DESKTOP_APP\"\nfi\n\n# Release-App auf Desktop kopieren\nditto \"$MAIN_APP_PATH\" \"$DESKTOP_APP\"\n\n# Upload starten\nif [ -d \"$UPLOAD_DIR\" ]; then\n    bash \"/Volumes/Homeshare/Xcode/CarrachoClient/push.command\"\nfi\n";
+			shellScript = "\"${SRCROOT}/scripts/release/publish_client.sh\"\n";
 		};
 		2A80A9C5305D5EF400ECFBC3 /* Publish Server to GitHub */ = {
 			isa = PBXShellScriptBuildPhase;
