@@ -528,22 +528,6 @@ xmllint --noout "$FEED_DIR/appcast.xml"
 
 cp "$FEED_DIR/appcast.xml" "$DOCS_CLIENT/appcast.xml"
 
-# Existing pre-GitHub Client installations still poll the historical feed URL.
-# If the old staging directory is mounted, keep it as a one-release bridge.
-LEGACY_FEED_DIR="${CARRACHO_LEGACY_CLIENT_FEED_DIR:-/Volumes/Homeshare/Xcode/CarrachoClient/upload}"
-
-if [ -d "$LEGACY_FEED_DIR" ]; then
-    say "Updating optional legacy feed bridge in $LEGACY_FEED_DIR"
-
-    cp "$DOCS_CLIENT/appcast.xml" "$LEGACY_FEED_DIR/appcast.xml"
-    cp "$ROOT/carrachoclient.html" "$LEGACY_FEED_DIR/carrachoclient.html"
-
-    if [ -n "${CARRACHO_LEGACY_CLIENT_FEED_SYNC_COMMAND:-}" ] \
-        && [ -x "$CARRACHO_LEGACY_CLIENT_FEED_SYNC_COMMAND" ]; then
-        "$CARRACHO_LEGACY_CLIENT_FEED_SYNC_COMMAND"
-    fi
-fi
-
 git_safe diff --check
 
 if [ -n "$(git_safe status --porcelain -- docs/client/appcast.xml)" ]; then
