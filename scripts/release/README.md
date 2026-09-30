@@ -90,6 +90,8 @@ scripts/release/publish_server.sh
 
 Each publisher builds its own app, creates its ZIP/appcast, uploads its own asset to the shared GitHub Release, commits generated feed metadata, pushes `main`, and copies the published app to the Desktop.
 
+Release builds are forced to **Universal 2** (`arm64 + x86_64`) with a generic macOS destination. Before signing, notarization or upload, the publisher checks every Mach-O file in the app bundle with `lipo` and aborts unless both architecture slices are present.
+
 ## Migrating the old Sparkle feeds
 
 The GitHub-first feeds are:

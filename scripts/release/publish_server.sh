@@ -236,6 +236,40 @@ verify_executables() {
     rm -f "$errors"
 }
 
+verify_universal_app() {
+    local app="$1"
+    local file
+    local archs
+    local executable_name
+    local executable
+    local found_macho=0
+    local failed=0
+
+    while IFS= read -r -d '' file; do
+        if /usr/bin/file -b "$file" 2>/dev/null | grep -q 'Mach-O'; then
+            found_macho=1
+            archs="$(/usr/bin/lipo -archs "$file" 2>/dev/null || true)"
+
+            if [[ " $archs " != *" arm64 "* || " $archs " != *" x86_64 "* ]]; then
+                printf 'ERROR: non-Universal-2 Mach-O: %s (%s)\n' "$file" "${archs:-unknown}" >&2
+                failed=1
+            fi
+        fi
+    done < <(find "$app" -type f -print0)
+
+    [ "$found_macho" = "1" ] || die "No Mach-O binaries were found in $app"
+    [ "$failed" = "0" ] || die "App bundle contains Mach-O code that is not Universal 2"
+
+    executable_name="$(
+        /usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Contents/Info.plist" 2>/dev/null
+    )"
+    executable="$app/Contents/MacOS/$executable_name"
+    archs="$(/usr/bin/lipo -archs "$executable" 2>/dev/null)"
+
+    say "Verified Universal 2 app bundle"
+    echo "$executable: $archs"
+}
+
 VERSION="$(project_value MARKETING_VERSION)"
 BUILD_NUMBER="$(project_value CURRENT_PROJECT_VERSION)"
 
@@ -333,7 +367,10 @@ case "$SIGNING_MODE" in
             -project "$PROJECT" \
             -scheme "$SERVER_SCHEME" \
             -configuration Release \
+            -destination "generic/platform=macOS" \
             -derivedDataPath "$DERIVED_DATA" \
+            ARCHS="arm64 x86_64" \
+            ONLY_ACTIVE_ARCH=NO \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             DEVELOPMENT_TEAM="" \
@@ -343,6 +380,8 @@ case "$SIGNING_MODE" in
 
         [ -d "$FINAL_APP" ] \
             || die "Release app was not produced at $FINAL_APP"
+
+        verify_universal_app "$FINAL_APP"
 
         # Xcode strips development-only content while embedding Sparkle.framework.
         # With Team: None this leaves the copied framework seal stale and Sparkle's
@@ -396,7 +435,10 @@ case "$SIGNING_MODE" in
             -project "$PROJECT" \
             -scheme "$SERVER_SCHEME" \
             -configuration Release \
+            -destination "generic/platform=macOS" \
             -derivedDataPath "$DERIVED_DATA" \
+            ARCHS="arm64 x86_64" \
+            ONLY_ACTIVE_ARCH=NO \
             CODE_SIGN_STYLE=Manual \
             CODE_SIGN_IDENTITY="$IDENTITY" \
             DEVELOPMENT_TEAM="$TEAM_ID" \
@@ -407,6 +449,8 @@ case "$SIGNING_MODE" in
 
         [ -d "$FINAL_APP" ] \
             || die "Release app was not produced at $FINAL_APP"
+
+        verify_universal_app "$FINAL_APP"
 
         say "Verifying code signatures"
         codesign --verify --deep --strict --verbose=4 "$FINAL_APP"

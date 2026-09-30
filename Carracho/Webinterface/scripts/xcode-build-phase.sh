@@ -36,19 +36,6 @@ mkdir -p "$CACHE_ROOT" "$BUILD_DIR" "$DIST_DIR"
 # Altlasten aus älteren Versionen entfernen.
 rm -rf "$ROOT/.xcode-build" 2>/dev/null || true
 
-if [[ -n "${CARRACHO_WEBADMIN_PYTHON:-}" ]]; then
-    PYTHON="$CARRACHO_WEBADMIN_PYTHON"
-elif [[ -x /Library/Frameworks/Python.framework/Versions/3.11/bin/python3 ]]; then
-    PYTHON=/Library/Frameworks/Python.framework/Versions/3.11/bin/python3
-elif command -v python3.11 >/dev/null 2>&1; then
-    PYTHON="$(command -v python3.11)"
-elif command -v python3 >/dev/null 2>&1; then
-    PYTHON="$(command -v python3)"
-else
-    die "Kein Python 3 auf dem Build-Mac gefunden. Setze CARRACHO_WEBADMIN_PYTHON."
-fi
-[[ -x "$PYTHON" ]] || die "Python ist nicht ausführbar: $PYTHON"
-
 ARCH_LIST=" ${ARCHS:-${CURRENT_ARCH:-$(uname -m)}} "
 if [[ "$ARCH_LIST" == *" arm64 "* && "$ARCH_LIST" == *" x86_64 "* ]]; then
     TARGET_ARCH=universal2
@@ -57,6 +44,72 @@ elif [[ "$ARCH_LIST" == *" x86_64 "* ]]; then
 else
     TARGET_ARCH=arm64
 fi
+
+python_archs() {
+    local candidate="$1"
+    local real
+
+    [[ -x "$candidate" ]] || return 1
+    real="$("$candidate" -c 'import os,sys; print(os.path.realpath(sys.executable))' 2>/dev/null)" || return 1
+    lipo -archs "$real" 2>/dev/null || return 1
+}
+
+python_supports_target() {
+    local candidate="$1"
+    local found
+
+    found="$(python_archs "$candidate" 2>/dev/null || true)"
+    [[ -n "$found" ]] || return 1
+
+    case "$TARGET_ARCH" in
+        universal2)
+            [[ "$found" == *"arm64"* && "$found" == *"x86_64"* ]]
+            ;;
+        x86_64)
+            [[ "$found" == *"x86_64"* ]]
+            ;;
+        arm64)
+            [[ "$found" == *"arm64"* ]]
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+if [[ -n "${CARRACHO_WEBADMIN_PYTHON:-}" ]]; then
+    PYTHON="$CARRACHO_WEBADMIN_PYTHON"
+else
+    CANDIDATES=()
+
+    [[ -x /Library/Frameworks/Python.framework/Versions/3.11/bin/python3 ]] &&
+        CANDIDATES+=(/Library/Frameworks/Python.framework/Versions/3.11/bin/python3)
+
+    if command -v python3.11 >/dev/null 2>&1; then
+        CANDIDATES+=("$(command -v python3.11)")
+    fi
+
+    # Apple's developer Python is commonly multi-arch and is therefore a good
+    # fallback for Universal 2 PyInstaller builds.
+    [[ -x /usr/bin/python3 ]] && CANDIDATES+=(/usr/bin/python3)
+
+    if command -v python3 >/dev/null 2>&1; then
+        CANDIDATES+=("$(command -v python3)")
+    fi
+
+    PYTHON=""
+    for candidate in "${CANDIDATES[@]}"; do
+        if python_supports_target "$candidate"; then
+            PYTHON="$candidate"
+            break
+        fi
+    done
+
+    [[ -n "$PYTHON" ]] ||
+        die "Kein Python 3 mit Architektur '$TARGET_ARCH' gefunden. Setze CARRACHO_WEBADMIN_PYTHON auf einen passenden Python."
+fi
+
+[[ -x "$PYTHON" ]] || die "Python ist nicht ausführbar: $PYTHON"
 
 DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-10.15}"
 
@@ -73,12 +126,23 @@ done
 PY_REAL="$("$PYTHON" -c 'import os,sys; print(os.path.realpath(sys.executable))')"
 PY_VER="$("$PYTHON" -c 'import sys; print(".".join(map(str,sys.version_info[:3])))')"
 
-if [[ "$TARGET_ARCH" == "universal2" ]]; then
-    FOUND="$(lipo -archs "$PY_REAL" 2>/dev/null || true)"
-    if [[ "$FOUND" != *"arm64"* || "$FOUND" != *"x86_64"* ]]; then
-        die "Archive verlangt universal2, aber Python ist '${FOUND:-unbekannt}'. Setze CARRACHO_WEBADMIN_PYTHON auf einen universal2-Python."
-    fi
-fi
+FOUND="$(lipo -archs "$PY_REAL" 2>/dev/null || true)"
+case "$TARGET_ARCH" in
+    universal2)
+        if [[ "$FOUND" != *"arm64"* || "$FOUND" != *"x86_64"* ]]; then
+            die "Archive verlangt universal2, aber Python ist '${FOUND:-unbekannt}'. Setze CARRACHO_WEBADMIN_PYTHON auf einen universal2-Python."
+        fi
+        ;;
+    x86_64)
+        [[ "$FOUND" == *"x86_64"* ]] ||
+            die "Build verlangt x86_64, aber Python ist '${FOUND:-unbekannt}'."
+        ;;
+    arm64)
+        [[ "$FOUND" == *"arm64"* ]] ||
+            die "Build verlangt arm64, aber Python ist '${FOUND:-unbekannt}'."
+        ;;
+esac
+log "Python arch -> $FOUND"
 
 # Xcodes Signing Identity bestimmen.
 #
@@ -206,7 +270,22 @@ rm -f \
   2>/dev/null || true
 
 log "eingebettet -> $DEST_BIN"
-if command -v lipo >/dev/null 2>&1; then
-    ARCH_OUT="$(lipo -archs "$DEST_BIN" 2>/dev/null || true)"
-    [[ -n "$ARCH_OUT" ]] && log "Binary arch -> $ARCH_OUT"
-fi
+ARCH_OUT="$(lipo -archs "$DEST_BIN" 2>/dev/null || true)"
+[[ -n "$ARCH_OUT" ]] || die "Architektur des eingebetteten Helpers konnte nicht bestimmt werden."
+
+case "$TARGET_ARCH" in
+    universal2)
+        [[ "$ARCH_OUT" == *"arm64"* && "$ARCH_OUT" == *"x86_64"* ]] ||
+            die "WebAdmin Helper ist nicht Universal 2: $ARCH_OUT"
+        ;;
+    x86_64)
+        [[ "$ARCH_OUT" == *"x86_64"* ]] ||
+            die "WebAdmin Helper enthält kein x86_64: $ARCH_OUT"
+        ;;
+    arm64)
+        [[ "$ARCH_OUT" == *"arm64"* ]] ||
+            die "WebAdmin Helper enthält kein arm64: $ARCH_OUT"
+        ;;
+esac
+
+log "Binary arch -> $ARCH_OUT"
