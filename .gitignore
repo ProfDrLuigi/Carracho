@@ -2,3 +2,6 @@
 build/
 output/
 Analytics/
+scripts/*
+!scripts/release/
+!scripts/release/**
