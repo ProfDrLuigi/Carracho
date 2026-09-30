@@ -450,17 +450,10 @@ if git_safe rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
         git_safe merge-base --is-ancestor "$TAG_COMMIT" "$HEAD_COMMIT" \
             || die "Tag $TAG points to a commit that is not an ancestor of HEAD"
 
-        EXPECTED_RETRY_SUBJECT="Publish Carracho Server $VERSION appcast"
-        RETRY_SUBJECTS="$(git_safe log --format='%s' "$TAG_COMMIT..$HEAD_COMMIT")"
-        BAD_RETRY_SUBJECTS="$(
-            printf '%s\n' "$RETRY_SUBJECTS" \
-            | grep -Fvx "$EXPECTED_RETRY_SUBJECT" \
-            || true
-        )"
-
-        if [ -z "$RETRY_SUBJECTS" ] || [ -n "$BAD_RETRY_SUBJECTS" ]; then
-            printf '%s\n' "$RETRY_SUBJECTS" >&2
-            die "Refusing to move $TAG: commits after the tag are not only retry appcast commits"
+        RETRY_COMMITS="$(git_safe log --oneline "$TAG_COMMIT..$HEAD_COMMIT")"
+        if [ -n "$RETRY_COMMITS" ]; then
+            say "Unpublished commits since the existing $TAG tag"
+            printf '%s\n' "$RETRY_COMMITS"
         fi
 
         if github_release_exists "$GITHUB_REPO" "$TAG"; then
@@ -480,7 +473,7 @@ if git_safe rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
             die "Remote tag $TAG changed since fetch; refusing retry recovery"
         fi
 
-        say "Recovering unfinished $TAG publish by moving the tag to the latest retry appcast commit"
+        say "Recovering unfinished $TAG publish by moving the tag to current HEAD"
         TAG_EXPECTED_REMOTE_OBJECT="$REMOTE_TAG_OBJECT"
         git_safe tag -f -a "$TAG" -m "Carracho $VERSION" "$HEAD_COMMIT"
 
