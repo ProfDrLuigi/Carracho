@@ -11,7 +11,7 @@
             <sparkle:minimumSystemVersion>10.15</sparkle:minimumSystemVersion>
             <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
             <sparkle:releaseNotesLink>https://profdrLuigi.github.io/Carracho/releases/Carracho-Server-1.1.3.html</sparkle:releaseNotesLink>
-            <enclosure url="https://github.com/ProfDrLuigi/Carracho/releases/download/Carracho1.1.3/Carracho-Server-1.1.3.zip" length="11266412" type="application/octet-stream" sparkle:edSignature="g3S0mqiA5WZLHu3e3AvIKXZTsZdLwXokbqaTyN6517Gl641wHkjq6AVQoBXvCyxJh9u4xnj/cPbZ5ucPAs2PDQ=="/>
+            <enclosure url="https://github.com/ProfDrLuigi/Carracho/releases/download/Carracho1.1.3/Carracho-Server-1.1.3.zip" length="11266536" type="application/octet-stream" sparkle:edSignature="8L07HfZl78Pd1t3Djd+0muD2n2YZoCdd1Y68/7ofvrxjjJmkW009XmZGetMkX595YAAgiPjYpJ7jVNqxoEctAQ=="/>
         </item>
     </channel>
 </rss>
