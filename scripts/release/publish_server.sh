@@ -516,11 +516,11 @@ REMOTE_TAG_LINES="$(
 )"
 REMOTE_TAG_OBJECT="$(
     printf '%s\n' "$REMOTE_TAG_LINES" \
-    | awk '$2 !~ /\\^\\{\\}$/ { print $1; exit }'
+    | awk 'index($2, "^{}") == 0 { print $1; exit }'
 )"
 REMOTE_TAG_COMMIT="$(
     printf '%s\n' "$REMOTE_TAG_LINES" \
-    | awk '$2 ~ /\\^\\{\\}$/ { print $1; exit }'
+    | awk 'index($2, "^{}") != 0 { print $1; exit }'
 )"
 
 if [ -n "$REMOTE_TAG_OBJECT" ] && [ -z "$REMOTE_TAG_COMMIT" ]; then
