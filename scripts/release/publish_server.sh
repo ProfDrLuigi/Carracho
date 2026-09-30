@@ -234,9 +234,25 @@ case "$SIGNING_MODE" in
         [ -d "$FINAL_APP" ] \
             || die "Release app was not produced at $FINAL_APP"
 
+        # Xcode strips development-only content while embedding Sparkle.framework.
+        # With Team: None this leaves the copied framework seal stale and Sparkle's
+        # generate_appcast rejects the archive. Re-seal only the framework wrapper
+        # while preserving Sparkle's nested helper/XPC signatures and runtime flags,
+        # then seal the outer app ad-hoc. No Apple identity or Team ID is involved.
+        SPARKLE_FRAMEWORK="$FINAL_APP/Contents/Frameworks/Sparkle.framework"
+        [ -d "$SPARKLE_FRAMEWORK" ] \
+            || die "Embedded Sparkle.framework was not found in the Release app"
+
+        say "Applying Team-None ad-hoc bundle seals for Sparkle"
+        /usr/bin/codesign --force --sign - --timestamp=none \
+            --preserve-metadata=identifier,entitlements,requirements,flags,runtime \
+            "$SPARKLE_FRAMEWORK"
+        /usr/bin/codesign --force --sign - --timestamp=none "$FINAL_APP"
+        /usr/bin/codesign --verify --deep --strict --verbose=4 "$FINAL_APP"
+
         say "Apple Developer ID signing disabled; Team: None"
-        echo "Xcode may apply an ad-hoc/linker signature, but no Apple Team ID is used."
-        echo "Skipping Developer ID verification, notarization, stapling and Gatekeeper assessment."
+        echo "The app uses an ad-hoc bundle seal only; no Apple Team ID is used."
+        echo "Skipping Developer ID notarization, stapling and Gatekeeper assessment."
         ;;
 
     developer-id)

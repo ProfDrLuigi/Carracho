@@ -24,7 +24,7 @@ Apple Developer ID signing is **optional**. The publisher defaults to:
 CARRACHO_SIGNING_MODE=none
 ```
 
-In this mode Xcode builds the Release app with **Team: None** using `CODE_SIGNING_ALLOWED=NO`. No Developer ID certificate or Apple Team ID is required. Xcode/the linker may still place an ad-hoc signature on Mach-O executables, but there is no Developer ID identity (`TeamIdentifier` is unset). The publisher skips Developer ID verification, notarization, stapling and Gatekeeper assessment. Sparkle EdDSA signing remains enabled and still protects the update archive/appcast.
+In this mode Xcode builds the Release app with **Team: None** using `CODE_SIGNING_ALLOWED=NO`. No Developer ID certificate or Apple Team ID is required. After Xcode embeds Sparkle, the publisher re-seals the copied `Sparkle.framework` wrapper ad-hoc (preserving its nested helper/XPC signatures, entitlements and Hardened Runtime metadata) and then ad-hoc seals the outer Server app. This is required because `generate_appcast` performs structural Apple code-signing checks even when the application is distributed without Developer ID. `TeamIdentifier` remains unset. The publisher skips Developer ID notarization, stapling and Gatekeeper assessment. Sparkle EdDSA signing remains enabled and protects the update archive/appcast.
 
 If a Developer ID certificate is available later, opt in with:
 
