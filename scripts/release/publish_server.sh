@@ -287,7 +287,7 @@ say "Checking GitHub release permission"
 verify_github_release_permission
 
 say "Checking GitHub branch state"
-git_safe fetch origin "$BRANCH" --tags
+git_safe fetch --no-tags origin "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH"
 git_safe merge-base --is-ancestor "origin/$BRANCH" HEAD \
     || die "Local $BRANCH is behind or diverged from origin/$BRANCH"
 
@@ -503,60 +503,89 @@ if [ -n "$(git_safe status --porcelain -- docs/server/appcast.xml)" ]; then
 fi
 
 say "Creating/verifying release tag $TAG"
+HEAD_COMMIT="$(git_safe rev-parse HEAD)"
 TAG_NEEDS_FORCE_PUSH=0
 TAG_EXPECTED_REMOTE_OBJECT=""
+TAG_SKIP_PUSH=0
+TAG_MOVE_ALLOWED=0
+
+REMOTE_TAG_LINES="$(
+    git_safe ls-remote --tags origin \
+        "refs/tags/$TAG" \
+        "refs/tags/$TAG^{}"
+)"
+REMOTE_TAG_OBJECT="$(
+    printf '%s\n' "$REMOTE_TAG_LINES" \
+    | awk '$2 !~ /\\^\\{\\}$/ { print $1; exit }'
+)"
+REMOTE_TAG_COMMIT="$(
+    printf '%s\n' "$REMOTE_TAG_LINES" \
+    | awk '$2 ~ /\\^\\{\\}$/ { print $1; exit }'
+)"
+
+if [ -n "$REMOTE_TAG_OBJECT" ] && [ -z "$REMOTE_TAG_COMMIT" ]; then
+    REMOTE_TAG_COMMIT="$REMOTE_TAG_OBJECT"
+fi
+
+if [ -n "$REMOTE_TAG_COMMIT" ] && [ "$REMOTE_TAG_COMMIT" != "$HEAD_COMMIT" ]; then
+    git_safe merge-base --is-ancestor "$REMOTE_TAG_COMMIT" "$HEAD_COMMIT" \
+        || die "Remote tag $TAG does not point to an ancestor of HEAD"
+
+    if github_release_exists "$GITHUB_REPO" "$TAG"; then
+        die "GitHub Release $TAG already exists; refusing to move an already published release tag"
+    else
+        RELEASE_CHECK_RC=$?
+        [ "$RELEASE_CHECK_RC" = "1" ] \
+            || die "Could not verify whether GitHub Release $TAG already exists"
+    fi
+
+    TAG_MOVE_ALLOWED=1
+fi
 
 if git_safe rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
-    TAG_OBJECT="$(git_safe rev-parse "refs/tags/$TAG")"
-    TAG_COMMIT="$(git_safe rev-list -n1 "$TAG")"
-    HEAD_COMMIT="$(git_safe rev-parse HEAD)"
+    LOCAL_TAG_COMMIT="$(git_safe rev-list -n1 "$TAG")"
 
-    if [ "$TAG_COMMIT" != "$HEAD_COMMIT" ]; then
-        git_safe merge-base --is-ancestor "$TAG_COMMIT" "$HEAD_COMMIT" \
-            || die "Tag $TAG points to a commit that is not an ancestor of HEAD"
+    if [ "$LOCAL_TAG_COMMIT" != "$HEAD_COMMIT" ]; then
+        git_safe merge-base --is-ancestor "$LOCAL_TAG_COMMIT" "$HEAD_COMMIT" \
+            || die "Local tag $TAG does not point to an ancestor of HEAD"
 
-        RETRY_COMMITS="$(git_safe log --oneline "$TAG_COMMIT..$HEAD_COMMIT")"
+        RETRY_COMMITS="$(git_safe log --oneline "$LOCAL_TAG_COMMIT..$HEAD_COMMIT")"
         if [ -n "$RETRY_COMMITS" ]; then
-            say "Unpublished commits since the existing $TAG tag"
+            say "Commits since the existing local $TAG tag"
             printf '%s\n' "$RETRY_COMMITS"
         fi
 
-        if github_release_exists "$GITHUB_REPO" "$TAG"; then
-            die "GitHub Release $TAG already exists; refusing to move an already published release tag"
-        else
-            RELEASE_CHECK_RC=$?
-            [ "$RELEASE_CHECK_RC" = "1" ] \
-                || die "Could not verify whether GitHub Release $TAG already exists"
-        fi
-
-        REMOTE_TAG_OBJECT="$(
-            git_safe ls-remote --tags origin "refs/tags/$TAG" \
-            | awk 'NR == 1 { print $1 }'
-        )"
-
-        if [ -n "$REMOTE_TAG_OBJECT" ] && [ "$REMOTE_TAG_OBJECT" != "$TAG_OBJECT" ]; then
-            die "Remote tag $TAG changed since fetch; refusing retry recovery"
-        fi
-
-        say "Recovering unfinished $TAG publish by moving the tag to current HEAD"
-        TAG_EXPECTED_REMOTE_OBJECT="$REMOTE_TAG_OBJECT"
+        say "Moving local $TAG tag to current HEAD"
         git_safe tag -f -a "$TAG" -m "Carracho $VERSION" "$HEAD_COMMIT"
-
-        if [ -n "$TAG_EXPECTED_REMOTE_OBJECT" ]; then
-            TAG_NEEDS_FORCE_PUSH=1
-        fi
     fi
 else
-    git_safe tag -a "$TAG" -m "Carracho $VERSION"
+    git_safe tag -a "$TAG" -m "Carracho $VERSION" "$HEAD_COMMIT"
+fi
+
+LOCAL_TAG_OBJECT="$(git_safe rev-parse "refs/tags/$TAG")"
+
+if [ -z "$REMOTE_TAG_OBJECT" ]; then
+    :
+elif [ "$REMOTE_TAG_COMMIT" = "$HEAD_COMMIT" ]; then
+    say "Remote tag $TAG already targets current HEAD"
+    TAG_SKIP_PUSH=1
+elif [ "$TAG_MOVE_ALLOWED" = "1" ]; then
+    say "Recovering unfinished $TAG publish by moving the remote tag to current HEAD"
+    TAG_NEEDS_FORCE_PUSH=1
+    TAG_EXPECTED_REMOTE_OBJECT="$REMOTE_TAG_OBJECT"
+else
+    die "Remote tag $TAG differs from current HEAD and cannot be moved safely"
 fi
 
 say "Pushing release tag to GitHub"
-if [ "$TAG_NEEDS_FORCE_PUSH" = "1" ]; then
+if [ "$TAG_SKIP_PUSH" = "1" ]; then
+    echo "Remote tag already points at current HEAD; nothing to push."
+elif [ "$TAG_NEEDS_FORCE_PUSH" = "1" ]; then
     git_push_with_token push \
         --force-with-lease="refs/tags/$TAG:$TAG_EXPECTED_REMOTE_OBJECT" \
         origin "refs/tags/$TAG"
 else
-    git_push_with_token push origin "$TAG"
+    git_push_with_token push origin "refs/tags/$TAG"
 fi
 
 say "Creating/updating GitHub Release and uploading $ASSET_NAME"
