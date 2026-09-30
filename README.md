@@ -18,11 +18,11 @@ The modern transport protects far more than login traffic: chat/control packets,
 
 See the collapsible **Security and modern encryption** section below for the protocol details.
 
-### Current release: 1.1.2
+### Current release: 1.1.3
 
-Carracho 1.1.2 adds **Private Message reactions**, clearer **red unread badges** for Conferences and messaging, tighter **Guest offline-message restrictions**, a client option to hide user sign-in/sign-out notifications, and improved Linux server packaging that installs and preserves the Bot avatar. The macOS client and server are version **1.1.2 (build 13)**, with matching protocol support in the native Linux server.
+Carracho 1.1.3 adds **multi-select delete and upload in Files**, configurable **red close-button behaviour**, safer **first-run administrator credentials**, and clearer Linux installation requirements for the runtime user's access to `/opt/carracho`. The macOS client and server are version **1.1.3 (build 14)**, with matching first-run support in the native Linux server and installers.
 
-The full release notes are available in [`README_1.1.2.md`](README_1.1.2.md).
+The full release notes are available in [`README_1.1.3.md`](README_1.1.3.md).
 
 ## At a glance
 
@@ -726,7 +726,9 @@ sudo cp -a .build/linux/. /opt/carracho/
 sudo chown -R carracho:carracho /opt/carracho
 ```
 
-The server must be able to write its databases and persistent state. Keeping `/opt/carracho` owned by the service account also allows administration changes that are mirrored back to `etc/carracho-server.json` to be persisted.
+The user that runs the server must have full access to the entire `/opt/carracho` tree: it must be able to read files, write files, create and remove entries, and traverse all required subdirectories. With the example service above that user is `carracho`, so `/opt/carracho` should remain owned by `carracho:carracho`, as shown by the `chown -R` command. If you configure a different `User=` or `Group=` in the systemd service, adjust the ownership and permissions of `/opt/carracho` accordingly. Do not solve this by making the directory world-writable.
+
+This access is required for databases, logs, uploaded files, persistent state, Bot data and administration changes that are mirrored back to `etc/carracho-server.json`.
 
 Create `/etc/systemd/system/carracho.service`:
 

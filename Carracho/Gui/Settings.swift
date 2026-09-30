@@ -19,7 +19,7 @@ extension ViewController {
         clientSettingsGeneralWasVisited = resumeConnectionAfterIdentitySetup
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 760, height: 710),
+            contentRect: NSRect(x: 0, y: 0, width: 760, height: 772),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
@@ -29,7 +29,7 @@ extension ViewController {
         window.delegate = self
         window.appearance = NSAppearance(named: .darkAqua)
         window.backgroundColor = CarrachoTheme.canvas
-        window.minSize = NSSize(width: 720, height: 680)
+        window.minSize = NSSize(width: 720, height: 740)
         clientSettingsWindow = window
 
         let root = CarrachoBackgroundView()
@@ -83,7 +83,7 @@ extension ViewController {
                 content.bottomAnchor.constraint(equalTo: contentHost.bottomAnchor),
             ])
         }
-        contentHost.heightAnchor.constraint(equalToConstant: 548).isActive = true
+        contentHost.heightAnchor.constraint(equalToConstant: 610).isActive = true
 
         let restoreDefaults = NSButton(title: L("Restore Defaults"), target: self,
                                        action: #selector(settingsRestoreSoundDefaults(_:)))
@@ -212,7 +212,17 @@ extension ViewController {
         let serverMessagesStack = verticalStack([serverMessagesTitle, showPresence, serverMessagesHelp], spacing: 7)
         pin(serverMessagesStack, in: serverMessagesCard, inset: 14)
 
-        let stack = verticalStack([identityCard, downloadsCard, serverMessagesCard], spacing: 12)
+        let appBehaviorCard = clientSettingsCard()
+        let appBehaviorTitle = sectionCaption(L("App Behavior"))
+        let quitOnClose = NSButton(checkboxWithTitle: L("Quit Carracho when the last window is closed"),
+                                   target: nil, action: nil)
+        quitOnClose.state = quitOnLastWindowClose ? .on : .off
+        quitOnClose.toolTip = L("When disabled, the red close button only closes the window and Carracho stays running in the Dock.")
+        clientSettingsQuitOnLastWindowCloseCheckbox = quitOnClose
+        let appBehaviorStack = verticalStack([appBehaviorTitle, quitOnClose], spacing: 7)
+        pin(appBehaviorStack, in: appBehaviorCard, inset: 14)
+
+        let stack = verticalStack([identityCard, downloadsCard, serverMessagesCard, appBehaviorCard], spacing: 12)
         stack.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(stack)
         NSLayoutConstraint.activate([
@@ -222,6 +232,7 @@ extension ViewController {
             identityCard.heightAnchor.constraint(equalToConstant: 300),
             downloadsCard.heightAnchor.constraint(equalToConstant: 90),
             serverMessagesCard.heightAnchor.constraint(equalToConstant: 105),
+            appBehaviorCard.heightAnchor.constraint(equalToConstant: 72),
         ])
         return container
     }
@@ -518,8 +529,12 @@ extension ViewController {
     }
 
     func saveClientDisplayPreferencesFromSettings() {
-        guard let checkbox = clientSettingsShowUserPresenceNotificationsCheckbox else { return }
-        UserDefaults.standard.set(checkbox.state == .on, forKey: Self.showUserPresenceNotificationsDefaultsKey)
+        if let checkbox = clientSettingsShowUserPresenceNotificationsCheckbox {
+            UserDefaults.standard.set(checkbox.state == .on, forKey: Self.showUserPresenceNotificationsDefaultsKey)
+        }
+        if let checkbox = clientSettingsQuitOnLastWindowCloseCheckbox {
+            UserDefaults.standard.set(checkbox.state == .on, forKey: Self.quitOnLastWindowCloseDefaultsKey)
+        }
     }
 
     func emitClientEvent(_ event: ClientSoundEvent, notificationTitle: String, notificationBody: String,

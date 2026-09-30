@@ -1,5 +1,6 @@
 #if CARRACHO_SERVER
 import Foundation
+import Security
 
 struct CarrachoServerTrackerConfiguration: Codable, Equatable {
     var enabled: Bool = false
@@ -87,14 +88,32 @@ final class CarrachoServerService {
     let trackerRuntime: LegacyTrackerRuntime
     private(set) var configuration: CarrachoServerConfiguration
     private(set) var trackerConfiguration: CarrachoServerTrackerConfiguration
+    /// Present only for the process that created a genuinely new server database.
+    /// The password is applied before a runtime exists and is never persisted outside server.db.
+    let initialAdministratorPassword: String?
 
     init(rootURL: URL = CarrachoServerService.defaultRootURL(), defaultBannerPNG: Data? = nil) throws {
         let resolvedRoot = rootURL.standardizedFileURL
         try Self.migrateLegacyDatabaseLayout(rootURL: resolvedRoot)
         let databaseRoot = Self.databaseDirectoryURL(rootURL: resolvedRoot)
         let databaseURL = databaseRoot.appendingPathComponent("server.db", isDirectory: false)
+        let stateStore = ServerStateStore(url: databaseURL)
         let databaseExisted = FileManager.default.fileExists(atPath: databaseURL.path)
-        let backend = try ModernServerBackend(store: ServerStateStore(url: databaseURL))
+        let legacyStateExisted = FileManager.default.fileExists(atPath: stateStore.legacyJSONURL.path)
+            || FileManager.default.fileExists(atPath: resolvedRoot.appendingPathComponent("server-state.json").path)
+        let virginDatabase = !databaseExisted && !legacyStateExisted
+        let backend = try ModernServerBackend(store: stateStore)
+        var initialAdministratorPassword: String?
+        if virginDatabase {
+            let password = try Self.generateInitialAdministratorPassword()
+            guard let administrator = backend.snapshot().accounts.first(where: {
+                $0.mode == .administrator && $0.login.caseInsensitiveCompare("admin") == .orderedSame
+            }) else {
+                throw ServerStateError.invalidValue("Fresh server state did not contain the built-in administrator account.")
+            }
+            _ = try backend.changePassword(accountID: administrator.id, to: password)
+            initialAdministratorPassword = password
+        }
         // The Bot is a persisted, normally editable account, but can only ever be used by the
         // local in-process Bot controller. Provision it before runtime/config reconciliation.
         try backend.ensureLocalBotAccount()
@@ -117,6 +136,7 @@ final class CarrachoServerService {
         self.databaseURL = databaseURL
         self.filesURL = filesURL
         self.backend = backend
+        self.initialAdministratorPassword = initialAdministratorPassword
         let runtime = LegacyServerRuntime(backend: backend, storageRoot: filesURL, supportRoot: resolvedRoot,
                                           databaseRoot: databaseRoot)
         self.runtime = runtime
@@ -135,6 +155,17 @@ final class CarrachoServerService {
         if runtime.status.isRunning { botController.serverWillStop() }
         runtime.stop()
         trackerRuntime.stop()
+    }
+
+    private static func generateInitialAdministratorPassword() throws -> String {
+        var bytes = [UInt8](repeating: 0, count: 16)
+        let status = bytes.withUnsafeMutableBytes { buffer in
+            SecRandomCopyBytes(kSecRandomDefault, buffer.count, buffer.baseAddress!)
+        }
+        guard status == errSecSuccess else {
+            throw ServerStateError.invalidValue("Could not generate the initial administrator password.")
+        }
+        return bytes.map { String(format: "%02x", $0) }.joined()
     }
 
     static func defaultRootURL() -> URL {

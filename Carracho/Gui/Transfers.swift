@@ -199,27 +199,42 @@ extension ViewController {
     @objc func uploadFile(_ sender: Any?) {
         guard client.isConnected, fileTransferClient != nil, let directory = lastDirectory else { return }
         let panel = NSOpenPanel()
-        panel.title = L("Upload File or Folder")
+        panel.title = L("Upload Files or Folders")
         panel.prompt = L("Upload")
-        panel.message = L("Choose a file or folder to upload to the current server folder.")
+        panel.message = L("Choose one or more files or folders to upload to the current server folder.")
         panel.canChooseFiles = true
         panel.canChooseDirectories = true
-        panel.allowsMultipleSelection = false
+        panel.allowsMultipleSelection = true
         guard let window = view.window else { return }
         panel.beginSheetModal(for: window) { [weak self] response in
-            guard let self, response == .OK, let url = panel.url else { return }
-            self.enqueueUpload(localFile: url, parentPath: directory.currentPath)
+            guard let self, response == .OK, !panel.urls.isEmpty else { return }
+            self.enqueueUploads(localFiles: panel.urls, parentPath: directory.currentPath)
         }
     }
 
     func enqueueUpload(localFile: URL, parentPath: Data) {
-        guard client.isConnected, fileTransferClient != nil else { return }
-        let operation = ClientTransferOperation.upload(localFile: localFile, parentPath: parentPath, overwrite: false)
-        guard beginClientTransfer(kind: LegacyTransferKind.upload,
-                                  name: localFile.lastPathComponent,
-                                  detail: "\(localFile.path) → \(LegacyPath.displayString(parentPath))",
-                                  operation: operation) != nil else { return }
-        fileTransferLabel.stringValue = LF("Upload queued: %@", localFile.lastPathComponent)
+        enqueueUploads(localFiles: [localFile], parentPath: parentPath)
+    }
+
+    func enqueueUploads(localFiles: [URL], parentPath: Data) {
+        guard client.isConnected, fileTransferClient != nil, !localFiles.isEmpty else { return }
+        var queuedCount = 0
+        var firstQueuedName: String?
+        for localFile in localFiles {
+            let operation = ClientTransferOperation.upload(localFile: localFile, parentPath: parentPath, overwrite: false)
+            guard beginClientTransfer(kind: LegacyTransferKind.upload,
+                                      name: localFile.lastPathComponent,
+                                      detail: "\(localFile.path) → \(LegacyPath.displayString(parentPath))",
+                                      operation: operation) != nil else { continue }
+            queuedCount += 1
+            if firstQueuedName == nil { firstQueuedName = localFile.lastPathComponent }
+        }
+        guard queuedCount > 0 else { return }
+        if queuedCount == 1, let firstQueuedName {
+            fileTransferLabel.stringValue = LF("Upload queued: %@", firstQueuedName)
+        } else {
+            fileTransferLabel.stringValue = LF("%@ uploads queued", String(queuedCount))
+        }
         scheduleClientTransferQueue(refreshCapacity: true)
     }
 

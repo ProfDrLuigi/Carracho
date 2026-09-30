@@ -257,6 +257,21 @@ Runtime layout:
 The package creates a system user named "carracho" and generates a persistent
 HTTP Admin bearer token in /opt/carracho/etc/carracho-server.env when needed.
 
+The user that runs carracho-server must have full read, write and directory
+traversal access to the complete /opt/carracho tree. With the packaged systemd
+unit this user is "carracho" and the package sets the required ownership. If you
+change User= or Group= in the service, adjust ownership and permissions under
+/opt/carracho accordingly. Do not make /opt/carracho world-writable.
+
+On a fresh installation with no existing server database, the package creates a
+random initial password for the built-in administrator account "admin" and prints
+it during package configuration. Change that password immediately after the first
+login.
+
+The built-in "anonymous" account intentionally has no password by default. If
+you do not want passwordless Guest access, set a password for anonymous in
+Administration -> Accounts.
+
 The service is intentionally not started automatically on first install.
 Review the configuration and initial accounts, then start it with:
 
@@ -300,6 +315,13 @@ EOF
 #!/bin/sh
 set -e
 
+fresh_server_db=0
+if [ ! -e /opt/carracho/db/server.db ] \
+   && [ ! -e /opt/carracho/server-state.json ] \
+   && [ ! -e /opt/carracho/db/server-state.json ]; then
+    fresh_server_db=1
+fi
+
 if ! getent group carracho >/dev/null 2>&1; then
     addgroup --system carracho >/dev/null
 fi
@@ -336,6 +358,32 @@ if [ "${#token}" -lt 24 ]; then
 fi
 chown root:root "$ENV"
 chmod 0600 "$ENV"
+
+if [ "$fresh_server_db" -eq 1 ]; then
+    initial_admin_password="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+    printf '%s\n' "$initial_admin_password" \
+        | /opt/carracho/carracho-server \
+            --config /opt/carracho/etc/carracho-server.json \
+            --init-admin admin --password-stdin
+    chown -R carracho:carracho /opt/carracho/db
+
+    echo
+    echo "============================================================"
+    echo " NEW CARRACHO SERVER - INITIAL CREDENTIALS"
+    echo "============================================================"
+    echo " Administrator login:    admin"
+    echo " Administrator password: $initial_admin_password"
+    echo
+    echo " IMPORTANT: Change this administrator password immediately"
+    echo " after your first login."
+    echo
+    echo " The anonymous account has NO password by default."
+    echo " If desired, set a password for 'anonymous' in"
+    echo " Administration -> Accounts."
+    echo "============================================================"
+    echo
+    unset initial_admin_password
+fi
 
 if command -v systemctl >/dev/null 2>&1; then
     systemctl daemon-reload >/dev/null 2>&1 || true

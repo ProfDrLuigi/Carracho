@@ -792,6 +792,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
     weak var clientSettingsAboutView: NSTextView?
     weak var clientSettingsDownloadFolderField: NSTextField?
     weak var clientSettingsShowUserPresenceNotificationsCheckbox: NSButton?
+    weak var clientSettingsQuitOnLastWindowCloseCheckbox: NSButton?
     weak var clientSettingsAvatarView: AvatarDropView?
     var clientSettingsPendingDownloadFolderPath: String?
     var resumeConnectionAfterIdentitySetup = false
@@ -1293,6 +1294,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
     static let generalEmailDefaultsKey = "CarrachoGeneralEmail.v1"
     static let generalAboutMeDefaultsKey = "CarrachoGeneralAboutMe.v1"
     static let showUserPresenceNotificationsDefaultsKey = "Carracho.ShowUserPresenceNotifications.v1"
+    static let quitOnLastWindowCloseDefaultsKey = "Carracho.QuitOnLastWindowClose.v1"
     static let globalAvatarIdentity = LocalAvatarIdentity(host: "__carracho_global_profile__", port: 0, login: "profile")
     var remoteTransferSnapshot: [LegacyTransferInfoRecord] = []
     var remoteManagedTransferSnapshot: [LegacyManagedTransferRecord] = []
@@ -2662,7 +2664,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
             navigation.bottomAnchor.constraint(equalTo: scrollContent.bottomAnchor),
             scrollContent.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
         ])
-        let version = infoLabel(L("Carracho 1.1.2"))
+        let version = infoLabel(L("Carracho 1.1.3"))
         version.font = .systemFont(ofSize: 10)
         appearancePopup.removeAllItems()
         appearancePopup.addItems(withTitles: [L("System Appearance"), L("Light"), L("Dark")])
@@ -6349,6 +6351,12 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         let defaults = UserDefaults.standard
         guard defaults.object(forKey: Self.showUserPresenceNotificationsDefaultsKey) != nil else { return true }
         return defaults.bool(forKey: Self.showUserPresenceNotificationsDefaultsKey)
+    }
+
+    var quitOnLastWindowClose: Bool {
+        let defaults = UserDefaults.standard
+        guard defaults.object(forKey: Self.quitOnLastWindowCloseDefaultsKey) != nil else { return true }
+        return defaults.bool(forKey: Self.quitOnLastWindowCloseDefaultsKey)
     }
 
     var queuedClientTransferIDs: [UUID] {

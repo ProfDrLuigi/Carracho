@@ -1662,6 +1662,7 @@ final class CarrachoServerWindowController: NSWindowController, NSTextFieldDeleg
             appendLog(LF("Server state ready at %@", service?.databaseURL.path ?? root.path))
             appendLog(LF("Config: %@", CarrachoServerService.configurationURL(rootURL: root).path))
             appendLog(LF("File root: %@", service?.filesURL.path ?? CarrachoServerService.defaultFilesURL(rootURL: root).path))
+            if smokeDumpPath == nil, let service { presentInitialCredentialsIfNeeded(service) }
             startStatusTimer()
             runSmokeIfRequested()
         } catch {
@@ -2884,6 +2885,32 @@ final class CarrachoServerWindowController: NSWindowController, NSTextFieldDeleg
 
     private func appendLog(_ line: String) { serverLog.append(line) }
     private func appendTrackerLog(_ line: String) { trackerLog.append(line) }
+
+    private func presentInitialCredentialsIfNeeded(_ service: CarrachoServerService) {
+        guard let password = service.initialAdministratorPassword else { return }
+        let message = LF(
+            "A new server database was created.\n\nAdministrator login: admin\nInitial password: %@\n\nChange this administrator password immediately after your first login.\n\nThe anonymous account has no password by default. If desired, you can set a password for anonymous in Administration → Accounts.",
+            password
+        )
+        let alert = NSAlert()
+        alert.messageText = L("Initial Server Credentials")
+        alert.informativeText = message
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: L("Copy Password"))
+        alert.addButton(withTitle: L("OK"))
+        let copyPassword = {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(password, forType: .string)
+        }
+        if let window, window.isVisible {
+            alert.beginSheetModal(for: window) { response in
+                if response == .alertFirstButtonReturn { copyPassword() }
+            }
+        } else {
+            NSApplication.shared.activate(ignoringOtherApps: true)
+            if alert.runModal() == .alertFirstButtonReturn { copyPassword() }
+        }
+    }
 
     private func presentError(title: String, error: Error) {
         presentMessage(title: title, message: error.localizedDescription, style: .critical)

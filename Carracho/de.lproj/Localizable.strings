@@ -2108,3 +2108,16 @@
 "Show user sign-in and sign-out notifications" = "An- und Abmeldemeldungen von Benutzern anzeigen";
 "Hide notifications that announce when users enter or leave a server. User presence and sounds are not affected." = "Blendet Meldungen aus, die anzeigen, wenn Benutzer einen Server betreten oder verlassen. Anwesenheitsstatus und Sounds bleiben unverändert.";
 "Controls only the visual sign-in/sign-out notifications. The user list and configured event sounds continue to work." = "Steuert nur die sichtbaren An- und Abmeldemeldungen. Benutzerliste und konfigurierte Ereignis-Sounds funktionieren weiterhin.";
+"Initial Server Credentials" = "Erste Server-Zugangsdaten";
+"Copy Password" = "Passwort kopieren";
+"A new server database was created.\n\nAdministrator login: admin\nInitial password: %@\n\nChange this administrator password immediately after your first login.\n\nThe anonymous account has no password by default. If desired, you can set a password for anonymous in Administration → Accounts." = "Eine neue Server-Datenbank wurde erstellt.\n\nAdministrator-Login: admin\nInitiales Passwort: %@\n\nÄndere dieses Administrator-Passwort direkt nach der ersten Anmeldung.\n\nDas Konto anonymous hat standardmäßig kein Passwort. Bei Bedarf kannst du für anonymous unter Administration → Accounts ein Passwort setzen.";
+"App Behavior" = "App-Verhalten";
+"Quit Carracho when the last window is closed" = "Carracho beenden, wenn das letzte Fenster geschlossen wird";
+"When disabled, the red close button only closes the window and Carracho stays running in the Dock." = "Wenn deaktiviert, schließt der rote Schließen-Knopf nur das Fenster und Carracho läuft im Dock weiter.";
+"Upload Files or Folders" = "Dateien oder Ordner hochladen";
+"Choose one or more files or folders to upload to the current server folder." = "Wähle eine oder mehrere Dateien oder Ordner aus, die in den aktuellen Serverordner hochgeladen werden sollen.";
+"%@ uploads queued" = "%@ Uploads eingereiht";
+"Delete %@ Items" = "%@ Elemente löschen";
+"Move %@ selected items to the server Trash?" = "%@ ausgewählte Elemente in den Server-Papierkorb verschieben?";
+"%@ of %@ selected items could not be deleted." = "%@ von %@ ausgewählten Elementen konnten nicht gelöscht werden.";
+"Delete failed for %@: %@" = "Löschen von %@ fehlgeschlagen: %@";

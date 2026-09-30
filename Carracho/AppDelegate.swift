@@ -154,8 +154,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        // Carracho keeps live server sessions per bookmark. Leaving the process alive after the
-        // last window is closed makes those sessions look like ghost users on the server.
+        let defaults = UserDefaults.standard
+        guard defaults.object(forKey: ViewController.quitOnLastWindowCloseDefaultsKey) != nil else {
+            return true
+        }
+        return defaults.bool(forKey: ViewController.quitOnLastWindowCloseDefaultsKey)
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        guard !flag else { return true }
+        if let mainWindow = sender.windows.first(where: { $0.contentViewController is ViewController }) {
+            mainWindow.makeKeyAndOrderFront(nil)
+        }
         return true
     }
 

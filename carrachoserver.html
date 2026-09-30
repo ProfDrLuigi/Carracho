@@ -25,6 +25,15 @@
     <body>
         
 
+        <p><span class="header" lang="en">New in 1.1.3</span></p>
+        <ul>
+            <span class="newstext">
+                <li>Updated Carracho Server for macOS to version 1.1.3 (build 14) and updated native Linux Server Info/version reporting accordingly.</li>
+                <li>Fresh server databases now receive a random initial password for the built-in <code>admin</code> account before the server can accept connections. macOS displays it once in the Server app; Linux installers print it before the service starts and instruct the administrator to change it immediately.</li>
+                <li>The first-run notice explicitly explains that the <code>anonymous</code> Guest account has no password by default and that one can be assigned under Administration → Accounts if passwordless Guest access is not desired.</li>
+                <li>Linux installation instructions now state explicitly that the runtime user must have full read/write/create/remove/traversal access to the complete <code>/opt/carracho</code> tree. Custom systemd <code>User=</code>/<code>Group=</code> setups must adjust ownership accordingly rather than making the tree world-writable.</li>
+        </ul></span>
+
         <p><span class="header" lang="en">New in 1.1.2</span></p>
         <ul>
             <span class="newstext">

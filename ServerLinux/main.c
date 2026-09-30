@@ -655,27 +655,37 @@ static int initialize_admin(const cr_server_config *config, const char *login) {
         memset(password, 0, sizeof(password));
         return 1;
     }
-    if (!state->legacy_compatible) {
-        fprintf(stderr, "carracho-server: --init-admin requires legacyCompatible authentication\n");
-        cr_state_close(state);
-        free(state);
-        memset(password, 0, sizeof(password));
-        return 1;
-    }
-    int action = 0;
-    const char *group_id = "";
-    for (size_t i = 0; i < state->account_group_count; ++i)
-        if (state->account_groups[i].mode == CR_MODE_ADMIN) { group_id = state->account_groups[i].id; break; }
-    int rc = cr_state_account_upsert(state, "", login, login, password,
+    int existing_index = cr_state_find_account(state, login);
+    int rc = 0, updated_existing = 0;
+    if (existing_index >= 0) {
+        cr_account *existing = &state->accounts[existing_index];
+        if (existing->mode != CR_MODE_ADMIN || existing->local_login_only) {
+            fprintf(stderr, "carracho-server: existing account '%s' is not a network administrator\n", login);
+            cr_state_close(state);
+            free(state);
+            memset(password, 0, sizeof(password));
+            return 1;
+        }
+        rc = cr_state_account_change_password(state, existing->id, password);
+        updated_existing = 1;
+    } else {
+        int action = 0;
+        const char *group_id = "";
+        for (size_t i = 0; i < state->account_group_count; ++i)
+            if (state->account_groups[i].mode == CR_MODE_ADMIN) { group_id = state->account_groups[i].id; break; }
+        rc = cr_state_account_upsert(state, "", login, login, password,
                                      administrator_permission_bits(), group_id, 0, 0, &action);
+        if (!rc && action != 0) rc = -1;
+    }
     cr_state_close(state);
     free(state);
     memset(password, 0, sizeof(password));
-    if (rc || action != 0) {
-        fprintf(stderr, "carracho-server: administrator could not be created (login may already exist)\n");
+    if (rc) {
+        fprintf(stderr, "carracho-server: administrator password could not be initialized\n");
         return 1;
     }
-    fprintf(stdout, "Initialized administrator '%s' in %s\n", login, config->state_path);
+    fprintf(stdout, "%s administrator '%s' in %s\n",
+            updated_existing ? "Updated" : "Initialized", login, config->state_path);
     return 0;
 }
 

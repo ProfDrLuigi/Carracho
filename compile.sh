@@ -13,6 +13,24 @@ HTTP_ENV="$LIVE_ETC/carracho-server.env"
 SYSTEMD_DROPIN_DIR="/etc/systemd/system/carracho.service.d"
 SYSTEMD_DROPIN="$SYSTEMD_DROPIN_DIR/webadmin.conf"
 
+FRESH_SERVER_DB=0
+if [ ! -e /opt/carracho/db/server.db ] \
+   && [ ! -e /opt/carracho/server-state.json ] \
+   && [ ! -e /opt/carracho/db/server-state.json ]; then
+    FRESH_SERVER_DB=1
+fi
+
+generate_initial_admin_password() {
+    if command -v openssl >/dev/null 2>&1; then
+        openssl rand -hex 16
+    else
+        python3 - <<'PYGEN'
+import secrets
+print(secrets.token_hex(16))
+PYGEN
+    fi
+}
+
 resolve_service_identity() {
     local user=""
     if systemctl cat carracho.service >/dev/null 2>&1; then
@@ -250,6 +268,32 @@ done
 if [ -f "$LIVE_ETC/carracho-bot-avatar.png" ]; then
     chown "$SERVICE_USER:$SERVICE_GROUP" "$LIVE_ETC/carracho-bot-avatar.png"
     chmod 0644 "$LIVE_ETC/carracho-bot-avatar.png"
+fi
+
+if [ "$FRESH_SERVER_DB" -eq 1 ]; then
+    echo "==> Initializing protected administrator account for new server database"
+    INITIAL_ADMIN_PASSWORD="$(generate_initial_admin_password)"
+    printf '%s\n' "$INITIAL_ADMIN_PASSWORD" \
+        | /opt/carracho/carracho-server --config "$LIVE_ETC/carracho-server.json" \
+            --init-admin admin --password-stdin
+    chown "$SERVICE_USER:$SERVICE_GROUP" -R /opt/carracho/db
+
+    echo
+    echo "============================================================"
+    echo " NEW CARRACHO SERVER - INITIAL CREDENTIALS"
+    echo "============================================================"
+    echo " Administrator login:    admin"
+    echo " Administrator password: $INITIAL_ADMIN_PASSWORD"
+    echo
+    echo " IMPORTANT: Change this administrator password immediately"
+    echo " after your first login."
+    echo
+    echo " The anonymous account has NO password by default."
+    echo " If desired, set a password for 'anonymous' in"
+    echo " Administration -> Accounts."
+    echo "============================================================"
+    echo
+    unset INITIAL_ADMIN_PASSWORD
 fi
 
 echo "==> Configuring WebAdmin token/systemd"

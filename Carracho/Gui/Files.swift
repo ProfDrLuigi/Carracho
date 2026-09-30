@@ -627,7 +627,7 @@ extension ViewController {
         styleMacFilesToolbarButton(fileParentButton, image: NSImage(named: NSImage.Name("Arrow Up")), help: L("Go to Parent Folder"), templateTint: nil, iconOnly: true)
         styleMacFilesToolbarButton(fileRefreshButton, image: NSImage(named: NSImage.Name("Refresh")), help: L("Refresh"), templateTint: nil, iconOnly: true)
         styleMacFilesToolbarButton(fileNewFolderButton, title: L("New Folder"), image: NSImage(named: NSImage.Name("Add Folder")), help: L("Create New Folder"), templateTint: nil)
-        styleMacFilesToolbarButton(fileUploadButton, title: L("Upload"), image: NSImage(named: NSImage.Name("Upload")), help: L("Upload File or Folder"), templateTint: nil)
+        styleMacFilesToolbarButton(fileUploadButton, title: L("Upload"), image: NSImage(named: NSImage.Name("Upload")), help: L("Upload Files or Folders"), templateTint: nil)
         styleMacFilesToolbarButton(fileInfoButton, title: L("Get Info"), image: NSImage(named: NSImage.Name("Get Info")), help: L("Information"), templateTint: nil)
         styleMacFilesToolbarButton(fileQuickViewButton, title: L("Quick View"), image: NSImage(named: NSImage.Name("Quickview")), help: L("Quick View"), templateTint: nil)
         styleMacFilesToolbarButton(fileDownloadButton, title: L("Download"), image: NSImage(named: NSImage.Name("Download")), help: L("Download Selected"), templateTint: nil)
@@ -2148,12 +2148,12 @@ extension ViewController {
         let canUpload = remotePermissionEnabled(LegacyAccountPermissionBit.upload) ||
             remotePermissionEnabled(LegacyAccountPermissionBit.uploadAnywhere)
         let canCreateFolder = remotePermissionEnabled(LegacyAccountPermissionBit.createFolders)
-        let canDeleteSingle: Bool = {
-            guard let selectedEntry, !selectedEntry.isSymbolicLink else { return false }
-            return selectedEntry.isFolder
+        let canDeleteSelection = !selection.isEmpty && selection.allSatisfy { row in
+            guard !row.entry.isSymbolicLink else { return false }
+            return row.entry.isFolder
                 ? remotePermissionEnabled(LegacyAccountPermissionBit.deleteFolders)
                 : remotePermissionEnabled(LegacyAccountPermissionBit.deleteFiles)
-        }()
+        }
 
         fileDownloadButton.isEnabled = available && connected && fileTransferClient != nil && !selection.isEmpty && canDownload
         fileUploadButton.isEnabled = available && connected && fileTransferClient != nil && lastDirectory != nil && fileSearchResults == nil && canUpload
@@ -2161,7 +2161,7 @@ extension ViewController {
         fileInfoButton.isEnabled = available && connected && selectedEntry != nil
         fileQuickViewButton.isEnabled = available && connected && canDownload && fileTransferClient != nil && !isQuickViewPreparing &&
             quickViewTransferTask == nil && selectedEntry.map(canQuickView) == true
-        fileDeleteButton.isEnabled = available && connected && selection.count == 1 && canDeleteSingle
+        fileDeleteButton.isEnabled = available && connected && canDeleteSelection
         updateFileBrowserPresentation()
     }
 
@@ -2382,6 +2382,8 @@ extension ViewController {
             clientSettingsEmailField = nil
             clientSettingsAboutView = nil
             clientSettingsDownloadFolderField = nil
+            clientSettingsShowUserPresenceNotificationsCheckbox = nil
+            clientSettingsQuitOnLastWindowCloseCheckbox = nil
             clientSettingsAvatarView = nil
             clientSettingsPendingDownloadFolderPath = nil
             return
@@ -2463,31 +2465,67 @@ extension ViewController {
     }
 
     @objc func deleteSelectedServerItem(_ sender: Any?) {
-        guard client.isConnected, let entry = selectedDownloadEntry, let path = selectedServerItemPath,
-              let window = view.window else { return }
+        guard client.isConnected, let window = view.window else { return }
+        let selectedRows = selectedVisibleFileRows
+        guard !selectedRows.isEmpty else { return }
+
+        let selectedPaths = normalizedRemoteMovePaths(selectedRows.map(\.path))
+        let rowsByPath = Dictionary(uniqueKeysWithValues: selectedRows.map { ($0.path, $0.entry) })
+        let plans = selectedPaths.compactMap { path -> (path: Data, entry: LegacyDirectoryEntry)? in
+            guard let entry = rowsByPath[path], !entry.isSymbolicLink else { return nil }
+            let allowed = entry.isFolder
+                ? remotePermissionEnabled(LegacyAccountPermissionBit.deleteFolders)
+                : remotePermissionEnabled(LegacyAccountPermissionBit.deleteFiles)
+            return allowed ? (path, entry) : nil
+        }
+        guard plans.count == selectedPaths.count, !plans.isEmpty else {
+            updateFileTransferButtons()
+            return
+        }
+
         let alert = NSAlert()
         alert.alertStyle = .warning
-        alert.messageText = entry.isFolder ? L("Delete Folder") : L("Delete File")
-        alert.informativeText = LF("Move “%@” to the server Trash?", Self.macRomanString(entry.name))
+        if plans.count == 1, let only = plans.first {
+            alert.messageText = only.entry.isFolder ? L("Delete Folder") : L("Delete File")
+            alert.informativeText = LF("Move “%@” to the server Trash?", Self.macRomanString(only.entry.name))
+        } else {
+            alert.messageText = LF("Delete %@ Items", String(plans.count))
+            alert.informativeText = LF("Move %@ selected items to the server Trash?", String(plans.count))
+        }
         alert.addButton(withTitle: L("Delete"))
         alert.addButton(withTitle: L("Cancel"))
         alert.beginSheetModal(for: window) { [weak self] response in
             guard response == .alertFirstButtonReturn, let self else { return }
-            self.client.deleteFile(path: path) { [weak self] result in
-                guard let self else { return }
-                switch result {
-                case .success:
-                    // The selected row can come from an inline-expanded child folder. Refreshing
-                    // only `lastDirectory` does not update that child's cached listing, leaving the
-                    // successfully trashed item visible until the tree is collapsed/reloaded.
-                    // Patch the local tree immediately, then ask the server to reconcile the open
-                    // directory/search results in the background.
-                    self.applySuccessfulRemoteDelete(path: path, wasFolder: entry.isFolder)
-                    self.refreshCurrentServerDirectory()
-                case let .failure(error):
-                    self.appendLine("\n" + LF("Delete failed: %@", Self.displayMessage(for: error)))
-                }
+            self.deleteServerItems(plans, index: 0, failures: [])
+        }
+    }
+
+    private func deleteServerItems(_ plans: [(path: Data, entry: LegacyDirectoryEntry)],
+                                   index: Int, failures: [String]) {
+        guard index < plans.count else {
+            refreshCurrentServerDirectory()
+            if !failures.isEmpty {
+                appendLine("\n" + LF("%@ of %@ selected items could not be deleted.",
+                                      String(failures.count), String(plans.count)))
+                for failure in failures { appendLine("\n" + failure) }
             }
+            return
+        }
+
+        let plan = plans[index]
+        client.deleteFile(path: plan.path) { [weak self] result in
+            guard let self else { return }
+            var failures = failures
+            switch result {
+            case .success:
+                // Keep the inline-expanded tree coherent immediately. The final refresh below
+                // reconciles the complete directory/search state after the whole batch.
+                self.applySuccessfulRemoteDelete(path: plan.path, wasFolder: plan.entry.isFolder)
+            case let .failure(error):
+                failures.append(LF("Delete failed for %@: %@",
+                                   LegacyPath.displayString(plan.path), Self.displayMessage(for: error)))
+            }
+            self.deleteServerItems(plans, index: index + 1, failures: failures)
         }
     }
 
@@ -2630,7 +2668,7 @@ extension ViewController {
         } else {
             targetPath = currentPath
         }
-        for url in urls { enqueueUpload(localFile: url, parentPath: targetPath) }
+        enqueueUploads(localFiles: urls, parentPath: targetPath)
         return true
     }
 
