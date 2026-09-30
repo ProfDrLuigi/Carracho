@@ -509,6 +509,13 @@ if [ -f "$DOCS_SERVER/appcast.xml" ]; then
     cp "$DOCS_SERVER/appcast.xml" "$FEED_DIR/appcast.xml"
 fi
 
+if [ -f "$FEED_DIR/appcast.xml" ]; then
+    python3 "$ROOT/scripts/release/appcast_republish.py" \
+        drop-version \
+        "$FEED_DIR/appcast.xml" \
+        "$BUILD_NUMBER"
+fi
+
 "$SPARKLE_TOOL" \
     --account "$SPARKLE_KEY_ACCOUNT" \
     --download-url-prefix "https://github.com/$GITHUB_REPO/releases/download/$TAG/" \
@@ -525,6 +532,10 @@ grep -Fq "$ASSET_NAME" "$FEED_DIR/appcast.xml" \
 grep -Fq "sparkle:edSignature" "$FEED_DIR/appcast.xml" \
     || die "Generated appcast contains no EdDSA signature"
 xmllint --noout "$FEED_DIR/appcast.xml"
+python3 "$ROOT/scripts/release/appcast_republish.py" \
+    verify-universal \
+    "$FEED_DIR/appcast.xml" \
+    "$BUILD_NUMBER"
 
 cp "$FEED_DIR/appcast.xml" "$DOCS_SERVER/appcast.xml"
 

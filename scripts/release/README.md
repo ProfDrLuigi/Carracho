@@ -92,6 +92,8 @@ Each publisher builds its own app, creates its ZIP/appcast, uploads its own asse
 
 Release builds are forced to **Universal 2** (`arm64 + x86_64`) with a generic macOS destination. Before signing, notarization or upload, the publisher checks every Mach-O file in the app bundle with `lipo` and aborts unless both architecture slices are present.
 
+When a build number is republished, the publisher removes that existing item from the copied appcast before running Sparkle's `generate_appcast`. This forces Sparkle to re-infer system and hardware metadata from the new archive instead of preserving stale branch metadata from the previous artifact. The generated item is then rejected if it still declares an `arm64` hardware requirement for the Universal 2 build.
+
 ## Migrating the old Sparkle feeds
 
 The GitHub-first feeds are:
