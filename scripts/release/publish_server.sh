@@ -114,6 +114,46 @@ ASKPASS_EOF
     return "$rc"
 }
 
+github_release_exists() {
+    local repo="$1"
+    local tag="$2"
+
+    python3 - "$repo" "$tag" <<'PYTHON'
+import os
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+
+repo, tag = sys.argv[1:3]
+token = os.environ.get("GITHUB_TOKEN", "")
+if not token:
+    print("GITHUB_TOKEN is not set", file=sys.stderr)
+    raise SystemExit(2)
+
+encoded_tag = urllib.parse.quote(tag, safe="")
+url = f"https://api.github.com/repos/{repo}/releases/tags/{encoded_tag}"
+request = urllib.request.Request(url, method="GET")
+request.add_header("Accept", "application/vnd.github+json")
+request.add_header("Authorization", f"Bearer {token}")
+request.add_header("X-GitHub-Api-Version", "2022-11-28")
+
+try:
+    with urllib.request.urlopen(request):
+        raise SystemExit(0)
+except urllib.error.HTTPError as exc:
+    if exc.code == 404:
+        raise SystemExit(1)
+
+    payload = exc.read().decode("utf-8", "replace")
+    print(f"GitHub API GET {url} failed ({exc.code}): {payload}", file=sys.stderr)
+    raise SystemExit(2) from exc
+except urllib.error.URLError as exc:
+    print(f"GitHub API GET {url} failed: {exc}", file=sys.stderr)
+    raise SystemExit(2) from exc
+PYTHON
+}
+
 verify_executables() {
     local app="$1"
     local errors
@@ -398,18 +438,68 @@ if [ -n "$(git_safe status --porcelain -- docs/server/appcast.xml)" ]; then
 fi
 
 say "Creating/verifying release tag $TAG"
+TAG_NEEDS_FORCE_PUSH=0
+TAG_EXPECTED_REMOTE_OBJECT=""
+
 if git_safe rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+    TAG_OBJECT="$(git_safe rev-parse "refs/tags/$TAG")"
     TAG_COMMIT="$(git_safe rev-list -n1 "$TAG")"
     HEAD_COMMIT="$(git_safe rev-parse HEAD)"
 
-    [ "$TAG_COMMIT" = "$HEAD_COMMIT" ] \
-        || die "Tag $TAG already exists at a different commit"
+    if [ "$TAG_COMMIT" != "$HEAD_COMMIT" ]; then
+        git_safe merge-base --is-ancestor "$TAG_COMMIT" "$HEAD_COMMIT" \
+            || die "Tag $TAG points to a commit that is not an ancestor of HEAD"
+
+        EXPECTED_RETRY_SUBJECT="Publish Carracho Server $VERSION appcast"
+        RETRY_SUBJECTS="$(git_safe log --format='%s' "$TAG_COMMIT..$HEAD_COMMIT")"
+        BAD_RETRY_SUBJECTS="$(
+            printf '%s\n' "$RETRY_SUBJECTS" \
+            | grep -Fvx "$EXPECTED_RETRY_SUBJECT" \
+            || true
+        )"
+
+        if [ -z "$RETRY_SUBJECTS" ] || [ -n "$BAD_RETRY_SUBJECTS" ]; then
+            printf '%s\n' "$RETRY_SUBJECTS" >&2
+            die "Refusing to move $TAG: commits after the tag are not only retry appcast commits"
+        fi
+
+        if github_release_exists "$GITHUB_REPO" "$TAG"; then
+            die "GitHub Release $TAG already exists; refusing to move an already published release tag"
+        else
+            RELEASE_CHECK_RC=$?
+            [ "$RELEASE_CHECK_RC" = "1" ] \
+                || die "Could not verify whether GitHub Release $TAG already exists"
+        fi
+
+        REMOTE_TAG_OBJECT="$(
+            git_safe ls-remote --tags origin "refs/tags/$TAG" \
+            | awk 'NR == 1 { print $1 }'
+        )"
+
+        if [ -n "$REMOTE_TAG_OBJECT" ] && [ "$REMOTE_TAG_OBJECT" != "$TAG_OBJECT" ]; then
+            die "Remote tag $TAG changed since fetch; refusing retry recovery"
+        fi
+
+        say "Recovering unfinished $TAG publish by moving the tag to the latest retry appcast commit"
+        TAG_EXPECTED_REMOTE_OBJECT="$REMOTE_TAG_OBJECT"
+        git_safe tag -f -a "$TAG" -m "Carracho $VERSION" "$HEAD_COMMIT"
+
+        if [ -n "$TAG_EXPECTED_REMOTE_OBJECT" ]; then
+            TAG_NEEDS_FORCE_PUSH=1
+        fi
+    fi
 else
     git_safe tag -a "$TAG" -m "Carracho $VERSION"
 fi
 
 say "Pushing release tag to GitHub"
-git_push_with_token push origin "$TAG"
+if [ "$TAG_NEEDS_FORCE_PUSH" = "1" ]; then
+    git_push_with_token push \
+        --force-with-lease="refs/tags/$TAG:$TAG_EXPECTED_REMOTE_OBJECT" \
+        origin "refs/tags/$TAG"
+else
+    git_push_with_token push origin "$TAG"
+fi
 
 say "Creating/updating GitHub Release and uploading $ASSET_NAME"
 python3 "$ROOT/scripts/release/github_release.py" \
