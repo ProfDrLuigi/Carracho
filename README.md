@@ -20,7 +20,7 @@ See the collapsible **Security and modern encryption** section below for the pro
 
 ### Current release: 1.1.3
 
-Carracho 1.1.3 adds **multi-select delete and upload in Files**, configurable **red close-button behaviour**, safer **first-run administrator credentials**, and clearer Linux installation requirements for the runtime user's access to `/opt/carracho`. The macOS client and server are version **1.1.3 (build 14)**, with matching first-run support in the native Linux server and installers.
+Carracho 1.1.3 focuses on safer first-run server setup, more capable Files operations, and configurable macOS window-close behaviour. The macOS client and server are version 1.1.3 (build 14), with matching first-run support in the native Linux server and installers.
 
 The full release notes are available in [`README_1.1.3.md`](README_1.1.3.md).
 

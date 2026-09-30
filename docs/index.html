@@ -104,8 +104,10 @@
           <li>Files can now delete multiple selected server items in one operation.</li>
           <li>The Upload dialog can select multiple local files and folders at once and queue them together.</li>
           <li>Added a client setting controlling whether closing the last window quits Carracho or leaves it running in the Dock.</li>
-          <li>Fresh server databases now protect the built-in admin account with a random initial password before the server can accept connections.</li>
-          <li>Linux installation documentation now explicitly requires the server runtime user to have full access to /opt/carracho and its contents.</li>
+          <li>Fresh server databases now protect the built-in <code>admin</code> account with a random initial password before the server can accept connections.</li>
+          <li>First-run setup clearly explains that <code>anonymous</code> has no password by default and can be given one in Administration → Accounts.</li>
+          <li>Linux installation documentation now explicitly requires the server runtime user to have full access to <code>/opt/carracho</code> and its contents.</li>
+          <li>Updated Carracho and Carracho Server version reporting to <strong>1.1.3 / build 14</strong>.</li>
           <!-- RELEASE_HIGHLIGHTS_END -->
         </ul>
       </div>
@@ -261,13 +263,12 @@ bash ServerLinux/build.sh
           <div class="eyebrow">Current release</div>
           <h2>Carracho 1.1.3</h2>
           <p>
-            Multi-select Files operations, configurable close-button behaviour,
-            safer first-run administrator credentials and clearer Linux installation requirements.
+            Carracho 1.1.3 focuses on safer first-run server setup, more capable Files operations, and configurable macOS window-close behaviour. The macOS client and server are version 1.1.3 (build 14), with matching first-run support in the native Linux server and installers.
           </p>
         </div>
         <div class="release-actions">
           <a class="button button-primary" href="https://github.com/ProfDrLuigi/Carracho/releases/latest" rel="noreferrer">Get 1.1.3</a>
-          <a class="text-link" href="https://github.com/ProfDrLuigi/Carracho/blob/main/README_1.1.3.md" rel="noreferrer">Read release notes →</a>
+          <a class="text-link" href="releases/1.1.3.html" rel="noreferrer">Read release notes →</a>
         </div>
       </div>
     </section>

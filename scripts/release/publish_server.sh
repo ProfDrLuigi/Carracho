@@ -14,6 +14,7 @@ GITHUB_KEYCHAIN_SERVICE="Carracho-GitHub-Publish"
 PAGES_BASE="https://profdrLuigi.github.io/Carracho"
 BRANCH="${CARRACHO_RELEASE_BRANCH:-main}"
 
+SIGNING_MODE="${CARRACHO_SIGNING_MODE:-none}"
 NOTARY_PROFILE="${CARRACHO_NOTARY_PROFILE:-Carracho}"
 SPARKLE_KEY_ACCOUNT="${SPARKLE_KEY_ACCOUNT:-ed25519}"
 
@@ -152,6 +153,7 @@ DOCS_RELEASES="$ROOT/docs/releases"
 DOCS_SERVER="$ROOT/docs/server"
 
 say "Preparing Carracho Server $VERSION (build $BUILD_NUMBER)"
+echo "Apple signing mode: $SIGNING_MODE"
 
 [ -f "$RELEASE_NOTES" ] || die "Missing $RELEASE_NOTES"
 grep -Fq "# Carracho $VERSION" "$RELEASE_NOTES" \
@@ -211,72 +213,100 @@ if [ -n "$(
     git_safe commit -m "Prepare Carracho Server $VERSION release"
 fi
 
-say "Locating Developer ID Application certificate"
-IDENTITY="${CARRACHO_DEVELOPER_IDENTITY:-}"
+case "$SIGNING_MODE" in
+    none)
+        say "Building Release app without Developer ID (Team: None)"
+        rm -rf "$DERIVED_DATA"
+        mkdir -p "$WORK_ROOT"
 
-if [ -z "$IDENTITY" ]; then
-    IDENTITY="$(
-        security find-identity -v -p codesigning 2>/dev/null \
-        | sed -n 's/.*"\(Developer ID Application:[^"]*\)".*/\1/p' \
-        | head -n1
-    )"
-fi
+        xcodebuild \
+            -project "$PROJECT" \
+            -scheme "$SERVER_SCHEME" \
+            -configuration Release \
+            -derivedDataPath "$DERIVED_DATA" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            DEVELOPMENT_TEAM="" \
+            clean build
 
-[ -n "$IDENTITY" ] \
-    || die "No Developer ID Application certificate found in the login keychain"
+        restore_xcode_package_lock_if_deleted
 
-TEAM_ID="$(
-    printf '%s' "$IDENTITY" \
-    | sed -n 's/.*(\([A-Z0-9][A-Z0-9]*\))$/\1/p'
-)"
+        [ -d "$FINAL_APP" ] \
+            || die "Release app was not produced at $FINAL_APP"
 
-[ -n "$TEAM_ID" ] \
-    || die "Could not derive the Apple Team ID from Developer ID identity: $IDENTITY"
+        say "Apple Developer ID signing disabled; Team: None"
+        echo "Xcode may apply an ad-hoc/linker signature, but no Apple Team ID is used."
+        echo "Skipping Developer ID verification, notarization, stapling and Gatekeeper assessment."
+        ;;
 
-say "Building signed Release app"
-rm -rf "$DERIVED_DATA"
-mkdir -p "$WORK_ROOT"
+    developer-id)
+        say "Locating Developer ID Application certificate"
+        IDENTITY="${CARRACHO_DEVELOPER_IDENTITY:-}"
 
-xcodebuild \
-    -project "$PROJECT" \
-    -scheme "$SERVER_SCHEME" \
-    -configuration Release \
-    -derivedDataPath "$DERIVED_DATA" \
-    CODE_SIGN_STYLE=Manual \
-    CODE_SIGN_IDENTITY="$IDENTITY" \
-    DEVELOPMENT_TEAM="$TEAM_ID" \
-    ENABLE_HARDENED_RUNTIME=YES \
-    clean build
+        if [ -z "$IDENTITY" ]; then
+            IDENTITY="$(
+                security find-identity -v -p codesigning 2>/dev/null \
+                | sed -n 's/.*"\(Developer ID Application:[^"]*\)".*/\1/p' \
+                | head -n1
+            )"
+        fi
 
-restore_xcode_package_lock_if_deleted
+        [ -n "$IDENTITY" ] \
+            || die "No Developer ID Application certificate found in the login keychain"
 
-[ -d "$FINAL_APP" ] \
-    || die "Release app was not produced at $FINAL_APP"
+        TEAM_ID="$(
+            printf '%s' "$IDENTITY" \
+            | sed -n 's/.*(\([A-Z0-9][A-Z0-9]*\))$/\1/p'
+        )"
 
-say "Verifying code signatures"
-codesign --verify --deep --strict --verbose=4 "$FINAL_APP"
-verify_executables "$FINAL_APP"
+        [ -n "$TEAM_ID" ] \
+            || die "Could not derive the Apple Team ID from Developer ID identity: $IDENTITY"
 
-say "Notarizing Release app"
-if [ "${CARRACHO_SKIP_NOTARIZATION:-0}" != "1" ]; then
-    rm -f "$NOTARY_ZIP"
-    ditto -c -k --sequesterRsrc --keepParent \
-        "$FINAL_APP" \
-        "$NOTARY_ZIP"
+        say "Building Developer ID signed Release app"
+        rm -rf "$DERIVED_DATA"
+        mkdir -p "$WORK_ROOT"
 
-    if ! xcrun notarytool submit "$NOTARY_ZIP" \
-        --keychain-profile "$NOTARY_PROFILE" \
-        --wait; then
-        die "Notarization failed. Configure the '$NOTARY_PROFILE' notarytool profile as documented in scripts/release/README.md."
-    fi
+        xcodebuild \
+            -project "$PROJECT" \
+            -scheme "$SERVER_SCHEME" \
+            -configuration Release \
+            -derivedDataPath "$DERIVED_DATA" \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="$IDENTITY" \
+            DEVELOPMENT_TEAM="$TEAM_ID" \
+            ENABLE_HARDENED_RUNTIME=YES \
+            clean build
 
-    xcrun stapler staple "$FINAL_APP"
-    xcrun stapler validate "$FINAL_APP"
-else
-    echo "WARNING: notarization skipped because CARRACHO_SKIP_NOTARIZATION=1" >&2
-fi
+        restore_xcode_package_lock_if_deleted
 
-spctl --assess --type execute --verbose=4 "$FINAL_APP"
+        [ -d "$FINAL_APP" ] \
+            || die "Release app was not produced at $FINAL_APP"
+
+        say "Verifying code signatures"
+        codesign --verify --deep --strict --verbose=4 "$FINAL_APP"
+        verify_executables "$FINAL_APP"
+
+        say "Notarizing Release app"
+        rm -f "$NOTARY_ZIP"
+        ditto -c -k --sequesterRsrc --keepParent \
+            "$FINAL_APP" \
+            "$NOTARY_ZIP"
+
+        if ! xcrun notarytool submit "$NOTARY_ZIP" \
+            --keychain-profile "$NOTARY_PROFILE" \
+            --wait; then
+            die "Notarization failed. Configure the '$NOTARY_PROFILE' notarytool profile as documented in scripts/release/README.md."
+        fi
+
+        xcrun stapler staple "$FINAL_APP"
+        xcrun stapler validate "$FINAL_APP"
+        spctl --assess --type execute --verbose=4 "$FINAL_APP"
+        ;;
+
+    *)
+        die "Unsupported CARRACHO_SIGNING_MODE '$SIGNING_MODE' (use 'none' or 'developer-id')"
+        ;;
+esac
 
 say "Creating final Sparkle ZIP"
 rm -f "$FINAL_ZIP"

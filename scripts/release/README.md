@@ -16,15 +16,25 @@ Use a fine-grained GitHub token for `ProfDrLuigi/Carracho` with **Contents: Read
 
 If `gh` is installed and authenticated, or `GITHUB_TOKEN` is supplied in the environment, the publisher can use those instead.
 
-### Apple notarization
+### Apple signing / notarization
 
-Store a notarytool profile once:
+Apple Developer ID signing is **optional**. The publisher defaults to:
 
-```sh
-scripts/release/setup_notary.sh
+```text
+CARRACHO_SIGNING_MODE=none
 ```
 
-The helper calls `xcrun notarytool store-credentials Carracho` and lets notarytool prompt for Apple ID, Team ID and an app-specific password. The publisher always notarizes the freshly built Server app, staples the ticket and then runs Gatekeeper validation. The profile name defaults to `Carracho`; override it with `CARRACHO_NOTARY_PROFILE`.
+In this mode Xcode builds the Release app with **Team: None** using `CODE_SIGNING_ALLOWED=NO`. No Developer ID certificate or Apple Team ID is required. Xcode/the linker may still place an ad-hoc signature on Mach-O executables, but there is no Developer ID identity (`TeamIdentifier` is unset). The publisher skips Developer ID verification, notarization, stapling and Gatekeeper assessment. Sparkle EdDSA signing remains enabled and still protects the update archive/appcast.
+
+If a Developer ID certificate is available later, opt in with:
+
+```sh
+CARRACHO_SIGNING_MODE=developer-id scripts/release/publish_server.sh
+```
+
+For that optional mode, store a notarytool profile once with `scripts/release/setup_notary.sh`.
+
+**Important:** an app without Developer ID/notarization can trigger macOS Gatekeeper warnings when downloaded from the Internet. Sparkle signature verification does not replace Apple's Developer ID/notarization trust path.
 
 ### Sparkle signing
 
@@ -39,7 +49,7 @@ Before running the target:
 - commit the source changes;
 - keep the tracked working tree clean.
 
-The target then prepares website/changelog metadata, builds and signs the Release app, notarizes and staples the Release app, creates the Sparkle archive/appcast, creates or updates the GitHub Release, uploads the ZIP, commits the generated appcast/website files, and pushes everything to GitHub.
+The target then prepares website/changelog metadata, builds the Release app using the selected Apple signing mode, creates the Sparkle archive/appcast, creates or updates the GitHub Release, uploads the ZIP, commits the generated appcast/website files, and pushes everything to GitHub.
 
 ## Migrating the old Sparkle feed
 

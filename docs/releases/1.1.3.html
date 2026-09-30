@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Carracho 1.1.3</title>
+  <link rel="stylesheet" href="../styles.css">
+  <style>
+    .release-page { width:min(calc(100% - 40px), 900px); margin:0 auto; padding:72px 0 110px; }
+    .release-page h1 { font-size:clamp(2.8rem,7vw,5rem); margin-bottom:28px; }
+    .release-page h2 { margin-top:54px; font-size:2rem; }
+    .release-page h3 { margin-top:34px; }
+    .release-page p, .release-page li { color:var(--muted-strong); }
+    .release-page code { padding:.12em .38em; border-radius:6px; background:rgba(255,255,255,.07); }
+    .release-page pre { margin:22px 0; border:1px solid var(--line); border-radius:16px; background:#070b12; }
+    .release-back { display:inline-flex; margin-bottom:34px; color:var(--orange-2); text-decoration:none; font-weight:700; }
+  </style>
+</head>
+<body>
+  <main class="release-page">
+    <a class="release-back" href="../">← Carracho</a>
+<h1>Carracho 1.1.3</h1>
+<p>Carracho 1.1.3 focuses on <strong>safer first-run server setup, more capable Files operations, and configurable macOS window-close behaviour</strong>. The macOS client and server are version <strong>1.1.3 (build 14)</strong>, with matching first-run support in the native Linux server and installers.</p>
+<h2>Highlights</h2>
+<ul>
+<li>Files can now delete multiple selected server items in one operation.</li>
+<li>The Upload dialog can select multiple local files and folders at once and queue them together.</li>
+<li>Added a client setting controlling whether closing the last window quits Carracho or leaves it running in the Dock.</li>
+<li>Fresh server databases now protect the built-in <code>admin</code> account with a random initial password before the server can accept connections.</li>
+<li>First-run setup clearly explains that <code>anonymous</code> has no password by default and can be given one in Administration → Accounts.</li>
+<li>Linux installation documentation now explicitly requires the server runtime user to have full access to <code>/opt/carracho</code> and its contents.</li>
+<li>Updated Carracho and Carracho Server version reporting to <strong>1.1.3 / build 14</strong>.</li>
+</ul>
+<h2>Carracho Client 1.1.3</h2>
+<h3>Multi-select Files operations</h3>
+<p>The Files browser now applies <strong>Delete</strong> to all selected server items when the account has the required delete permissions for every selected file or folder. A single confirmation covers the batch, delete requests are sent safely one after another, and selecting both a folder and one of its children does not generate a redundant second delete for that child.</p>
+<p>Successful deletions are removed from the visible file tree immediately. Individual failures are reported without discarding successful operations from the same batch.</p>
+<p>The Upload dialog now allows selecting <strong>multiple local files and/or folders at once</strong>. Every selected item is added to the existing transfer queue, and transfer capacity is refreshed once for the complete batch. Multi-item Finder drag-and-drop uses the same batched enqueue path.</p>
+<h3>Configurable red close-button behaviour</h3>
+<p>The General client settings now include an <strong>App Behavior</strong> option controlling what happens when the last Carracho window is closed with the red macOS close button.</p>
+<p>The option defaults to enabled, preserving the historical behaviour: closing the final window quits Carracho. When disabled, the window closes but Carracho remains running in the Dock and existing server sessions remain active. Clicking the Carracho Dock icon brings the main window back. <strong>Quit Carracho</strong> from the application menu still terminates the app normally.</p>
+<h2>Carracho Server 1.1.3</h2>
+<h3>Secure first-run administrator credentials</h3>
+<p>A genuinely new server database no longer leaves the built-in <code>admin</code> account with an empty password until an administrator changes it manually. Before the server runtime can accept connections, Carracho generates a random 128-bit initial password and applies it to the built-in <code>admin</code> account.</p>
+<p>On macOS, the Server app displays the generated password once in an <strong>Initial Server Credentials</strong> warning and provides a <strong>Copy Password</strong> action. On Linux source installs and fresh Debian package installs, the installer prints the initial administrator login and password before the service is started. In both cases the administrator is explicitly told to change the password immediately after the first login.</p>
+<p>The generated plaintext password is not written to a separate credentials file. Existing databases and migrated legacy state are not assigned a new password by this bootstrap logic.</p>
+<h3>Anonymous first-run notice</h3>
+<p>The built-in <code>anonymous</code> Guest account intentionally remains passwordless by default. The first-run notice now states this explicitly and explains that an administrator can set a password for <code>anonymous</code> under <strong>Administration → Accounts</strong> when passwordless Guest access is not desired.</p>
+<h3>Linux runtime permissions</h3>
+<p>The Linux installation instructions now explicitly state that the user configured to run <code>carracho-server</code> must have full read, write, create/remove, and directory-traversal access to the complete <code>/opt/carracho</code> tree.</p>
+<p>With the standard service this user is <code>carracho</code>, so <code>/opt/carracho</code> should remain owned appropriately by <code>carracho:carracho</code>. Installations using a different systemd <code>User=</code> or <code>Group=</code> must adjust ownership and permissions accordingly. The documentation explicitly discourages making <code>/opt/carracho</code> world-writable.</p>
+<h2>Compatibility notes</h2>
+<ul>
+<li>Multi-delete and multi-upload are client-side improvements and do not require a new file protocol.</li>
+<li>Existing server databases are not modified by the new first-run password bootstrap.</li>
+<li><code>anonymous</code> remains passwordless unless an administrator explicitly assigns a password.</li>
+</ul>
+  </main>
+</body>
+</html>
