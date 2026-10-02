@@ -23,7 +23,13 @@
     </style>
 </head>
     <body>
-        
+        <p><span class="header" lang="en">New in 1.1.4</span></p>
+        <ul>
+            <span class="newstext">
+                <li>Updated Carracho Server for macOS to version 1.1.4 (build 15) and updated native Linux Server Info/version reporting accordingly.</li>
+                <li><strong>Stable account identity for modern peer metadata</strong> — Both the Swift/macOS server and the native Linux server now include the authenticated account UUID in modern user-arrival and user-update metadata. The stable identifier is sent in initial user snapshots, new-user events and later user metadata refreshes so modern clients can distinguish account identity from the temporary numeric session user ID. Modern observers also receive the stable account identity for Classic peers, while Classic recipients continue to receive the historical packet layouts unchanged.</li>
+        </ul></span>
+
 
         <p><span class="header" lang="en">New in 1.1.3</span></p>
         <ul>

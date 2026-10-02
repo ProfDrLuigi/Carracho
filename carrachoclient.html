@@ -23,7 +23,15 @@
     </style>
 </head>
     <body>
-        
+        <p><span class="header" lang="en">New in 1.1.4</span></p>
+        <ul>
+            <span class="newstext">
+                <li>Updated the macOS client to version 1.1.4 (build 15).</li>
+                <li><strong>Stable Message Center conversation identity</strong> — Private conversations in Message Center no longer use the server&#x27;s transient numeric userID as their durable identity. Modern servers now provide the authenticated account UUID for each visible user, and Carracho stores and selects conversations by that stable account identity while keeping the numeric user ID only as the current live routing address.</li>
+                <li><strong>Safer local private-message history</strong> — Message Center now stores durable Private Message conversations in a v2 SQLite schema keyed by stable peer account UUID. Older session-ID-based private-message history is deliberately not imported automatically because its account ownership cannot be proven safely after IDs have been recycled; those old rows are left untouched in the local database but ignored by the new history. Message edits, reactions, drafts, unread state, avatars, transport metadata and the existing 500-message per-conversation limit continue to use the same Message Center behavior.</li>
+                <li><strong>Safe fallback for older servers</strong> — If a server does not provide a stable account UUID, Carracho still allows Private Messages during the current connection, but that conversation remains session-only instead of being persisted under an identity that cannot be trusted across reconnects.</li>
+        </ul></span>
+
 
         <p><span class="header" lang="en">New in 1.1.3</span></p>
         <ul>

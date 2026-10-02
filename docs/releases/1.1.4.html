@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Carracho 1.1.4</title>
+  <link rel="stylesheet" href="../styles.css">
+  <style>
+    .release-page { width:min(calc(100% - 40px), 900px); margin:0 auto; padding:72px 0 110px; }
+    .release-page h1 { font-size:clamp(2.8rem,7vw,5rem); margin-bottom:28px; }
+    .release-page h2 { margin-top:54px; font-size:2rem; }
+    .release-page h3 { margin-top:34px; }
+    .release-page p, .release-page li { color:var(--muted-strong); }
+    .release-page code { padding:.12em .38em; border-radius:6px; background:rgba(255,255,255,.07); }
+    .release-page pre { margin:22px 0; border:1px solid var(--line); border-radius:16px; background:#070b12; }
+    .release-back { display:inline-flex; margin-bottom:34px; color:var(--orange-2); text-decoration:none; font-weight:700; }
+  </style>
+</head>
+<body>
+  <main class="release-page">
+    <a class="release-back" href="../">← Carracho</a>
+<h1>Carracho 1.1.4</h1>
+<p>Carracho 1.1.4 focuses on <strong>keeping Message Center private conversations tied to the correct account across reconnects and server restarts</strong>. The macOS client and server are version <strong>1.1.4 (build 15)</strong>, and the stable peer-identity extension is implemented by both the Swift/macOS and native Linux servers.</p>
+<h2>Highlights</h2>
+<ul>
+<li>Fixed a Message Center history bug where a recycled transient server user ID could make an older private conversation appear under a different user after a server restart.</li>
+<li>Private Message history is now keyed by the server account&#x27;s stable UUID instead of the temporary numeric session user ID.</li>
+<li>The Swift/macOS and native Linux servers now send stable account identity metadata to modern clients while leaving Classic packet layouts unchanged.</li>
+<li>Added a new v2 local Message Center history schema that keeps durable conversations separated by stable account identity.</li>
+<li>Older session-ID-based private-message history is deliberately not imported automatically because its ownership cannot be proven safely after IDs have been recycled.</li>
+<li>Improved Sparkle republishing so metadata for an existing build is regenerated from the replacement Universal 2 archive instead of retaining stale hardware requirements.</li>
+<li>Updated Carracho and Carracho Server version reporting to <strong>1.1.4 / build 15</strong>.</li>
+</ul>
+<h2>Carracho Client 1.1.4</h2>
+<h3>Stable Message Center conversation identity</h3>
+<p>Private conversations in Message Center no longer use the server&#x27;s transient numeric <code>userID</code> as their durable identity. Modern servers now provide the authenticated account UUID for each visible user, and Carracho stores and selects conversations by that stable account identity while keeping the numeric user ID only as the current live routing address.</p>
+<p>This fixes the case where a server restart reused a numeric user ID for a different account. Previously, the stored conversation for that number could be relabelled with the new user&#x27;s nickname and avatar, making messages from one account appear inside another account&#x27;s conversation. In 1.1.4, a conversation can only reconnect to the exact same account UUID.</p>
+<p>The live mapping is also hardened against incomplete disconnects: a durable conversation with an account UUID can never be rebound merely because a later session happens to reuse the same numeric user ID.</p>
+<h3>Safer local private-message history</h3>
+<p>Message Center now stores durable Private Message conversations in a v2 SQLite schema keyed by stable peer account UUID. Older session-ID-based private-message history is deliberately <strong>not</strong> imported automatically because its account ownership cannot be proven safely after IDs have been recycled; those old rows are left untouched in the local database but ignored by the new history. Message edits, reactions, drafts, unread state, avatars, transport metadata and the existing 500-message per-conversation limit continue to use the same Message Center behavior.</p>
+<p>Offline Messages use their separate account-aware storage and are not affected by this private-conversation history change.</p>
+<h3>Safe fallback for older servers</h3>
+<p>If a server does not provide a stable account UUID, Carracho still allows Private Messages during the current connection, but that conversation remains session-only instead of being persisted under an identity that cannot be trusted across reconnects.</p>
+<p>This keeps communication compatible with older servers without recreating the history-mixing bug.</p>
+<h2>Carracho Server 1.1.4</h2>
+<h3>Stable account identity for modern peer metadata</h3>
+<p>Both the Swift/macOS server and the native Linux server now include the authenticated account UUID in modern user-arrival and user-update metadata. The stable identifier is sent in initial user snapshots, new-user events and later user metadata refreshes so modern clients can distinguish account identity from the temporary numeric session user ID. Modern observers also receive the stable account identity for Classic peers, while Classic recipients continue to receive the historical packet layouts unchanged.</p>
+<p>This identity metadata does not change Private Message routing or grant access to another user&#x27;s messages. Messages are still routed to the current live session; the UUID is used by modern clients to associate local history with the correct authenticated account.</p>
+<h2>Release tooling</h2>
+<h3>Safer Sparkle appcast republishing</h3>
+<p>Republishing an existing build number now removes the old item from the copied appcast before Sparkle regenerates the feed entry. This forces Sparkle to infer system and hardware metadata from the replacement archive instead of carrying forward stale metadata from an earlier artifact.</p>
+<p>The publishing scripts also verify that a Universal 2 release does not retain an <code>arm64</code>-only hardware requirement before accepting the generated appcast.</p>
+<h2>Compatibility notes</h2>
+<ul>
+<li>The new stable account-identity field is sent only to modern clients; Classic/Legacy packet layouts are unchanged.</li>
+<li>The 1.1.4 macOS and native Linux servers both provide stable peer account identities to modern clients.</li>
+<li>Against older servers that do not provide a stable account UUID, Private Message conversations remain usable for the current session but are not persisted as durable history.</li>
+<li>Pre-1.1.4 private Message Center history keyed by transient session user IDs is not automatically imported into the v2 history because its account ownership cannot be verified safely. Existing old rows are left untouched on disk.</li>
+<li>Offline Messages are unaffected by the private-conversation storage migration.</li>
+</ul>
+  </main>
+</body>
+</html>

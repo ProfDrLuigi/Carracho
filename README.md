@@ -18,11 +18,11 @@ The modern transport protects far more than login traffic: chat/control packets,
 
 See the collapsible **Security and modern encryption** section below for the protocol details.
 
-### Current release: 1.1.3
+### Current release: 1.1.4
 
-Carracho 1.1.3 focuses on safer first-run server setup, more capable Files operations, and configurable macOS window-close behaviour. The macOS client and server are version 1.1.3 (build 14), with matching first-run support in the native Linux server and installers.
+Carracho 1.1.4 focuses on keeping Message Center private conversations tied to the correct account across reconnects and server restarts. The macOS client and server are version 1.1.4 (build 15), and the stable peer-identity extension is implemented by both the Swift/macOS and native Linux servers.
 
-The full release notes are available in [`README_1.1.3.md`](README_1.1.3.md).
+The full release notes are available in [`README_1.1.4.md`](README_1.1.4.md).
 
 ## At a glance
 
