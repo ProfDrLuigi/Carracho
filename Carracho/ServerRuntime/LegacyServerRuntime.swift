@@ -1858,6 +1858,8 @@ final class LegacyServerRuntime {
                 LegacyTLV(type: 2, value: snapshot.nickname),
                 LegacyTLV(type: LegacyUserInfoField.picture, value: snapshot.picture),
                 LegacyTLV(type: LegacyUserInfoField.statusMessage, value: snapshot.statusMessage),
+                LegacyTLV(type: LegacyUserInfoField.accountIdentifier,
+                          value: LegacyMessageEdit.identifier(snapshot.account.id)),
             ]
             if let color = state.accountColorRGB(for: snapshot.account) {
                 fields.append(LegacyTLV(type: LegacyUserInfoField.groupColorRGB,
@@ -1898,6 +1900,10 @@ final class LegacyServerRuntime {
         }
         modernFields.append(LegacyTLV(type: LegacyUserInfoField.legacyTransport,
                                       value: Data([session.isLegacyTransport ? 1 : 0])))
+        if let accountID = session.account?.id {
+            modernFields.append(LegacyTLV(type: LegacyUserInfoField.accountIdentifier,
+                                          value: LegacyMessageEdit.identifier(accountID)))
+        }
 
         for recipient in recipients {
             let fields = recipient.isLegacyTransport ? classicFields : modernFields
@@ -2852,9 +2858,13 @@ final class LegacyServerRuntime {
                 LegacyTLV(type: LegacyUserInfoField.picture, value: picture),
                 LegacyTLV(type: LegacyUserInfoField.statusMessage, value: statusMessage),
             ]
-            if let current = session.account, let color = backend.snapshot().accountColorRGB(for: current) {
-                modernFields.append(LegacyTLV(type: LegacyUserInfoField.groupColorRGB,
-                                              value: LegacyWire.uint32BE(color)))
+            if let current = session.account {
+                if let color = backend.snapshot().accountColorRGB(for: current) {
+                    modernFields.append(LegacyTLV(type: LegacyUserInfoField.groupColorRGB,
+                                                  value: LegacyWire.uint32BE(color)))
+                }
+                modernFields.append(LegacyTLV(type: LegacyUserInfoField.accountIdentifier,
+                                              value: LegacyMessageEdit.identifier(current.id)))
             }
             for recipient in recipients {
                 let fields = recipient.isLegacyTransport ? classicFields : modernFields

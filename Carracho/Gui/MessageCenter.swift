@@ -193,8 +193,8 @@ extension ViewController {
         }
         privateMessageComposer.youTubeURLHandler = { [weak self] reference in
             guard let self,
-                  let userID = self.selectedPrivateConversationID,
-                  let conversation = self.privateMessageConversations[userID],
+                  let conversationID = self.selectedPrivateConversationID,
+                  let conversation = self.privateMessageConversations[conversationID],
                   !conversation.isLegacyTransport,
                   self.lastLoginResult?.supportsYouTubeLinks == true,
                   self.privateMessageAttachments.youtubeCount < LegacyMediaTransfer.maximumYouTubeLinksPerChatMessage else {
@@ -287,17 +287,18 @@ extension ViewController {
         return page
     }
 
-    func storedConversation(_ conversation: PrivateMessageConversation) -> MessageCenterStoredConversation {
-        MessageCenterStoredConversation(
-            userID: conversation.userID,
+    func storedConversation(_ conversation: PrivateMessageConversation) -> MessageCenterStoredConversation? {
+        guard let accountID = conversation.accountID else { return nil }
+        return MessageCenterStoredConversation(
+            accountID: accountID,
             nickname: conversation.nickname,
             picture: conversation.picture,
-            isLegacyTransport: conversation.isLegacyTransport,
+            isLegacyTransport: false,
             unreadCount: conversation.unreadCount,
             draftText: conversation.draftText,
             lastActivity: conversation.lastActivity,
             messages: conversation.entries.map {
-                MessageCenterStoredPrivateMessage(id: $0.id, userID: conversation.userID,
+                MessageCenterStoredPrivateMessage(id: $0.id,
                                                   timestamp: $0.timestamp, outgoing: $0.outgoing,
                                                   message: $0.message, edited: $0.edited, editable: $0.editable,
                                                   reactable: $0.reactable, myReaction: $0.myReaction,
@@ -308,7 +309,9 @@ extension ViewController {
 
     func restoredConversation(_ conversation: MessageCenterStoredConversation) -> PrivateMessageConversation {
         PrivateMessageConversation(
-            userID: conversation.userID,
+            id: conversation.accountID,
+            accountID: conversation.accountID,
+            userID: nil,
             nickname: conversation.nickname,
             picture: conversation.picture,
             isLegacyTransport: conversation.isLegacyTransport,
@@ -324,6 +327,132 @@ extension ViewController {
         )
     }
 
+    func privateConversationID(forUserID userID: UInt32) -> UUID? {
+        if let accountID = liveUsers[userID]?.accountID {
+            if privateMessageConversations[accountID] != nil { return accountID }
+            // A routing ID may only promote an identity-less conversation. Never let it select a
+            // durable conversation belonging to a different account UUID.
+            return privateMessageConversations.first(where: {
+                $0.value.userID == userID && $0.value.accountID == nil
+            })?.key
+        }
+
+        // Without a stable account ID, only a session-only conversation is safe to address.
+        return privateMessageConversations.first(where: {
+            $0.value.userID == userID && $0.value.accountID == nil
+        })?.key
+    }
+
+    func liveUser(for conversation: PrivateMessageConversation) -> LegacyUserListEntry? {
+        guard let userID = conversation.userID, let user = liveUsers[userID] else { return nil }
+        if let accountID = conversation.accountID {
+            guard user.accountID == accountID else { return nil }
+        }
+        return user
+    }
+
+    /// Binds the current transient routing ID to a durable account UUID when the modern server
+    /// supplies one. A session-only conversation created a few packets earlier is promoted and
+    /// merged into an already restored durable conversation without ever trusting the UInt32 ID
+    /// across server sessions.
+    @discardableResult
+    func bindPrivateConversationIdentity(userID: UInt32, createIfMissing: Bool) -> UUID? {
+        guard let user = liveUsers[userID] else { return privateConversationID(forUserID: userID) }
+
+        let nickname = Self.macRomanString(user.nickname).trimmingCharacters(in: .whitespacesAndNewlines)
+        if let accountID = user.accountID {
+            let transientID = privateMessageConversations.first(where: {
+                $0.key != accountID && $0.value.userID == userID && $0.value.accountID == nil
+            })?.key
+
+            guard createIfMissing || privateMessageConversations[accountID] != nil || transientID != nil else {
+                return nil
+            }
+
+            var conversation = privateMessageConversations[accountID] ?? PrivateMessageConversation(
+                id: accountID,
+                accountID: accountID,
+                userID: userID,
+                nickname: nickname.isEmpty ? LF("User %@", String(userID)) : nickname,
+                picture: user.picture,
+                isLegacyTransport: user.isLegacyTransport,
+                entries: [], unreadCount: 0, draftText: "", lastActivity: Date()
+            )
+
+            if let transientID, let transient = privateMessageConversations.removeValue(forKey: transientID) {
+                var knownIDs = Set(conversation.entries.map(\.id))
+                for entry in transient.entries where knownIDs.insert(entry.id).inserted {
+                    conversation.entries.append(entry)
+                }
+                conversation.entries.sort {
+                    if $0.timestamp != $1.timestamp { return $0.timestamp < $1.timestamp }
+                    return $0.id.uuidString < $1.id.uuidString
+                }
+                if conversation.entries.count > 500 {
+                    conversation.entries.removeFirst(conversation.entries.count - 500)
+                }
+                conversation.unreadCount = min(999, conversation.unreadCount + transient.unreadCount)
+                if conversation.draftText.isEmpty { conversation.draftText = transient.draftText }
+                conversation.lastActivity = max(conversation.lastActivity, transient.lastActivity)
+                if selectedPrivateConversationID == transientID {
+                    selectedPrivateConversationID = accountID
+                }
+            }
+
+            conversation.id = accountID
+            conversation.accountID = accountID
+            conversation.userID = userID
+            if !nickname.isEmpty { conversation.nickname = nickname }
+            conversation.picture = user.picture
+            conversation.isLegacyTransport = user.isLegacyTransport
+            privateMessageConversations[accountID] = conversation
+            persistPrivateConversation(accountID)
+            return accountID
+        }
+
+        if let existingID = privateMessageConversations.first(where: {
+            $0.value.userID == userID && $0.value.accountID == nil
+        })?.key {
+            var conversation = privateMessageConversations[existingID]!
+            if !nickname.isEmpty { conversation.nickname = nickname }
+            conversation.picture = user.picture
+            conversation.isLegacyTransport = user.isLegacyTransport
+            privateMessageConversations[existingID] = conversation
+            return existingID
+        }
+
+        guard createIfMissing else { return nil }
+        let conversationID = UUID()
+        privateMessageConversations[conversationID] = PrivateMessageConversation(
+            id: conversationID,
+            accountID: nil,
+            userID: userID,
+            nickname: nickname.isEmpty ? LF("User %@", String(userID)) : nickname,
+            picture: user.picture,
+            isLegacyTransport: user.isLegacyTransport,
+            entries: [], unreadCount: 0, draftText: "", lastActivity: Date()
+        )
+        return conversationID
+    }
+
+    func disconnectPrivateConversation(userID: UInt32) {
+        guard let conversationID = privateConversationID(forUserID: userID),
+              var conversation = privateMessageConversations[conversationID] else { return }
+
+        if conversation.accountID != nil {
+            conversation.userID = nil
+            privateMessageConversations[conversationID] = conversation
+            persistPrivateConversation(conversationID)
+        } else {
+            // No stable identity means this routing ID cannot safely survive a disconnect.
+            privateMessageConversations.removeValue(forKey: conversationID)
+            if selectedPrivateConversationID == conversationID {
+                selectedPrivateConversationID = nil
+                privateMessageComposer.string = ""
+            }
+        }
+    }
+
     func reportMessageCenterStoreError(_ error: Error) {
         appendLine("\n" + LF("Message Center storage error: %@", Self.displayMessage(for: error)))
     }
@@ -335,7 +464,7 @@ extension ViewController {
             let snapshot = try messageCenterStore.load(scope: scope)
             privateMessageConversations = Dictionary(uniqueKeysWithValues: snapshot.conversations.map {
                 let restored = restoredConversation($0)
-                return (restored.userID, restored)
+                return (restored.id, restored)
             })
             offlineMessageCenterMessages = snapshot.offlineMessages.map {
                 LegacyOfflineMessage(id: $0.id, sentAtUnix: $0.sentAtUnix,
@@ -351,28 +480,34 @@ extension ViewController {
             offlineMessageCenterUnreadCount = 0
             reportMessageCenterStoreError(error)
         }
+        for userID in liveUsers.keys {
+            bindPrivateConversationIdentity(userID: userID, createIfMissing: false)
+        }
         refreshPrivateMessageCenter(scrollToBottom: false)
     }
 
-    func persistPrivateConversation(_ userID: UInt32) {
+    func persistPrivateConversation(_ conversationID: UUID) {
         guard let scope = messageCenterPersistenceScope,
-              let conversation = privateMessageConversations[userID] else { return }
+              let conversation = privateMessageConversations[conversationID],
+              let stored = storedConversation(conversation) else { return }
         do {
-            try messageCenterStore.saveConversation(storedConversation(conversation), scope: scope)
+            try messageCenterStore.saveConversation(stored, scope: scope)
         } catch {
             reportMessageCenterStoreError(error)
         }
     }
 
     func persistPrivateMessage(_ entry: PrivateMessageEntry, conversation: PrivateMessageConversation) {
-        guard let scope = messageCenterPersistenceScope else { return }
-        let stored = MessageCenterStoredPrivateMessage(id: entry.id, userID: conversation.userID,
+        guard let scope = messageCenterPersistenceScope,
+              let storedConversation = storedConversation(conversation) else { return }
+        let stored = MessageCenterStoredPrivateMessage(id: entry.id,
                                                        timestamp: entry.timestamp, outgoing: entry.outgoing,
-                                                       message: entry.message, edited: entry.edited, editable: entry.editable,
-                                                       reactable: entry.reactable, myReaction: entry.myReaction,
+                                                       message: entry.message, edited: entry.edited,
+                                                       editable: entry.editable, reactable: entry.reactable,
+                                                       myReaction: entry.myReaction,
                                                        peerReaction: entry.peerReaction)
         do {
-            try messageCenterStore.insertPrivateMessage(stored, conversation: storedConversation(conversation), scope: scope)
+            try messageCenterStore.insertPrivateMessage(stored, conversation: storedConversation, scope: scope)
         } catch {
             reportMessageCenterStoreError(error)
         }
@@ -831,7 +966,7 @@ extension ViewController {
     }
 
     func privateMessageAvatarImage(for conversation: PrivateMessageConversation) -> NSImage? {
-        if let live = liveUsers[conversation.userID] {
+        if let live = liveUser(for: conversation) {
             return AvatarArtwork.userImage(picture: live.picture,
                                            isLegacyTransport: live.isLegacyTransport)
         }
@@ -840,60 +975,59 @@ extension ViewController {
     }
 
     func updatePrivateConversationMetadata(_ userID: UInt32) {
-        guard var conversation = privateMessageConversations[userID], let user = liveUsers[userID] else { return }
-        let oldNickname = conversation.nickname
-        let oldPicture = conversation.picture
-        let oldLegacy = conversation.isLegacyTransport
-        let nickname = Self.macRomanString(user.nickname).trimmingCharacters(in: .whitespacesAndNewlines)
-        if !nickname.isEmpty { conversation.nickname = nickname }
-        conversation.picture = user.picture
-        conversation.isLegacyTransport = user.isLegacyTransport
-        privateMessageConversations[userID] = conversation
-        if oldNickname != conversation.nickname || oldPicture != conversation.picture || oldLegacy != conversation.isLegacyTransport {
-            persistPrivateConversation(userID)
-        }
+        _ = bindPrivateConversationIdentity(userID: userID, createIfMissing: false)
     }
 
     @discardableResult
     func ensurePrivateConversation(userID: UInt32) -> PrivateMessageConversation {
-        if privateMessageConversations[userID] == nil {
-            let user = liveUsers[userID]
-            let nickname = user.map { Self.macRomanString($0.nickname).trimmingCharacters(in: .whitespacesAndNewlines) } ?? ""
-            privateMessageConversations[userID] = PrivateMessageConversation(
-                userID: userID,
-                nickname: nickname.isEmpty ? LF("User %@", String(userID)) : nickname,
-                picture: user?.picture ?? Data(),
-                isLegacyTransport: user?.isLegacyTransport ?? false,
-                entries: [], unreadCount: 0, draftText: "", lastActivity: Date()
-            )
-            persistPrivateConversation(userID)
-        } else {
-            updatePrivateConversationMetadata(userID)
+        if let conversationID = bindPrivateConversationIdentity(userID: userID, createIfMissing: true),
+           let conversation = privateMessageConversations[conversationID] {
+            return conversation
         }
-        return privateMessageConversations[userID]!
+
+        // A PM can race the user-list snapshot. Keep it session-only until a stable account UUID
+        // arrives; bindPrivateConversationIdentity() will promote it then.
+        if let existingID = privateConversationID(forUserID: userID),
+           let conversation = privateMessageConversations[existingID] {
+            return conversation
+        }
+        let conversationID = UUID()
+        let conversation = PrivateMessageConversation(
+            id: conversationID,
+            accountID: nil,
+            userID: userID,
+            nickname: LF("User %@", String(userID)),
+            picture: Data(),
+            isLegacyTransport: true,
+            entries: [], unreadCount: 0, draftText: "", lastActivity: Date()
+        )
+        privateMessageConversations[conversationID] = conversation
+        return conversation
     }
 
     func appendPrivateMessage(userID: UInt32, message: Data, outgoing: Bool, timestamp: Date = Date(),
                               id: UUID = UUID(), editable: Bool = false, reactable: Bool = false) {
         var conversation = ensurePrivateConversation(userID: userID)
+        let conversationID = conversation.id
         let entry = PrivateMessageEntry(id: id, timestamp: timestamp, outgoing: outgoing, message: message,
                                         editable: editable, reactable: reactable)
         conversation.entries.append(entry)
         if conversation.entries.count > 500 { conversation.entries.removeFirst(conversation.entries.count - 500) }
         conversation.lastActivity = timestamp
         if !outgoing {
-            let visibleAndSelected = currentWorkspace == .messageCenter && selectedPrivateConversationID == userID
+            let visibleAndSelected = currentWorkspace == .messageCenter &&
+                selectedPrivateConversationID == conversationID
             if visibleAndSelected { conversation.unreadCount = 0 }
             else { conversation.unreadCount = min(999, conversation.unreadCount + 1) }
         }
-        privateMessageConversations[userID] = conversation
+        privateMessageConversations[conversationID] = conversation
         persistPrivateMessage(entry, conversation: conversation)
-        refreshPrivateMessageCenter(scrollToBottom: selectedPrivateConversationID == userID)
+        refreshPrivateMessageCenter(scrollToBottom: selectedPrivateConversationID == conversationID)
         if outgoing && editable {
             let remaining = entry.timestamp.addingTimeInterval(LegacyMessageEdit.maximumAge).timeIntervalSinceNow
             if remaining > 0 {
                 DispatchQueue.main.asyncAfter(deadline: .now() + remaining + 0.1) { [weak self] in
-                    guard let self, self.selectedPrivateConversationID == userID else { return }
+                    guard let self, self.selectedPrivateConversationID == conversationID else { return }
                     self.refreshPrivateMessageCenter(scrollToBottom: false)
                 }
             }
@@ -901,25 +1035,27 @@ extension ViewController {
     }
 
     func applyPrivateMessageEdit(_ edit: LegacyMessageEdited) {
-        guard var conversation = privateMessageConversations[edit.scope],
+        guard let conversationID = privateConversationID(forUserID: edit.scope),
+              var conversation = privateMessageConversations[conversationID],
               let index = conversation.entries.firstIndex(where: { $0.id == edit.id }) else { return }
         conversation.entries[index].message = edit.message
         conversation.entries[index].edited = true
         let changed = conversation.entries[index]
-        privateMessageConversations[edit.scope] = conversation
+        privateMessageConversations[conversationID] = conversation
         persistPrivateMessage(changed, conversation: conversation)
         refreshPrivateMessageCenter(scrollToBottom: false)
     }
 
     func applyPrivateMessageReaction(_ change: LegacyPrivateMessageReactionChanged) {
-        guard var conversation = privateMessageConversations[change.peerUserID],
+        guard let conversationID = privateConversationID(forUserID: change.peerUserID),
+              var conversation = privateMessageConversations[conversationID],
               let index = conversation.entries.firstIndex(where: { $0.id == change.messageID }),
               conversation.entries[index].reactable else { return }
         conversation.entries[index].peerReaction = change.reaction == 0 ? nil : change.reaction
         let changed = conversation.entries[index]
-        privateMessageConversations[change.peerUserID] = conversation
+        privateMessageConversations[conversationID] = conversation
         persistPrivateMessage(changed, conversation: conversation)
-        if selectedPrivateConversationID == change.peerUserID {
+        if selectedPrivateConversationID == conversationID {
             refreshPrivateMessageCenter(scrollToBottom: false)
         }
     }
@@ -927,25 +1063,27 @@ extension ViewController {
     @objc func presentPrivateMessageReactionMenu(_ sender: NSButton) {
         guard let raw = sender.identifier?.rawValue else { return }
         let parts = raw.split(separator: ":", maxSplits: 1)
-        guard parts.count == 2, let userID = UInt32(parts[0]),
+        guard parts.count == 2, let conversationID = UUID(uuidString: String(parts[0])),
               let messageID = UUID(uuidString: String(parts[1])),
-              let conversation = privateMessageConversations[userID],
+              let conversation = privateMessageConversations[conversationID],
+              let user = liveUser(for: conversation), !user.isLegacyTransport,
               let entry = conversation.entries.first(where: { $0.id == messageID && $0.reactable }),
-              client.supportsPrivateMessageReactions,
-              client.isConnected, liveUsers[userID]?.isLegacyTransport == false else { return }
+              client.supportsPrivateMessageReactions, client.isConnected else { return }
         let menu = NSMenu(title: L("Reactions"))
         for kind in LegacyNewsReactionKind.allCases {
-            let item = NSMenuItem(title: kind.emoji, action: #selector(setPrivateMessageReactionFromMenu(_:)), keyEquivalent: "")
+            let item = NSMenuItem(title: kind.emoji, action: #selector(setPrivateMessageReactionFromMenu(_:)),
+                                  keyEquivalent: "")
             item.target = self
             item.state = entry.myReaction == kind.rawValue ? .on : .off
-            item.representedObject = "\(userID):\(messageID.uuidString):\(kind.rawValue)"
+            item.representedObject = "\(conversationID.uuidString):\(messageID.uuidString):\(kind.rawValue)"
             menu.addItem(item)
         }
         if entry.myReaction != nil {
             menu.addItem(.separator())
-            let remove = NSMenuItem(title: L("Remove My Reaction"), action: #selector(setPrivateMessageReactionFromMenu(_:)), keyEquivalent: "")
+            let remove = NSMenuItem(title: L("Remove My Reaction"),
+                                    action: #selector(setPrivateMessageReactionFromMenu(_:)), keyEquivalent: "")
             remove.target = self
-            remove.representedObject = "\(userID):\(messageID.uuidString):0"
+            remove.representedObject = "\(conversationID.uuidString):\(messageID.uuidString):0"
             menu.addItem(remove)
         }
         menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.height), in: sender)
@@ -954,24 +1092,26 @@ extension ViewController {
     @objc func setPrivateMessageReactionFromMenu(_ sender: NSMenuItem) {
         guard let payload = sender.representedObject as? String else { return }
         let parts = payload.split(separator: ":", maxSplits: 2)
-        guard parts.count == 3, let userID = UInt32(parts[0]),
+        guard parts.count == 3, let conversationID = UUID(uuidString: String(parts[0])),
               let messageID = UUID(uuidString: String(parts[1])), let raw = UInt8(parts[2]),
-              var conversation = privateMessageConversations[userID],
+              var conversation = privateMessageConversations[conversationID],
+              let userID = conversation.userID,
+              liveUser(for: conversation)?.isLegacyTransport == false,
               let index = conversation.entries.firstIndex(where: { $0.id == messageID && $0.reactable }),
-              client.supportsPrivateMessageReactions, client.isConnected,
-              liveUsers[userID]?.isLegacyTransport == false else { return }
+              client.supportsPrivateMessageReactions, client.isConnected else { return }
         let requested: UInt8 = raw != 0 && conversation.entries[index].myReaction == raw ? 0 : raw
-        client.setPrivateMessageReaction(peerUserID: userID, messageID: messageID, reaction: requested) { [weak self] result in
+        client.setPrivateMessageReaction(peerUserID: userID, messageID: messageID, reaction: requested) {
+            [weak self] result in
             guard let self else { return }
             switch result {
             case .success:
-                guard var current = self.privateMessageConversations[userID],
+                guard var current = self.privateMessageConversations[conversationID],
                       let currentIndex = current.entries.firstIndex(where: { $0.id == messageID }) else { return }
                 current.entries[currentIndex].myReaction = requested == 0 ? nil : requested
                 let changed = current.entries[currentIndex]
-                self.privateMessageConversations[userID] = current
+                self.privateMessageConversations[conversationID] = current
                 self.persistPrivateMessage(changed, conversation: current)
-                if self.selectedPrivateConversationID == userID {
+                if self.selectedPrivateConversationID == conversationID {
                     self.refreshPrivateMessageCenter(scrollToBottom: false)
                 }
             case let .failure(error):
@@ -982,8 +1122,9 @@ extension ViewController {
 
     @objc func editPrivateMessageFromButton(_ sender: NSButton) {
         guard let parts = sender.identifier?.rawValue.split(separator: ":"), parts.count == 2,
-              let userID = UInt32(parts[0]), let messageID = UUID(uuidString: String(parts[1])),
-              let conversation = privateMessageConversations[userID], !conversation.isLegacyTransport,
+              let conversationID = UUID(uuidString: String(parts[0])),
+              let messageID = UUID(uuidString: String(parts[1])),
+              let conversation = privateMessageConversations[conversationID], !conversation.isLegacyTransport,
               let entry = conversation.entries.first(where: { $0.id == messageID && $0.outgoing && $0.editable }),
               client.supportsMessageEditing,
               Date().timeIntervalSince(entry.timestamp) >= 0,
@@ -1024,24 +1165,24 @@ extension ViewController {
         }
     }
 
-    func selectPrivateConversation(_ userID: UInt32, focusComposer: Bool) {
-        _ = ensurePrivateConversation(userID: userID)
+    func selectPrivateConversation(_ conversationID: UUID, focusComposer: Bool) {
+        guard privateMessageConversations[conversationID] != nil else { return }
         selectedOfflineMessages = false
-        if let previousID = selectedPrivateConversationID, previousID != userID,
+        if let previousID = selectedPrivateConversationID, previousID != conversationID,
            var previous = privateMessageConversations[previousID] {
             previous.draftText = privateMessageComposer.string
             privateMessageConversations[previousID] = previous
             persistPrivateConversation(previousID)
         }
-        if selectedPrivateConversationID != userID {
+        if selectedPrivateConversationID != conversationID {
             privateMessageAttachments.imageIDs.forEach(deletePendingMedia)
             privateMessageAttachments.clear()
         }
-        selectedPrivateConversationID = userID
-        if var conversation = privateMessageConversations[userID] {
+        selectedPrivateConversationID = conversationID
+        if var conversation = privateMessageConversations[conversationID] {
             conversation.unreadCount = 0
-            privateMessageConversations[userID] = conversation
-            persistPrivateConversation(userID)
+            privateMessageConversations[conversationID] = conversation
+            persistPrivateConversation(conversationID)
             privateMessageComposer.string = conversation.draftText
         }
         refreshPrivateMessageCenter(scrollToBottom: true)
@@ -1153,16 +1294,16 @@ extension ViewController {
             edit.bezelStyle = .inline
             edit.controlSize = .small
             edit.font = .systemFont(ofSize: 10)
-            edit.identifier = NSUserInterfaceItemIdentifier(String(conversation.userID) + ":" + entry.id.uuidString)
+            edit.identifier = NSUserInterfaceItemIdentifier(conversation.id.uuidString + ":" + entry.id.uuidString)
             headerViews.append(edit)
         }
         if entry.reactable, !conversation.isLegacyTransport, client.supportsPrivateMessageReactions,
-           client.isConnected, liveUsers[conversation.userID]?.isLegacyTransport == false {
+           client.isConnected, liveUser(for: conversation)?.isLegacyTransport == false {
             let react = NSButton(title: L("☺ React"), target: self, action: #selector(presentPrivateMessageReactionMenu(_:)))
             react.bezelStyle = .inline
             react.controlSize = .small
             react.font = .systemFont(ofSize: 10)
-            react.identifier = NSUserInterfaceItemIdentifier(String(conversation.userID) + ":" + entry.id.uuidString)
+            react.identifier = NSUserInterfaceItemIdentifier(conversation.id.uuidString + ":" + entry.id.uuidString)
             headerViews.append(react)
         }
         let header = horizontalStack(headerViews, spacing: 8)
@@ -1220,8 +1361,8 @@ extension ViewController {
                     )
                 }
             }
-        } else if let userID = selectedPrivateConversationID,
-                  let conversation = privateMessageConversations[userID] {
+        } else if let conversationID = selectedPrivateConversationID,
+                  let conversation = privateMessageConversations[conversationID] {
             if conversation.entries.isEmpty {
                 privateMessageEmptyLabel.stringValue = conversation.isLegacyTransport
                     ? L("This user is on a Classic client. Every message you send is delivered as a normal individual Private Message.")
@@ -1270,7 +1411,7 @@ extension ViewController {
     }
 
     func refreshPrivateMessageCenter(scrollToBottom: Bool) {
-        for userID in Array(privateMessageConversations.keys) { updatePrivateConversationMetadata(userID) }
+        for userID in Array(liveUsers.keys) { updatePrivateConversationMetadata(userID) }
         let rows = displayedMessageCenterRows
         isReloadingPrivateMessageTable = true
         privateMessageConversationTable.reloadData()
@@ -1283,7 +1424,7 @@ extension ViewController {
             }
         } else if let selectedID = selectedPrivateConversationID {
             selectedRow = rows.firstIndex { row in
-                if case let .conversation(conversation) = row { return conversation.userID == selectedID }
+                if case let .conversation(conversation) = row { return conversation.id == selectedID }
                 return false
             }
         }
@@ -1318,8 +1459,8 @@ extension ViewController {
             return
         }
 
-        guard let userID = selectedPrivateConversationID,
-              let conversation = privateMessageConversations[userID] else {
+        guard let conversationID = selectedPrivateConversationID,
+              let conversation = privateMessageConversations[conversationID] else {
             privateMessageClearChatButton.isHidden = true
             privateMessageDeleteChatButton.isHidden = true
             privateMessageHeaderAvatar.image = nil
@@ -1341,7 +1482,7 @@ extension ViewController {
         privateMessageHeaderAvatar.layer?.cornerRadius = conversation.isLegacyTransport ? 0 : 18
         privateMessageHeaderAvatar.layer?.masksToBounds = !conversation.isLegacyTransport
         privateMessageHeaderNameLabel.stringValue = conversation.nickname
-        let online = client.isConnected && liveUsers[userID] != nil
+        let online = client.isConnected && liveUser(for: conversation) != nil
         var statusParts = [online ? L("Online") : L("Offline")]
         if conversation.isLegacyTransport { statusParts.append(L("Classic client")) }
         privateMessageHeaderStatusLabel.stringValue = statusParts.joined(separator: " · ")
@@ -1360,9 +1501,9 @@ extension ViewController {
     }
 
     func openPrivateConversation(with user: LegacyUserListEntry, focusComposer: Bool = true) {
-        _ = ensurePrivateConversation(userID: user.userID)
+        let conversation = ensurePrivateConversation(userID: user.userID)
         selectWorkspace(.messageCenter)
-        selectPrivateConversation(user.userID, focusComposer: focusComposer)
+        selectPrivateConversation(conversation.id, focusComposer: focusComposer)
     }
 
     @objc func privateMessageSearchChanged(_ sender: NSSearchField) {
@@ -1371,8 +1512,8 @@ extension ViewController {
     }
 
     @objc func markAllPrivateMessagesRead(_ sender: Any?) {
-        for userID in privateMessageConversations.keys {
-            privateMessageConversations[userID]?.unreadCount = 0
+        for conversationID in privateMessageConversations.keys {
+            privateMessageConversations[conversationID]?.unreadCount = 0
         }
         offlineMessageCenterUnreadIDs.removeAll()
         offlineMessageCenterUnreadCount = 0
@@ -1388,8 +1529,8 @@ extension ViewController {
     }
 
     @objc func clearSelectedPrivateChat(_ sender: Any?) {
-        guard let userID = selectedPrivateConversationID,
-              let conversation = privateMessageConversations[userID],
+        guard let conversationID = selectedPrivateConversationID,
+              let conversation = privateMessageConversations[conversationID],
               !conversation.entries.isEmpty, let window = view.window else { return }
 
         let alert = NSAlert()
@@ -1400,25 +1541,22 @@ extension ViewController {
         alert.addButton(withTitle: L("Cancel"))
         alert.beginSheetModal(for: window) { [weak self] response in
             guard response == .alertFirstButtonReturn, let self,
-                  var current = self.privateMessageConversations[userID] else { return }
+                  var current = self.privateMessageConversations[conversationID] else { return }
             current.entries.removeAll()
             current.unreadCount = 0
-            self.privateMessageConversations[userID] = current
-            if let scope = self.messageCenterPersistenceScope {
-                do {
-                    try self.messageCenterStore.clearConversation(userID: userID, scope: scope)
-                    try self.messageCenterStore.saveConversation(self.storedConversation(current), scope: scope)
-                } catch {
-                    self.reportMessageCenterStoreError(error)
-                }
+            self.privateMessageConversations[conversationID] = current
+            if let scope = self.messageCenterPersistenceScope, let accountID = current.accountID {
+                do { try self.messageCenterStore.clearConversation(accountID: accountID, scope: scope) }
+                catch { self.reportMessageCenterStoreError(error) }
             }
+            self.persistPrivateConversation(conversationID)
             self.refreshPrivateMessageCenter(scrollToBottom: false)
         }
     }
 
     @objc func deleteSelectedPrivateChat(_ sender: Any?) {
-        guard let userID = selectedPrivateConversationID,
-              let conversation = privateMessageConversations[userID],
+        guard let conversationID = selectedPrivateConversationID,
+              let conversation = privateMessageConversations[conversationID],
               let window = view.window else { return }
 
         let alert = NSAlert()
@@ -1429,12 +1567,12 @@ extension ViewController {
         alert.addButton(withTitle: L("Cancel"))
         alert.beginSheetModal(for: window) { [weak self] response in
             guard response == .alertFirstButtonReturn, let self else { return }
-            self.privateMessageConversations.removeValue(forKey: userID)
-            if let scope = self.messageCenterPersistenceScope {
-                do { try self.messageCenterStore.deleteConversation(userID: userID, scope: scope) }
+            self.privateMessageConversations.removeValue(forKey: conversationID)
+            if let scope = self.messageCenterPersistenceScope, let accountID = conversation.accountID {
+                do { try self.messageCenterStore.deleteConversation(accountID: accountID, scope: scope) }
                 catch { self.reportMessageCenterStoreError(error) }
             }
-            if self.selectedPrivateConversationID == userID {
+            if self.selectedPrivateConversationID == conversationID {
                 self.selectedPrivateConversationID = nil
                 self.privateMessageComposer.string = ""
             }
@@ -1472,9 +1610,10 @@ extension ViewController {
     }
 
     @MainActor func uploadPrivateMessageImages(urls: [URL]) {
-        guard let userID = selectedPrivateConversationID,
-              let conversation = privateMessageConversations[userID],
+        guard let conversationID = selectedPrivateConversationID,
+              let conversation = privateMessageConversations[conversationID],
               !conversation.isLegacyTransport,
+              liveUser(for: conversation) != nil,
               let mediaClient else {
             showError(L("Images in private messages require a modern Carracho peer."))
             return
@@ -1495,7 +1634,11 @@ extension ViewController {
                 case let .failure(error):
                     self.showError(LF("Image upload failed: %@", Self.displayMessage(for: error)))
                 }
-                self.privateMessageSendButton.isEnabled = self.client.isConnected && self.liveUsers[userID] != nil
+                if let current = self.privateMessageConversations[conversationID] {
+                    self.privateMessageSendButton.isEnabled = self.client.isConnected && self.liveUser(for: current) != nil
+                } else {
+                    self.privateMessageSendButton.isEnabled = false
+                }
             }
         } catch {
             showError(LF("Image could not be prepared: %@", Self.displayMessage(for: error)))
@@ -1503,9 +1646,10 @@ extension ViewController {
     }
 
     @MainActor func uploadPrivateMessageImage(data: Data) {
-        guard let userID = selectedPrivateConversationID,
-              let conversation = privateMessageConversations[userID],
+        guard let conversationID = selectedPrivateConversationID,
+              let conversation = privateMessageConversations[conversationID],
               !conversation.isLegacyTransport,
+              liveUser(for: conversation) != nil,
               let mediaClient else {
             showError(L("Images in private messages require a modern Carracho peer."))
             return
@@ -1528,7 +1672,11 @@ extension ViewController {
                 case let .failure(error):
                     self.showError(LF("Image upload failed: %@", Self.displayMessage(for: error)))
                 }
-                self.privateMessageSendButton.isEnabled = self.client.isConnected && self.liveUsers[userID] != nil
+                if let current = self.privateMessageConversations[conversationID] {
+                    self.privateMessageSendButton.isEnabled = self.client.isConnected && self.liveUser(for: current) != nil
+                } else {
+                    self.privateMessageSendButton.isEnabled = false
+                }
             }
         } catch {
             showError(LF("Clipboard image could not be prepared: %@", Self.displayMessage(for: error)))
@@ -1536,8 +1684,11 @@ extension ViewController {
     }
 
     @objc func sendPrivateMessageFromCenter(_ sender: Any?) {
-        guard let userID = selectedPrivateConversationID,
-              liveUsers[userID] != nil, client.isConnected else {
+        guard let conversationID = selectedPrivateConversationID,
+              let conversation = privateMessageConversations[conversationID],
+              let userID = conversation.userID,
+              liveUser(for: conversation) != nil,
+              client.isConnected else {
             privateMessageComposerStatusLabel.stringValue = L("The recipient is offline.")
             privateMessageComposerStatusLabel.textColor = .systemRed
             return
@@ -1559,19 +1710,21 @@ extension ViewController {
         }
         guard !data.isEmpty else { return }
         privateMessageSendButton.isEnabled = false
-        let modernPeer = privateMessageConversations[userID]?.isLegacyTransport == false
+        let modernPeer = !conversation.isLegacyTransport
         let messageID = modernPeer && (client.supportsMessageEditing || client.supportsPrivateMessageReactions) ? UUID() : nil
-        let editable = messageID != nil && client.supportsMessageEditing && LegacyMediaReference.references(inWire: data).isEmpty
+        let editable = messageID != nil && client.supportsMessageEditing &&
+            LegacyMediaReference.references(inWire: data).isEmpty
         let reactable = messageID != nil && client.supportsPrivateMessageReactions
         client.sendPrivateMessage(to: userID, message: data, messageID: messageID) { [weak self] result in
             guard let self else { return }
             switch result {
             case .success:
-                if var conversation = self.privateMessageConversations[userID] {
-                    conversation.draftText = ""
-                    self.privateMessageConversations[userID] = conversation
+                if var current = self.privateMessageConversations[conversationID] {
+                    current.draftText = ""
+                    self.privateMessageConversations[conversationID] = current
                 }
-                if self.selectedPrivateConversationID == userID, self.privateMessageComposer.string == plainSource {
+                if self.selectedPrivateConversationID == conversationID,
+                   self.privateMessageComposer.string == plainSource {
                     self.privateMessageComposer.string = ""
                     self.privateMessageAttachments.clear()
                 }
@@ -1579,10 +1732,17 @@ extension ViewController {
                 self.appendPrivateMessage(userID: userID, message: data, outgoing: true,
                                           id: messageID ?? UUID(), editable: editable, reactable: reactable)
             case let .failure(error):
-                self.privateMessageComposerStatusLabel.stringValue = LF("Message could not be sent: %@", Self.displayMessage(for: error))
+                self.privateMessageComposerStatusLabel.stringValue =
+                    LF("Message could not be sent: %@", Self.displayMessage(for: error))
                 self.privateMessageComposerStatusLabel.textColor = .systemRed
-                self.privateMessageSendButton.isEnabled = self.liveUsers[userID] != nil && self.client.isConnected
+                if let current = self.privateMessageConversations[conversationID] {
+                    self.privateMessageSendButton.isEnabled =
+                        self.client.isConnected && self.liveUser(for: current) != nil
+                } else {
+                    self.privateMessageSendButton.isEnabled = false
+                }
             }
         }
     }
+
 }

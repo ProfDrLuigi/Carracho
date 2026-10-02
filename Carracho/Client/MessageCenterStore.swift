@@ -25,7 +25,6 @@ struct MessageCenterStoreScope: Hashable {
 
 struct MessageCenterStoredPrivateMessage: Equatable {
     var id: UUID
-    var userID: UInt32
     var timestamp: Date
     var outgoing: Bool
     var message: Data
@@ -37,7 +36,8 @@ struct MessageCenterStoredPrivateMessage: Equatable {
 }
 
 struct MessageCenterStoredConversation: Equatable {
-    var userID: UInt32
+    /// Stable server account identity. Ephemeral session user IDs are deliberately never persisted.
+    var accountID: UUID
     var nickname: String
     var picture: Data
     var isLegacyTransport: Bool
@@ -61,8 +61,16 @@ struct MessageCenterStoredSnapshot: Equatable {
     var offlineMessages: [MessageCenterStoredOfflineMessage]
 }
 
-/// Local durable storage for the Message Center. The historical Carracho wire protocol is
-/// deliberately not involved here: modern chat history is purely a client-side presentation layer.
+/// Local durable storage for the Message Center.
+///
+/// Private-message history is keyed only by the server's stable account UUID. Older database
+/// tables keyed by the transient UInt32 session user ID are intentionally left untouched but are
+/// never loaded. A server restart can recycle those IDs for another account, so treating the old
+/// rows as durable identity would risk showing one person's history under another person's name.
+///
+/// A modern server also supplies this UUID for Classic peers because it knows the authenticated
+/// account behind their session. Against older servers that do not supply a UUID, private-message
+/// conversations remain session-only in memory. Offline messages keep their existing table.
 final class MessageCenterStore {
     private let databaseURL: URL
     private let queue = DispatchQueue(label: "com.carracho.message-center-store")
@@ -89,10 +97,10 @@ final class MessageCenterStore {
             let db = try openDatabase()
             defer { sqlite3_close(db) }
 
-            var conversations: [UInt32: MessageCenterStoredConversation] = [:]
+            var conversations: [UUID: MessageCenterStoredConversation] = [:]
             let conversationSQL = """
-                SELECT peer_user_id, nickname, picture, is_legacy, unread_count, draft_text, last_activity
-                FROM conversations
+                SELECT peer_account_id, nickname, picture, is_legacy, unread_count, draft_text, last_activity
+                FROM conversations_v2
                 WHERE server_host=? AND server_port=? AND account_login=?
                 ORDER BY last_activity DESC
                 """
@@ -104,9 +112,9 @@ final class MessageCenterStore {
                 let result = sqlite3_step(conversationStatement)
                 if result == SQLITE_DONE { break }
                 guard result == SQLITE_ROW else { throw databaseError(db) }
-                let userID = UInt32(clamping: sqlite3_column_int64(conversationStatement, 0))
-                conversations[userID] = MessageCenterStoredConversation(
-                    userID: userID,
+                guard let accountID = UUID(uuidString: columnText(conversationStatement!, 0)) else { continue }
+                conversations[accountID] = MessageCenterStoredConversation(
+                    accountID: accountID,
                     nickname: columnText(conversationStatement!, 1),
                     picture: columnBlob(conversationStatement!, 2),
                     isLegacyTransport: sqlite3_column_int(conversationStatement, 3) != 0,
@@ -118,8 +126,8 @@ final class MessageCenterStore {
             }
 
             let messageSQL = """
-                SELECT id, peer_user_id, sent_at, outgoing, body, edited, editable, reactable, my_reaction, peer_reaction
-                FROM private_messages
+                SELECT id, peer_account_id, sent_at, outgoing, body, edited, editable, reactable, my_reaction, peer_reaction
+                FROM private_messages_v2
                 WHERE server_host=? AND server_port=? AND account_login=?
                 ORDER BY sent_at ASC, id ASC
                 """
@@ -131,12 +139,11 @@ final class MessageCenterStore {
                 let result = sqlite3_step(messageStatement)
                 if result == SQLITE_DONE { break }
                 guard result == SQLITE_ROW else { throw databaseError(db) }
-                guard let id = UUID(uuidString: columnText(messageStatement!, 0)) else { continue }
-                let userID = UInt32(clamping: sqlite3_column_int64(messageStatement, 1))
-                guard var conversation = conversations[userID] else { continue }
+                guard let id = UUID(uuidString: columnText(messageStatement!, 0)),
+                      let accountID = UUID(uuidString: columnText(messageStatement!, 1)),
+                      var conversation = conversations[accountID] else { continue }
                 conversation.messages.append(MessageCenterStoredPrivateMessage(
                     id: id,
-                    userID: userID,
                     timestamp: Date(timeIntervalSince1970: sqlite3_column_double(messageStatement, 2)),
                     outgoing: sqlite3_column_int(messageStatement, 3) != 0,
                     message: columnBlob(messageStatement!, 4),
@@ -148,7 +155,7 @@ final class MessageCenterStore {
                     peerReaction: sqlite3_column_type(messageStatement, 9) == SQLITE_NULL
                         ? nil : UInt8(clamping: sqlite3_column_int(messageStatement, 9))
                 ))
-                conversations[userID] = conversation
+                conversations[accountID] = conversation
             }
 
             let offlineSQL = """
@@ -179,7 +186,7 @@ final class MessageCenterStore {
             return MessageCenterStoredSnapshot(
                 conversations: conversations.values.sorted {
                     if $0.lastActivity != $1.lastActivity { return $0.lastActivity > $1.lastActivity }
-                    return $0.userID < $1.userID
+                    return $0.accountID.uuidString < $1.accountID.uuidString
                 },
                 offlineMessages: offlineMessages
             )
@@ -204,8 +211,8 @@ final class MessageCenterStore {
             do {
                 try upsertConversation(conversation, scope: scope, db: db)
                 let sql = """
-                    INSERT OR REPLACE INTO private_messages
-                    (id, server_host, server_port, account_login, peer_user_id, sent_at, outgoing, body, edited, editable, reactable, my_reaction, peer_reaction)
+                    INSERT OR REPLACE INTO private_messages_v2
+                    (id, server_host, server_port, account_login, peer_account_id, sent_at, outgoing, body, edited, editable, reactable, my_reaction, peer_reaction)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """
                 var statement: OpaquePointer?
@@ -213,14 +220,12 @@ final class MessageCenterStore {
                 defer { sqlite3_finalize(statement) }
                 try bindText(statement!, 1, message.id.uuidString.lowercased())
                 try bindScope(scope, to: statement!, startIndex: 2)
-                try bindInt64(statement!, 5, Int64(message.userID))
+                try bindText(statement!, 5, conversation.accountID.uuidString.lowercased())
                 guard sqlite3_bind_double(statement, 6, message.timestamp.timeIntervalSince1970) == SQLITE_OK,
                       sqlite3_bind_int(statement, 7, message.outgoing ? 1 : 0) == SQLITE_OK else { throw databaseError(db) }
                 try bindBlob(statement!, 8, message.message)
-                guard sqlite3_bind_int(statement, 9, message.edited ? 1 : 0) == SQLITE_OK else {
-                    throw databaseError(db)
-                }
-                guard sqlite3_bind_int(statement, 10, message.editable ? 1 : 0) == SQLITE_OK,
+                guard sqlite3_bind_int(statement, 9, message.edited ? 1 : 0) == SQLITE_OK,
+                      sqlite3_bind_int(statement, 10, message.editable ? 1 : 0) == SQLITE_OK,
                       sqlite3_bind_int(statement, 11, message.reactable ? 1 : 0) == SQLITE_OK else {
                     throw databaseError(db)
                 }
@@ -236,13 +241,12 @@ final class MessageCenterStore {
                 }
                 try stepDone(statement!, db: db)
 
-                // The UI intentionally caps a conversation at 500 rows. Keep disk usage in lock-step.
                 var trim: OpaquePointer?
                 let trimSQL = """
-                    DELETE FROM private_messages
+                    DELETE FROM private_messages_v2
                     WHERE id IN (
-                        SELECT id FROM private_messages
-                        WHERE server_host=? AND server_port=? AND account_login=? AND peer_user_id=?
+                        SELECT id FROM private_messages_v2
+                        WHERE server_host=? AND server_port=? AND account_login=? AND peer_account_id=?
                         ORDER BY sent_at DESC, id DESC
                         LIMIT -1 OFFSET 500
                     )
@@ -250,7 +254,7 @@ final class MessageCenterStore {
                 try prepare(db, trimSQL, &trim)
                 defer { sqlite3_finalize(trim) }
                 try bindScope(scope, to: trim!)
-                try bindInt64(trim!, 4, Int64(message.userID))
+                try bindText(trim!, 4, conversation.accountID.uuidString.lowercased())
                 try stepDone(trim!, db: db)
                 try exec(db, "COMMIT")
             } catch {
@@ -260,19 +264,19 @@ final class MessageCenterStore {
         }
     }
 
-    func clearConversation(userID: UInt32, scope: MessageCenterStoreScope) throws {
-        try deletePrivateMessages(userID: userID, scope: scope, deleteConversation: false)
+    func clearConversation(accountID: UUID, scope: MessageCenterStoreScope) throws {
+        try deletePrivateMessages(accountID: accountID, scope: scope, deleteConversation: false)
     }
 
-    func deleteConversation(userID: UInt32, scope: MessageCenterStoreScope) throws {
-        try deletePrivateMessages(userID: userID, scope: scope, deleteConversation: true)
+    func deleteConversation(accountID: UUID, scope: MessageCenterStoreScope) throws {
+        try deletePrivateMessages(accountID: accountID, scope: scope, deleteConversation: true)
     }
 
     func markAllConversationsRead(scope: MessageCenterStoreScope) throws {
         try queue.sync {
             let db = try openDatabase()
             defer { sqlite3_close(db) }
-            let sql = "UPDATE conversations SET unread_count=0 WHERE server_host=? AND server_port=? AND account_login=?"
+            let sql = "UPDATE conversations_v2 SET unread_count=0 WHERE server_host=? AND server_port=? AND account_login=?"
             var statement: OpaquePointer?
             try prepare(db, sql, &statement)
             defer { sqlite3_finalize(statement) }
@@ -282,7 +286,8 @@ final class MessageCenterStore {
     }
 
     @discardableResult
-    func insertOfflineMessages(_ messages: [MessageCenterStoredOfflineMessage], scope: MessageCenterStoreScope) throws -> Set<String> {
+    func insertOfflineMessages(_ messages: [MessageCenterStoredOfflineMessage],
+                               scope: MessageCenterStoreScope) throws -> Set<String> {
         guard !messages.isEmpty else { return [] }
         return try queue.sync {
             let db = try openDatabase()
@@ -307,7 +312,9 @@ final class MessageCenterStore {
                     try bindBlob(statement!, 6, message.senderLogin)
                     try bindBlob(statement!, 7, message.senderNickname)
                     try bindBlob(statement!, 8, message.message)
-                    guard sqlite3_bind_int(statement, 9, message.isUnread ? 1 : 0) == SQLITE_OK else { throw databaseError(db) }
+                    guard sqlite3_bind_int(statement, 9, message.isUnread ? 1 : 0) == SQLITE_OK else {
+                        throw databaseError(db)
+                    }
                     try stepDone(statement!, db: db)
                     if sqlite3_changes(db) > 0 { inserted.insert(message.id) }
                 }
@@ -347,32 +354,33 @@ final class MessageCenterStore {
         }
     }
 
-    private func deletePrivateMessages(userID: UInt32, scope: MessageCenterStoreScope, deleteConversation: Bool) throws {
+    private func deletePrivateMessages(accountID: UUID, scope: MessageCenterStoreScope,
+                                       deleteConversation: Bool) throws {
         try queue.sync {
             let db = try openDatabase()
             defer { sqlite3_close(db) }
             try exec(db, "BEGIN IMMEDIATE")
             do {
                 var messages: OpaquePointer?
-                try prepare(db, "DELETE FROM private_messages WHERE server_host=? AND server_port=? AND account_login=? AND peer_user_id=?", &messages)
+                try prepare(db, "DELETE FROM private_messages_v2 WHERE server_host=? AND server_port=? AND account_login=? AND peer_account_id=?", &messages)
                 defer { sqlite3_finalize(messages) }
                 try bindScope(scope, to: messages!)
-                try bindInt64(messages!, 4, Int64(userID))
+                try bindText(messages!, 4, accountID.uuidString.lowercased())
                 try stepDone(messages!, db: db)
 
                 if deleteConversation {
                     var conversation: OpaquePointer?
-                    try prepare(db, "DELETE FROM conversations WHERE server_host=? AND server_port=? AND account_login=? AND peer_user_id=?", &conversation)
+                    try prepare(db, "DELETE FROM conversations_v2 WHERE server_host=? AND server_port=? AND account_login=? AND peer_account_id=?", &conversation)
                     defer { sqlite3_finalize(conversation) }
                     try bindScope(scope, to: conversation!)
-                    try bindInt64(conversation!, 4, Int64(userID))
+                    try bindText(conversation!, 4, accountID.uuidString.lowercased())
                     try stepDone(conversation!, db: db)
                 } else {
                     var conversation: OpaquePointer?
-                    try prepare(db, "UPDATE conversations SET unread_count=0 WHERE server_host=? AND server_port=? AND account_login=? AND peer_user_id=?", &conversation)
+                    try prepare(db, "UPDATE conversations_v2 SET unread_count=0 WHERE server_host=? AND server_port=? AND account_login=? AND peer_account_id=?", &conversation)
                     defer { sqlite3_finalize(conversation) }
                     try bindScope(scope, to: conversation!)
-                    try bindInt64(conversation!, 4, Int64(userID))
+                    try bindText(conversation!, 4, accountID.uuidString.lowercased())
                     try stepDone(conversation!, db: db)
                 }
                 try exec(db, "COMMIT")
@@ -387,10 +395,10 @@ final class MessageCenterStore {
                                     scope: MessageCenterStoreScope,
                                     db: OpaquePointer) throws {
         let sql = """
-            INSERT INTO conversations
-            (server_host, server_port, account_login, peer_user_id, nickname, picture, is_legacy, unread_count, draft_text, last_activity)
+            INSERT INTO conversations_v2
+            (server_host, server_port, account_login, peer_account_id, nickname, picture, is_legacy, unread_count, draft_text, last_activity)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(server_host, server_port, account_login, peer_user_id) DO UPDATE SET
+            ON CONFLICT(server_host, server_port, account_login, peer_account_id) DO UPDATE SET
                 nickname=excluded.nickname,
                 picture=excluded.picture,
                 is_legacy=excluded.is_legacy,
@@ -402,13 +410,17 @@ final class MessageCenterStore {
         try prepare(db, sql, &statement)
         defer { sqlite3_finalize(statement) }
         try bindScope(scope, to: statement!)
-        try bindInt64(statement!, 4, Int64(conversation.userID))
+        try bindText(statement!, 4, conversation.accountID.uuidString.lowercased())
         try bindText(statement!, 5, conversation.nickname)
         try bindBlob(statement!, 6, conversation.picture)
-        guard sqlite3_bind_int(statement, 7, conversation.isLegacyTransport ? 1 : 0) == SQLITE_OK else { throw databaseError(db) }
+        guard sqlite3_bind_int(statement, 7, conversation.isLegacyTransport ? 1 : 0) == SQLITE_OK else {
+            throw databaseError(db)
+        }
         try bindInt64(statement!, 8, Int64(max(0, conversation.unreadCount)))
         try bindText(statement!, 9, conversation.draftText)
-        guard sqlite3_bind_double(statement, 10, conversation.lastActivity.timeIntervalSince1970) == SQLITE_OK else { throw databaseError(db) }
+        guard sqlite3_bind_double(statement, 10, conversation.lastActivity.timeIntervalSince1970) == SQLITE_OK else {
+            throw databaseError(db)
+        }
         try stepDone(statement!, db: db)
     }
 
@@ -428,27 +440,38 @@ final class MessageCenterStore {
             try exec(db, "PRAGMA journal_mode=WAL")
             try exec(db, "PRAGMA synchronous=NORMAL")
             try exec(db, """
-                CREATE TABLE IF NOT EXISTS conversations (
+                CREATE TABLE IF NOT EXISTS conversations_v2 (
                     server_host TEXT NOT NULL,
                     server_port INTEGER NOT NULL,
                     account_login TEXT NOT NULL,
-                    peer_user_id INTEGER NOT NULL,
+                    peer_account_id TEXT NOT NULL,
                     nickname TEXT NOT NULL,
                     picture BLOB NOT NULL,
                     is_legacy INTEGER NOT NULL DEFAULT 0,
                     unread_count INTEGER NOT NULL DEFAULT 0,
                     draft_text TEXT NOT NULL DEFAULT '',
                     last_activity REAL NOT NULL,
-                    PRIMARY KEY (server_host, server_port, account_login, peer_user_id)
+                    PRIMARY KEY (server_host, server_port, account_login, peer_account_id)
                 )
                 """)
+            var v2Schema: OpaquePointer?
+            try prepare(db, "PRAGMA table_info(conversations_v2)", &v2Schema)
+            var v2Columns = Set<String>()
+            while sqlite3_step(v2Schema) == SQLITE_ROW {
+                v2Columns.insert(columnText(v2Schema!, 1))
+            }
+            sqlite3_finalize(v2Schema)
+            if !v2Columns.contains("is_legacy") {
+                try exec(db, "ALTER TABLE conversations_v2 ADD COLUMN is_legacy INTEGER NOT NULL DEFAULT 0")
+            }
+
             try exec(db, """
-                CREATE TABLE IF NOT EXISTS private_messages (
+                CREATE TABLE IF NOT EXISTS private_messages_v2 (
                     id TEXT PRIMARY KEY,
                     server_host TEXT NOT NULL,
                     server_port INTEGER NOT NULL,
                     account_login TEXT NOT NULL,
-                    peer_user_id INTEGER NOT NULL,
+                    peer_account_id TEXT NOT NULL,
                     sent_at REAL NOT NULL,
                     outgoing INTEGER NOT NULL,
                     body BLOB NOT NULL,
@@ -457,35 +480,12 @@ final class MessageCenterStore {
                     reactable INTEGER NOT NULL DEFAULT 0,
                     my_reaction INTEGER,
                     peer_reaction INTEGER,
-                    FOREIGN KEY (server_host, server_port, account_login, peer_user_id)
-                        REFERENCES conversations(server_host, server_port, account_login, peer_user_id)
+                    FOREIGN KEY (server_host, server_port, account_login, peer_account_id)
+                        REFERENCES conversations_v2(server_host, server_port, account_login, peer_account_id)
                         ON DELETE CASCADE
                 )
                 """)
-            // Existing installations are migrated in place as Message Center features gain local metadata.
-            var schema: OpaquePointer?
-            try prepare(db, "PRAGMA table_info(private_messages)", &schema)
-            var columns = Set<String>()
-            while sqlite3_step(schema) == SQLITE_ROW {
-                columns.insert(columnText(schema!, 1))
-            }
-            sqlite3_finalize(schema)
-            if !columns.contains("edited") {
-                try exec(db, "ALTER TABLE private_messages ADD COLUMN edited INTEGER NOT NULL DEFAULT 0")
-            }
-            if !columns.contains("editable") {
-                try exec(db, "ALTER TABLE private_messages ADD COLUMN editable INTEGER NOT NULL DEFAULT 0")
-            }
-            if !columns.contains("reactable") {
-                try exec(db, "ALTER TABLE private_messages ADD COLUMN reactable INTEGER NOT NULL DEFAULT 0")
-            }
-            if !columns.contains("my_reaction") {
-                try exec(db, "ALTER TABLE private_messages ADD COLUMN my_reaction INTEGER")
-            }
-            if !columns.contains("peer_reaction") {
-                try exec(db, "ALTER TABLE private_messages ADD COLUMN peer_reaction INTEGER")
-            }
-            try exec(db, "CREATE INDEX IF NOT EXISTS private_messages_conversation_idx ON private_messages(server_host, server_port, account_login, peer_user_id, sent_at)")
+            try exec(db, "CREATE INDEX IF NOT EXISTS private_messages_v2_conversation_idx ON private_messages_v2(server_host, server_port, account_login, peer_account_id, sent_at)")
             try exec(db, """
                 CREATE TABLE IF NOT EXISTS offline_messages (
                     server_host TEXT NOT NULL,
@@ -508,7 +508,8 @@ final class MessageCenterStore {
         }
     }
 
-    private func bindScope(_ scope: MessageCenterStoreScope, to statement: OpaquePointer, startIndex: Int32 = 1) throws {
+    private func bindScope(_ scope: MessageCenterStoreScope, to statement: OpaquePointer,
+                           startIndex: Int32 = 1) throws {
         try bindText(statement, startIndex, scope.host)
         try bindInt64(statement, startIndex + 1, Int64(scope.port))
         try bindText(statement, startIndex + 2, scope.login)

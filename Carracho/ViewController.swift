@@ -377,7 +377,12 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
     }
 
     struct PrivateMessageConversation {
-        var userID: UInt32
+        /// Stable local conversation identity. For modern peers this is exactly accountID.
+        var id: UUID
+        /// Stable server account identity. Nil for Classic/older peers that cannot prove one.
+        var accountID: UUID?
+        /// Current live routing address only. Never used as durable identity.
+        var userID: UInt32?
         var nickname: String
         var picture: Data
         var isLegacyTransport: Bool
@@ -587,8 +592,8 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         var activeChannel: LegacyChannelState?
         var channelMembers: [UInt32: UInt8]
         var joinedChannels: [UInt32: JoinedChannelSession]
-        var privateMessageConversations: [UInt32: PrivateMessageConversation]
-        var selectedPrivateConversationID: UInt32?
+        var privateMessageConversations: [UUID: PrivateMessageConversation]
+        var selectedPrivateConversationID: UUID?
         var offlineMessageCenterMessages: [LegacyOfflineMessage]
         var offlineMessageCenterUnreadIDs: Set<String>
         var offlineMessageCenterUnreadCount: Int
@@ -1366,8 +1371,8 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
     var channelMembers: [UInt32: UInt8] = [:]
     var joinedChannels: [UInt32: JoinedChannelSession] = [:]
     let messageCenterStore = MessageCenterStore()
-    var privateMessageConversations: [UInt32: PrivateMessageConversation] = [:]
-    var selectedPrivateConversationID: UInt32?
+    var privateMessageConversations: [UUID: PrivateMessageConversation] = [:]
+    var selectedPrivateConversationID: UUID?
     var offlineMessageCenterMessages: [LegacyOfflineMessage] = []
     var offlineMessageCenterUnreadIDs: Set<String> = []
     var offlineMessageCenterUnreadCount = 0
@@ -6827,6 +6832,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
                             postNotification: showUserPresenceNotifications)
             freezeChannelTranscriptIdentity(for: userID)
             removeDisconnectedUserFromChannels(userID)
+            disconnectPrivateConversation(userID: userID)
             liveUsers.removeValue(forKey: userID)
             sleepingUsers.remove(userID)
             userStatusMessages.removeValue(forKey: userID)
@@ -6860,10 +6866,11 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
                                  outgoing: false, timestamp: message.sentAt ?? Date(),
                                  id: message.messageID ?? UUID(),
                                  reactable: message.messageID != nil && client.supportsPrivateMessageReactions)
-        case let .userUpdated(userID, nickname, picture, statusMessage):
+        case let .userUpdated(userID, nickname, picture, statusMessage, accountID):
             if var user = liveUsers[userID] {
                 user.nickname = nickname
                 user.picture = picture
+                if let accountID { user.accountID = accountID }
                 liveUsers[userID] = user
             }
             if let statusMessage { userStatusMessages[userID] = statusMessage }
@@ -7615,7 +7622,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
                 case .offlineMessages:
                     selectOfflineMessageCategory()
                 case let .conversation(conversation):
-                    selectPrivateConversation(conversation.userID, focusComposer: false)
+                    selectPrivateConversation(conversation.id, focusComposer: false)
                 }
             } else {
                 if let previousID = selectedPrivateConversationID, var previous = privateMessageConversations[previousID] {

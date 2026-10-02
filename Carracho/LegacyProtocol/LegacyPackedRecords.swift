@@ -75,6 +75,8 @@ struct LegacyUserListEntry: Equatable {
     var picture: Data
     /// Out-of-band modern-client metadata. This is intentionally not part of the Classic packed record.
     var isLegacyTransport = false
+    /// Stable server account identity for modern peers. Never serialized into the Classic packed record.
+    var accountID: UUID? = nil
 
     func encoded() throws -> Data {
         var data = try LegacyWire.string16(nickname)

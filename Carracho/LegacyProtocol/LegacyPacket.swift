@@ -630,6 +630,8 @@ enum LegacyUserInfoField {
     static let legacyTransport: UInt32 = 0xf0000004
     /// Modern-only own-session update: current 64-bit permission words after a live account/group change.
     static let permissionWords: UInt32 = 0xf0000005
+    /// Modern-only stable account identity. UUID text, independent of the ephemeral session user ID.
+    static let accountIdentifier: UInt32 = 0xf0000006
 }
 
 enum LegacyClientMetadataField {

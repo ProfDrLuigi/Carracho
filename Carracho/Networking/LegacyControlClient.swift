@@ -197,7 +197,7 @@ enum LegacyControlEvent {
     case privateMessageReactionChanged(LegacyPrivateMessageReactionChanged)
     case offlineMessagesAvailable(Int)
     case broadcastMessage(LegacyBroadcastMessage)
-    case userUpdated(userID: UInt32, nickname: Data, picture: Data, statusMessage: Data?)
+    case userUpdated(userID: UInt32, nickname: Data, picture: Data, statusMessage: Data?, accountID: UUID?)
     case userStatus(userID: UInt32, statusMessage: Data)
     case userGroupColor(userID: UInt32, colorRGB: UInt32?)
     case ownPermissionsChanged(permissionWord0: UInt32, permissionWord1: UInt32)
@@ -2339,9 +2339,12 @@ final class LegacyControlClient {
                 }
                 let userID = try idField.uint32BE()
                 let status = packet.firstField(type: LegacyUserInfoField.statusMessage)?.value
+                let accountID = LegacyMessageEdit.parseIdentifier(
+                    packet.firstField(type: LegacyUserInfoField.accountIdentifier)?.value
+                )
                 onEvent?(.userUpdated(userID: userID, nickname: nicknameField.value,
                                       picture: packet.firstField(type: LegacyUserInfoField.picture)?.value ?? Data(),
-                                      statusMessage: status))
+                                      statusMessage: status, accountID: accountID))
                 if let colorField = packet.firstField(type: LegacyUserInfoField.groupColorRGB) {
                     onEvent?(.userGroupColor(userID: userID, colorRGB: try colorField.uint32BE()))
                 }
@@ -2370,7 +2373,10 @@ final class LegacyControlClient {
                                                flags: try flagsField.uint16BE(),
                                                userID: try idField.uint32BE(),
                                                picture: packet.firstField(type: LegacyUserInfoField.picture)?.value ?? Data(),
-                                               isLegacyTransport: transportMarker?.first == 1)
+                                               isLegacyTransport: transportMarker?.first == 1,
+                                               accountID: LegacyMessageEdit.parseIdentifier(
+                                                   packet.firstField(type: LegacyUserInfoField.accountIdentifier)?.value
+                                               ))
                 onEvent?(.userArrived(user))
                 if let status = packet.firstField(type: LegacyUserInfoField.statusMessage)?.value {
                     onEvent?(.userStatus(userID: user.userID, statusMessage: status))
