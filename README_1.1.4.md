@@ -44,6 +44,10 @@ This identity metadata does not change Private Message routing or grant access t
 
 ## Release tooling
 
+### Centralized version metadata
+
+Carracho now keeps the release version and build number in `Version.xcconfig` as the single source of truth. The macOS Client and Server inherit those values through Xcode, Swift runtime version strings use the generated bundle metadata, and the native Linux build plus Debian packaging read the same configuration. Release bumps no longer require updating version literals in Swift or C source files.
+
 ### Safer Sparkle appcast republishing
 
 Republishing an existing build number now removes the old item from the copied appcast before Sparkle regenerates the feed entry. This forces Sparkle to infer system and hardware metadata from the replacement archive instead of carrying forward stale metadata from an earlier artifact.

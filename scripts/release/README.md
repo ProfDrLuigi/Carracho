@@ -49,11 +49,22 @@ For that optional mode, configure the notarytool profile once with `scripts/rele
 
 Client and Server use the existing `SUPublicEDKey`. `generate_appcast` reads the matching EdDSA private key from the login Keychain account `ed25519` by default. Override it with `SPARKLE_KEY_ACCOUNT`.
 
+## Version source
+
+`Version.xcconfig` is the single source of truth for the product version and build number:
+
+```text
+MARKETING_VERSION = <version>
+CURRENT_PROJECT_VERSION = <build>
+```
+
+Xcode inherits these values for both macOS targets. Swift reads the generated bundle values through `CarrachoBuildInfo`. The native Linux build and Debian packaging load the same `Version.xcconfig` through `scripts/load-version.sh`. For a normal release, change the version/build only in `Version.xcconfig`.
+
 ## Release prerequisites
 
 Before running either publisher:
 
-- Client and Server must use the same `MARKETING_VERSION` and `CURRENT_PROJECT_VERSION`;
+- `Version.xcconfig` must contain the intended `MARKETING_VERSION` and `CURRENT_PROJECT_VERSION` for the release;
 - `README_<version>.md` must contain `## Highlights`, `## Carracho Client <version>`, and `## Carracho Server <version>`;
 - source changes must be committed;
 - the tracked working tree must be clean.

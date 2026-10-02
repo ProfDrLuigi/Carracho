@@ -297,9 +297,8 @@ final class LegacyControlClient {
 
         let architecture = runtimeCPUArchitecture()
 
-        let bundle = Bundle.main
-        let clientVersion = (bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? ""
-        let clientBuild = (bundle.object(forInfoDictionaryKey: "CFBundleVersion") as? String) ?? ""
+        let clientVersion = CarrachoBuildInfo.version
+        let clientBuild = CarrachoBuildInfo.build
         let values: [(UInt32, String)] = [
             (LegacyClientMetadataField.operatingSystem, operatingSystem),
             (LegacyClientMetadataField.cpuArchitecture, architecture),

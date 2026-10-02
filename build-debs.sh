@@ -55,6 +55,11 @@ while (($#)); do
     esac
 done
 
+if [[ -n "$VERSION_OVERRIDE" ]]; then
+    export CARRACHO_VERSION_OVERRIDE="$VERSION_OVERRIDE"
+fi
+. "$ROOT/scripts/load-version.sh"
+
 [[ "$(uname -s)" == "Linux" ]] || {
     echo "error: Debian packages must be built on Linux." >&2
     echo "       Run this script on Debian/Ubuntu or in the Linux build VM." >&2
@@ -73,16 +78,9 @@ EXTRA_CFLAGS="${EXTRA_CFLAGS:--Werror}"
 DEB_COMPRESSION="${DEB_COMPRESSION:-gzip}"
 export EXTRA_CFLAGS
 
-if [[ -n "$VERSION_OVERRIDE" ]]; then
-    VERSION="$VERSION_OVERRIDE"
-else
-    VERSION="$(
-        sed -n 's/.*Carracho Server \([0-9][0-9A-Za-z.+:~_-]*\).*/\1/p' \
-            ServerLinux/server_runtime.c | head -n 1
-    )"
-fi
+VERSION="$CARRACHO_VERSION"
 [[ -n "$VERSION" ]] || {
-    echo "error: could not determine package version from ServerLinux/server_runtime.c" >&2
+    echo "error: could not determine package version from Version.xcconfig" >&2
     exit 1
 }
 if ! dpkg --validate-version "$VERSION" >/dev/null 2>&1; then

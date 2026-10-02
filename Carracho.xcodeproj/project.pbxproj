@@ -58,6 +58,7 @@
 		2A13EC59305AA7FD002A3039 /* carrachoserver.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; path = carrachoserver.html; sourceTree = "<group>"; };
 		2A3840A9305961DB00D5C253 /* Carracho-Server-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = "Carracho-Server-Info.plist"; sourceTree = "<group>"; };
 		2A8153BA3061161A007CA770 /* build-debs.sh */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; path = "build-debs.sh"; sourceTree = "<group>"; };
+		2A9F00013071111100A10001 /* Version.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Version.xcconfig; sourceTree = "<group>"; };
 		2AD52C523052E26B00CD47B6 /* Carracho.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Carracho.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		2AD53F4B3054732E00CD47B6 /* Carracho Server.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Carracho Server.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		2AD542343055691A00CD47B6 /* compile.sh */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; path = compile.sh; sourceTree = "<group>"; };
@@ -217,6 +218,7 @@
 		2AD52C493052E26B00CD47B6 = {
 			isa = PBXGroup;
 			children = (
+				2A9F00013071111100A10001 /* Version.xcconfig */,
 				2A6A589E306D0E6F003BBD22 /* scripts */,
 				2A6A5707306D030E003BBD22 /* docs */,
 				2A8153BA3061161A007CA770 /* build-debs.sh */,
@@ -487,6 +489,7 @@
 		};
 		2AD52C5E3052E26C00CD47B6 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 2A9F00013071111100A10001 /* Version.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
@@ -550,6 +553,7 @@
 		};
 		2AD52C5F3052E26C00CD47B6 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 2A9F00013071111100A10001 /* Version.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
@@ -610,7 +614,6 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 15;
 				ENABLE_APP_SANDBOX = NO;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
@@ -627,7 +630,6 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 10.15;
-				MARKETING_VERSION = 1.1.4;
 				PRODUCT_BUNDLE_IDENTIFIER = luigi.com.carracho;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -647,7 +649,6 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 15;
 				ENABLE_APP_SANDBOX = NO;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
@@ -664,7 +665,6 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 10.15;
-				MARKETING_VERSION = 1.1.4;
 				PRODUCT_BUNDLE_IDENTIFIER = luigi.com.carracho;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -684,7 +684,6 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 15;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				FRAMEWORK_SEARCH_PATHS = (
@@ -701,7 +700,6 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 10.15;
-				MARKETING_VERSION = 1.1.4;
 				PRODUCT_BUNDLE_IDENTIFIER = luigi.com.carracho.server;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -722,7 +720,6 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 15;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				FRAMEWORK_SEARCH_PATHS = (
@@ -739,7 +736,6 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 10.15;
-				MARKETING_VERSION = 1.1.4;
 				PRODUCT_BUNDLE_IDENTIFIER = luigi.com.carracho.server;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;

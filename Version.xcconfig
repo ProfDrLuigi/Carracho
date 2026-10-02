@@ -1,0 +1,4 @@
+// Single source of truth for Carracho product versioning.
+// Bump only these two values for the next release.
+MARKETING_VERSION = 1.1.4
+CURRENT_PROJECT_VERSION = 15

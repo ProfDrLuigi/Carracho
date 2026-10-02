@@ -3,5 +3,6 @@ build/
 output/
 Analytics/
 scripts/*
+!scripts/load-version.sh
 !scripts/release/
 !scripts/release/**
