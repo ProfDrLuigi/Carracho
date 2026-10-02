@@ -21,6 +21,8 @@
   <main class="release-page">
     <a class="release-back" href="../">← Carracho</a>
 <h2>Carracho Client 1.1.4</h2>
+<h3>Space bar opens Quick View</h3>
+<p>When a single previewable file is selected in the Files list, pressing the Space bar now opens the same Quick View window as the toolbar button and context-menu command. The keyboard shortcut follows the existing Quick View availability rules and does not override normal table behavior for folders, unsupported files or unavailable previews.</p>
 <h3>Large directory listings</h3>
 <p>Modern Carracho connections now page directory listings that would exceed the legacy 65,535-byte size of a single TLV field. The client requests successive pages automatically and merges them before presenting the folder, so directories with thousands of files no longer fail to open merely because the packed listing crosses the historical wire-size limit.</p>
 <p>The paging extension is transparent to the Files UI and preserves entry order, Finder labels and existing directory metadata. Classic protocol packets remain unchanged.</p>

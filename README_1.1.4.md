@@ -14,10 +14,15 @@ Carracho 1.1.4 focuses on **keeping Message Center private conversations tied to
 - Restored persistent Private Message history when a server does not provide a stable peer UUID, including original/Classic and older modern servers, by isolating numeric user IDs inside a server-boot namespace derived from uptime.
 - Private Messages received on connected background bookmarks are now written to that bookmark's Message Center store immediately instead of remaining only in the in-memory pending-event queue.
 - Fixed large directory listings on modern connections: listings that exceed the legacy 65,535-byte TLV limit are now transferred in pages and transparently merged by the client.
+- Added Finder-style Quick View from the Files list: pressing the Space bar on a selected previewable file opens the existing Quick View window.
 - Improved Sparkle republishing so metadata for an existing build is regenerated from the replacement Universal 2 archive instead of retaining stale hardware requirements.
 - Updated Carracho and Carracho Server version reporting to **1.1.4 / build 15**.
 
 ## Carracho Client 1.1.4
+
+### Space bar opens Quick View
+
+When a single previewable file is selected in the Files list, pressing the Space bar now opens the same Quick View window as the toolbar button and context-menu command. The keyboard shortcut follows the existing Quick View availability rules and does not override normal table behavior for folders, unsupported files or unavailable previews.
 
 ### Large directory listings
 

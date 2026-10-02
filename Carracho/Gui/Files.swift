@@ -2,6 +2,20 @@ import Cocoa
 import UniformTypeIdentifiers
 import QuickLookUI
 
+final class CarrachoFilesTableView: NSTableView {
+    var onSpacePressed: (() -> Bool)?
+
+    override func keyDown(with event: NSEvent) {
+        let modifiers = event.modifierFlags.intersection([.command, .control, .option, .shift])
+        if modifiers.isEmpty,
+           event.charactersIgnoringModifiers == " ",
+           onSpacePressed?() == true {
+            return
+        }
+        super.keyDown(with: event)
+    }
+}
+
 /// Lightweight reusable cells for large server-wide search result sets.
 ///
 /// The normal Files browser needs a richer hierarchy (disclosure buttons, indentation,
@@ -2260,6 +2274,7 @@ extension ViewController {
     }
 
     @objc func quickViewSelectedFile(_ sender: Any?) {
+        guard fileQuickViewButton.isEnabled else { return }
         guard client.isConnected, let path = selectedServerItemPath,
               let selected = selectedDownloadEntry, canQuickView(selected), !isQuickViewPreparing,
               quickViewTransferTask == nil else { return }

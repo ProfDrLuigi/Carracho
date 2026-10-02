@@ -1064,7 +1064,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
 
     let tabView = NSTabView()
     let detailsTextView = NSTextView()
-    let fileTable = NSTableView()
+    let fileTable = CarrachoFilesTableView()
     let transferTable = NSTableView()
     let trackerBrowserTable = NSTableView()
     let trackerBrowserTitleLabel = NSTextField(labelWithString: L("Tracker"))
@@ -1586,6 +1586,11 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         fileTable.autosaveTableColumns = true
         fileTable.target = self
         fileTable.doubleAction = #selector(openSelectedFileEntry(_:))
+        fileTable.onSpacePressed = { [weak self] in
+            guard let self, self.fileQuickViewButton.isEnabled else { return false }
+            self.quickViewSelectedFile(nil)
+            return true
+        }
         fileTable.registerForDraggedTypes([.fileURL, Self.remoteFileMovePasteboardType])
         fileTable.setDraggingSourceOperationMask(.copy, forLocal: false)
         // Finder-style in-place organization: dragging server items within the Files table
