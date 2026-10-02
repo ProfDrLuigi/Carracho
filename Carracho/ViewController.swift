@@ -798,10 +798,12 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
     weak var clientSettingsDownloadFolderField: NSTextField?
     weak var clientSettingsShowUserPresenceNotificationsCheckbox: NSButton?
     weak var clientSettingsQuitOnLastWindowCloseCheckbox: NSButton?
+    weak var clientSettingsConfirmDisconnectCheckbox: NSButton?
     weak var clientSettingsAvatarView: AvatarDropView?
     var clientSettingsPendingDownloadFolderPath: String?
     var resumeConnectionAfterIdentitySetup = false
     var resumeConnectionBookmarkID: UUID?
+    var disconnectConfirmationPending = false
     var legacyPrivateMessageComposerWindow: PrivateMessageComposerWindowController?
     var offlineMessageComposer: OfflineMessageComposerWindowController?
     var flatNewsWindowController: FlatNewsWindowController?
@@ -1300,6 +1302,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
     static let generalAboutMeDefaultsKey = "CarrachoGeneralAboutMe.v1"
     static let showUserPresenceNotificationsDefaultsKey = "Carracho.ShowUserPresenceNotifications.v1"
     static let quitOnLastWindowCloseDefaultsKey = "Carracho.QuitOnLastWindowClose.v1"
+    static let confirmDisconnectDefaultsKey = "Carracho.ConfirmDisconnect.v1"
     static let globalAvatarIdentity = LocalAvatarIdentity(host: "__carracho_global_profile__", port: 0, login: "profile")
     var remoteTransferSnapshot: [LegacyTransferInfoRecord] = []
     var remoteManagedTransferSnapshot: [LegacyManagedTransferRecord] = []
@@ -4463,7 +4466,37 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         if selectedBookmarkID == nil { passwordField.stringValue = "" }
     }
 
-    func disconnectByUser() {
+    func disconnectByUser(confirmIfRequested: Bool = true) {
+        // A pending reconnect is not an active server connection. Cancelling that retry should
+        // remain immediate even when confirmation is enabled.
+        guard confirmIfRequested, confirmDisconnect, client.isConnected else {
+            performUserDisconnect()
+            return
+        }
+        guard !disconnectConfirmationPending else { return }
+
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = L("Disconnect from Server?")
+        alert.informativeText = L("Do you really want to disconnect from the active server?")
+        alert.addButton(withTitle: L("Disconnect"))
+        alert.addButton(withTitle: L("Cancel"))
+
+        disconnectConfirmationPending = true
+        let completion: (NSApplication.ModalResponse) -> Void = { [weak self] response in
+            guard let self else { return }
+            self.disconnectConfirmationPending = false
+            guard response == .alertFirstButtonReturn else { return }
+            self.performUserDisconnect()
+        }
+        if let window = view.window {
+            alert.beginSheetModal(for: window, completionHandler: completion)
+        } else {
+            completion(alert.runModal())
+        }
+    }
+
+    private func performUserDisconnect() {
         let temporaryBookmarkID = activeBookmarkConnectionID.flatMap { id in
             temporaryServerBookmarkIDs.contains(id) ? id : nil
         }
@@ -4480,6 +4513,8 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
                 discardTemporaryServerBookmarkAfterDisconnect(temporaryBookmarkID)
             }
         }
+        reloadBookmarkStack()
+        refreshShellChrome()
     }
 
     func scheduleAutoReconnect(for bookmarkID: UUID) {
@@ -5307,8 +5342,6 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
            !confirmTrackerChangesCanBeAbandoned() { return }
         if client.isConnected || autoReconnectWorkItem != nil {
             disconnectByUser()
-            reloadBookmarkStack()
-            refreshShellChrome()
         } else if let id = selectedBookmarkID,
                   let bookmark = serverBookmarks.first(where: { $0.id == id }) {
             connect(to: bookmark)
@@ -5615,7 +5648,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
                     guard accepted else {
                         if self.connectionSetupBookmarkID == setupBookmarkID { self.connectionSetupBookmarkID = nil }
                         self.deferredInteractiveEvents.removeAll()
-                        self.disconnectByUser()
+                        self.disconnectByUser(confirmIfRequested: false)
                         self.finishStartupBookmarkConnection(setupBookmarkID)
                         return
                     }
@@ -6362,6 +6395,10 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         let defaults = UserDefaults.standard
         guard defaults.object(forKey: Self.quitOnLastWindowCloseDefaultsKey) != nil else { return true }
         return defaults.bool(forKey: Self.quitOnLastWindowCloseDefaultsKey)
+    }
+
+    var confirmDisconnect: Bool {
+        UserDefaults.standard.bool(forKey: Self.confirmDisconnectDefaultsKey)
     }
 
     var queuedClientTransferIDs: [UUID] {

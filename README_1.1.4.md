@@ -9,6 +9,7 @@ Carracho 1.1.4 focuses on **keeping Message Center private conversations tied to
 - The Swift/macOS and native Linux servers now send stable account identity metadata to modern clients while leaving Classic packet layouts unchanged.
 - Added a new v2 local Message Center history schema that keeps durable conversations separated by stable account identity.
 - Older session-ID-based private-message history is deliberately not imported automatically because its ownership cannot be proven safely after IDs have been recycled.
+- Added an optional **Confirm disconnection** client setting that asks before a manual disconnect from an active server.
 - Improved Sparkle republishing so metadata for an existing build is regenerated from the replacement Universal 2 archive instead of retaining stale hardware requirements.
 - Updated Carracho and Carracho Server version reporting to **1.1.4 / build 15**.
 
@@ -33,6 +34,10 @@ Offline Messages use their separate account-aware storage and are not affected b
 If a server does not provide a stable account UUID, Carracho still allows Private Messages during the current connection, but that conversation remains session-only instead of being persisted under an identity that cannot be trusted across reconnects.
 
 This keeps communication compatible with older servers without recreating the history-mixing bug.
+
+### Optional disconnect confirmation
+
+A new **Confirm disconnection** option is available under Carracho Settings → General → App Behavior. When enabled, manually disconnecting from an active server requires confirmation before the connection is closed. Cancelling a pending automatic reconnect and internal protocol-driven disconnects remain immediate and do not show the confirmation dialog.
 
 ## Carracho Server 1.1.4
 

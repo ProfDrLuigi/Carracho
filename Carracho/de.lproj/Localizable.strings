@@ -376,6 +376,8 @@
 "Discard Unsaved Server Info Changes?" = "Nicht gespeicherte Server-Info-Änderungen verwerfen?";
 "Discard Unsaved Tracker Changes?" = "Nicht gespeicherte Tracker-Änderungen verwerfen?";
 "Disconnect" = "Trennen";
+"Disconnect from Server?" = "Verbindung zum Server trennen?";
+"Do you really want to disconnect from the active server?" = "Möchtest du die Verbindung zum aktiven Server wirklich trennen?";
 "Disconnect %@’s current session? The user can reconnect immediately." = "Die aktuelle Sitzung von %@ trennen? Der Benutzer kann sich sofort wieder verbinden.";
 "Disconnect from the active server" = "Vom aktiven Server trennen";
 "Disconnect this user's current session. The user may reconnect immediately." = "Trennen Sie die aktuelle Sitzung dieses Benutzers. Der Benutzer kann sich sofort wieder verbinden.";
@@ -2113,6 +2115,8 @@
 "A new server database was created.\n\nAdministrator login: admin\nInitial password: %@\n\nChange this administrator password immediately after your first login.\n\nThe anonymous account has no password by default. If desired, you can set a password for anonymous in Administration → Accounts." = "Eine neue Server-Datenbank wurde erstellt.\n\nAdministrator-Login: admin\nInitiales Passwort: %@\n\nÄndere dieses Administrator-Passwort direkt nach der ersten Anmeldung.\n\nDas Konto anonymous hat standardmäßig kein Passwort. Bei Bedarf kannst du für anonymous unter Administration → Accounts ein Passwort setzen.";
 "App Behavior" = "App-Verhalten";
 "Quit Carracho when the last window is closed" = "Carracho beenden, wenn das letzte Fenster geschlossen wird";
+"Confirm disconnection" = "Trennung bestätigen";
+"Ask for confirmation before manually disconnecting from a server." = "Vor dem manuellen Trennen von einem Server eine Bestätigung anfordern.";
 "When disabled, the red close button only closes the window and Carracho stays running in the Dock." = "Wenn deaktiviert, schließt der rote Schließen-Knopf nur das Fenster und Carracho läuft im Dock weiter.";
 "Upload Files or Folders" = "Dateien oder Ordner hochladen";
 "Choose one or more files or folders to upload to the current server folder." = "Wähle eine oder mehrere Dateien oder Ordner aus, die in den aktuellen Serverordner hochgeladen werden sollen.";

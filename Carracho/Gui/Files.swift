@@ -1907,6 +1907,7 @@ extension ViewController {
         clientSettingsEmailField = nil
         clientSettingsAboutView = nil
         clientSettingsDownloadFolderField = nil
+        clientSettingsConfirmDisconnectCheckbox = nil
         clientSettingsAvatarView = nil
         clientSettingsPendingDownloadFolderPath = nil
     }

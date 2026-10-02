@@ -29,6 +29,7 @@
 <li>The Swift/macOS and native Linux servers now send stable account identity metadata to modern clients while leaving Classic packet layouts unchanged.</li>
 <li>Added a new v2 local Message Center history schema that keeps durable conversations separated by stable account identity.</li>
 <li>Older session-ID-based private-message history is deliberately not imported automatically because its ownership cannot be proven safely after IDs have been recycled.</li>
+<li>Added an optional <strong>Confirm disconnection</strong> client setting that asks before a manual disconnect from an active server.</li>
 <li>Improved Sparkle republishing so metadata for an existing build is regenerated from the replacement Universal 2 archive instead of retaining stale hardware requirements.</li>
 <li>Updated Carracho and Carracho Server version reporting to <strong>1.1.4 / build 15</strong>.</li>
 </ul>
@@ -43,6 +44,8 @@
 <h3>Safe fallback for older servers</h3>
 <p>If a server does not provide a stable account UUID, Carracho still allows Private Messages during the current connection, but that conversation remains session-only instead of being persisted under an identity that cannot be trusted across reconnects.</p>
 <p>This keeps communication compatible with older servers without recreating the history-mixing bug.</p>
+<h3>Optional disconnect confirmation</h3>
+<p>A new <strong>Confirm disconnection</strong> option is available under Carracho Settings → General → App Behavior. When enabled, manually disconnecting from an active server requires confirmation before the connection is closed. Cancelling a pending automatic reconnect and internal protocol-driven disconnects remain immediate and do not show the confirmation dialog.</p>
 <h2>Carracho Server 1.1.4</h2>
 <h3>Stable account identity for modern peer metadata</h3>
 <p>Both the Swift/macOS server and the native Linux server now include the authenticated account UUID in modern user-arrival and user-update metadata. The stable identifier is sent in initial user snapshots, new-user events and later user metadata refreshes so modern clients can distinguish account identity from the temporary numeric session user ID. Modern observers also receive the stable account identity for Classic peers, while Classic recipients continue to receive the historical packet layouts unchanged.</p>

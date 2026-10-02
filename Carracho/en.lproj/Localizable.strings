@@ -376,6 +376,8 @@
 "Discard Unsaved Server Info Changes?" = "Discard Unsaved Server Info Changes?";
 "Discard Unsaved Tracker Changes?" = "Discard Unsaved Tracker Changes?";
 "Disconnect" = "Disconnect";
+"Disconnect from Server?" = "Disconnect from Server?";
+"Do you really want to disconnect from the active server?" = "Do you really want to disconnect from the active server?";
 "Disconnect %@’s current session? The user can reconnect immediately." = "Disconnect %@’s current session? The user can reconnect immediately.";
 "Disconnect from the active server" = "Disconnect from the active server";
 "Disconnect this user's current session. The user may reconnect immediately." = "Disconnect this user's current session. The user may reconnect immediately.";
@@ -2113,6 +2115,8 @@
 "A new server database was created.\n\nAdministrator login: admin\nInitial password: %@\n\nChange this administrator password immediately after your first login.\n\nThe anonymous account has no password by default. If desired, you can set a password for anonymous in Administration → Accounts." = "A new server database was created.\n\nAdministrator login: admin\nInitial password: %@\n\nChange this administrator password immediately after your first login.\n\nThe anonymous account has no password by default. If desired, you can set a password for anonymous in Administration → Accounts.";
 "App Behavior" = "App Behavior";
 "Quit Carracho when the last window is closed" = "Quit Carracho when the last window is closed";
+"Confirm disconnection" = "Confirm disconnection";
+"Ask for confirmation before manually disconnecting from a server." = "Ask for confirmation before manually disconnecting from a server.";
 "When disabled, the red close button only closes the window and Carracho stays running in the Dock." = "When disabled, the red close button only closes the window and Carracho stays running in the Dock.";
 "Upload Files or Folders" = "Upload Files or Folders";
 "Choose one or more files or folders to upload to the current server folder." = "Choose one or more files or folders to upload to the current server folder.";
