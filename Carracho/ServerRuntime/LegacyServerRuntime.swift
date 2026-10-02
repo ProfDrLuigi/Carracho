@@ -2087,13 +2087,40 @@ final class LegacyServerRuntime {
             let listing = try directoryListing(path: path, account: session.account,
                                                supportsTaggedUTF8Names: session.supportsTaggedUTF8FileNames,
                                                legacyTransport: session.isLegacyTransport)
-            var fields = [LegacyTLV(type: 2, value: try listing.encoded())]
+
+            let requestedPageOffset: Int?
+            if !session.isLegacyTransport,
+               let offsetField = packet.firstField(type: LegacyDirectoryPagingField.requestOffset) {
+                requestedPageOffset = Int(try offsetField.uint32BE())
+            } else {
+                requestedPageOffset = nil
+            }
+
+            let pageListing: LegacyDirectoryListing
+            let nextOffset: Int?
+            if let requestedPageOffset {
+                let page = try listing.page(startingAt: requestedPageOffset)
+                pageListing = page.listing
+                nextOffset = page.nextOffset
+            } else {
+                pageListing = listing
+                nextOffset = nil
+            }
+
+            var fields = [LegacyTLV(type: 2, value: try pageListing.encoded())]
             // Never alter the Classic packed directory record. Modern peers receive one
             // out-of-band label byte per entry; legacy clients therefore remain byte-for-byte
             // compatible with the historical listing payload.
             if !session.isLegacyTransport {
                 fields.append(LegacyTLV(type: LegacyFileLabelField.directoryLabels,
-                                        value: Data(listing.entries.map { $0.label.rawValue })))
+                                        value: Data(pageListing.entries.map { $0.label.rawValue })))
+                if let nextOffset {
+                    guard nextOffset <= Int(UInt32.max) else {
+                        throw LegacyServerRuntimeError.protocolFailure("directory page offset exceeds UInt32")
+                    }
+                    fields.append(LegacyTLV(type: LegacyDirectoryPagingField.nextOffset,
+                                            value: LegacyWire.uint32BE(UInt32(nextOffset))))
+                }
             }
             try session.sendAuthenticated(LegacyPacket(command: LegacyCommand.directory,
                                                         transactionID: packet.transactionID,

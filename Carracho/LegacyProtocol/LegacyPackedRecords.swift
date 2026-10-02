@@ -40,6 +40,47 @@ struct LegacyDirectoryListing: Equatable {
         return data
     }
 
+    /// Returns a packed-listing page that fits inside one UInt16-sized TLV value.
+    ///
+    /// Offsets are entry indexes in the fully sorted listing. The path and entry count are
+    /// repeated on each page so every page is itself a valid Classic directory-list payload.
+    func page(startingAt offset: Int,
+              maximumEncodedBytes: Int = LegacyDirectoryPagingField.maximumPageBytes)
+        throws -> (listing: LegacyDirectoryListing, nextOffset: Int?) {
+        guard offset >= 0, offset <= entries.count else {
+            throw LegacyProtocolError.invalidRecord("directory page offset out of range")
+        }
+        guard maximumEncodedBytes > 0, maximumEncodedBytes <= Int(UInt16.max) else {
+            throw LegacyProtocolError.invalidLength("invalid directory page byte limit")
+        }
+
+        let baseSize = 2 + currentPath.count + 2
+        guard baseSize <= maximumEncodedBytes else {
+            throw LegacyProtocolError.invalidLength("directory path leaves no room for a listing page")
+        }
+        if offset == entries.count {
+            return (LegacyDirectoryListing(currentPath: currentPath, entries: []), nil)
+        }
+
+        var pageEntries: [LegacyDirectoryEntry] = []
+        var encodedSize = baseSize
+        var index = offset
+        while index < entries.count {
+            let recordSize = try entries[index].encoded().count
+            if encodedSize + recordSize > maximumEncodedBytes {
+                guard !pageEntries.isEmpty else {
+                    throw LegacyProtocolError.invalidLength("directory entry exceeds page byte limit")
+                }
+                break
+            }
+            pageEntries.append(entries[index])
+            encodedSize += recordSize
+            index += 1
+        }
+        let next = index < entries.count ? index : nil
+        return (LegacyDirectoryListing(currentPath: currentPath, entries: pageEntries), next)
+    }
+
     static func decode(_ data: Data) throws -> LegacyDirectoryListing {
         var cursor = LegacyByteCursor(data)
         let path = try cursor.readString16()

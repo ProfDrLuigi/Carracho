@@ -27,6 +27,7 @@
         <ul>
             <span class="newstext">
                 <li>Updated Carracho Server for macOS to version 1.1.4 (build 15).</li>
+                <li><strong>Paged directory replies for modern clients</strong> — The macOS/Swift server and native Linux server now support modern directory-list paging. Each page stays below the legacy UInt16 TLV-value limit and includes a continuation offset when more entries remain. Clients that do not request paging continue to receive the historical single-listing response, preserving Classic compatibility.</li>
                 <li><strong>Stable account identity for modern peer metadata</strong> — Both the Swift/macOS server and the native Linux server now include the authenticated account UUID in modern user-arrival and user-update metadata. The stable identifier is sent in initial user snapshots, new-user events and later user metadata refreshes so modern clients can distinguish account identity from the temporary numeric session user ID. Modern observers also receive the stable account identity for Classic peers, while Classic recipients continue to receive the historical packet layouts unchanged.</li>
         </ul></span>
 

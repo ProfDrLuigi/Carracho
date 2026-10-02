@@ -21,6 +21,9 @@
   <main class="release-page">
     <a class="release-back" href="../">← Carracho</a>
 <h2>Carracho Client 1.1.4</h2>
+<h3>Large directory listings</h3>
+<p>Modern Carracho connections now page directory listings that would exceed the legacy 65,535-byte size of a single TLV field. The client requests successive pages automatically and merges them before presenting the folder, so directories with thousands of files no longer fail to open merely because the packed listing crosses the historical wire-size limit.</p>
+<p>The paging extension is transparent to the Files UI and preserves entry order, Finder labels and existing directory metadata. Classic protocol packets remain unchanged.</p>
 <h3>Stable Message Center conversation identity</h3>
 <p>Private conversations in Message Center no longer use the server&#x27;s transient numeric <code>userID</code> as their durable identity. Modern servers now provide the authenticated account UUID for each visible user, and Carracho stores and selects conversations by that stable account identity while keeping the numeric user ID only as the current live routing address.</p>
 <p>This fixes the case where a server restart reused a numeric user ID for a different account. Previously, the stored conversation for that number could be relabelled with the new user&#x27;s nickname and avatar, making messages from one account appear inside another account&#x27;s conversation. In 1.1.4, a conversation can only reconnect to the exact same account UUID.</p>

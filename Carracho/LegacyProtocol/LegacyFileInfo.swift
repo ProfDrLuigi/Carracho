@@ -30,6 +30,17 @@ enum LegacyFileLabelField {
     static let directoryLabels: UInt32 = 0xf0000601
 }
 
+/// Modern-only pagination metadata for directory listings.
+///
+/// Classic directory replies carry the complete packed listing in one TLV whose value length is
+/// UInt16. Modern peers can request an entry offset and receive a page that stays below that TLV
+/// limit. Repeating requests are then merged by the client before the Files UI sees the listing.
+enum LegacyDirectoryPagingField {
+    static let requestOffset: UInt32 = 0xf0000602
+    static let nextOffset: UInt32 = 0xf0000603
+    static let maximumPageBytes = 60 * 1024
+}
+
 struct LegacyFileInfoMetadata: Equatable {
     static let wireSize = 30
 

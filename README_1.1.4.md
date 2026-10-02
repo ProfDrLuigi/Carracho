@@ -13,10 +13,17 @@ Carracho 1.1.4 focuses on **keeping Message Center private conversations tied to
 - Fixed Message Center persistence when a private conversation receives its stable account identity after messages have already arrived; the existing in-memory history is now persisted during identity promotion and survives an app restart.
 - Restored persistent Private Message history when a server does not provide a stable peer UUID, including original/Classic and older modern servers, by isolating numeric user IDs inside a server-boot namespace derived from uptime.
 - Private Messages received on connected background bookmarks are now written to that bookmark's Message Center store immediately instead of remaining only in the in-memory pending-event queue.
+- Fixed large directory listings on modern connections: listings that exceed the legacy 65,535-byte TLV limit are now transferred in pages and transparently merged by the client.
 - Improved Sparkle republishing so metadata for an existing build is regenerated from the replacement Universal 2 archive instead of retaining stale hardware requirements.
 - Updated Carracho and Carracho Server version reporting to **1.1.4 / build 15**.
 
 ## Carracho Client 1.1.4
+
+### Large directory listings
+
+Modern Carracho connections now page directory listings that would exceed the legacy 65,535-byte size of a single TLV field. The client requests successive pages automatically and merges them before presenting the folder, so directories with thousands of files no longer fail to open merely because the packed listing crosses the historical wire-size limit.
+
+The paging extension is transparent to the Files UI and preserves entry order, Finder labels and existing directory metadata. Classic protocol packets remain unchanged.
 
 ### Stable Message Center conversation identity
 
@@ -58,6 +65,10 @@ A new **Confirm disconnection** option is available under Carracho Settings → 
 
 ## Carracho Server 1.1.4
 
+### Paged directory replies for modern clients
+
+The macOS/Swift server and native Linux server now support modern directory-list paging. Each page stays below the legacy UInt16 TLV-value limit and includes a continuation offset when more entries remain. Clients that do not request paging continue to receive the historical single-listing response, preserving Classic compatibility.
+
 ### Stable account identity for modern peer metadata
 
 Both the Swift/macOS server and the native Linux server now include the authenticated account UUID in modern user-arrival and user-update metadata. The stable identifier is sent in initial user snapshots, new-user events and later user metadata refreshes so modern clients can distinguish account identity from the temporary numeric session user ID. Modern observers also receive the stable account identity for Classic peers, while Classic recipients continue to receive the historical packet layouts unchanged.
@@ -80,6 +91,7 @@ The publishing scripts also verify that a Universal 2 release does not retain an
 
 - The new stable account-identity field is sent only to modern clients; Classic/Legacy packet layouts are unchanged.
 - The 1.1.4 macOS and native Linux servers both provide stable peer account identities to modern clients.
-- Against older servers that do not provide a stable account UUID, Private Message conversations remain usable for the current session but are not persisted as durable history.
+- Against servers that do not provide a stable peer account UUID, Private Message history uses the server-boot-scoped fallback described above; a real server restart intentionally starts a fresh numeric-ID namespace.
+- Large-directory paging requires both a paging-capable modern client and server. Classic packet layouts are unchanged, and older servers retain their historical single-TLV directory-size limit.
 - Pre-1.1.4 private Message Center history keyed by transient session user IDs is not automatically imported into the v2 history because its account ownership cannot be verified safely. Existing old rows are left untouched on disk.
 - Offline Messages are unaffected by the private-conversation storage migration.

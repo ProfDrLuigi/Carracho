@@ -192,6 +192,9 @@
 #define CMD_CHANNEL_DELETED 0xf0000801u
 #define FILE_LABEL_FIELD 0xf0000600u
 #define DIRECTORY_LABELS_FIELD 0xf0000601u
+#define DIRECTORY_PAGE_REQUEST_OFFSET_FIELD 0xf0000602u
+#define DIRECTORY_PAGE_NEXT_OFFSET_FIELD 0xf0000603u
+#define DIRECTORY_PAGE_MAX_BYTES (60u * 1024u)
 #define LOGIN_FIELD_MEDIA_CAPABILITIES 0xf0000200u
 #define LOGIN_FIELD_FILES_ROOT_NAME 0xf0000201u
 #define SERVER_INFO_FIELD_SOFTWARE_VERSION 0xf0000100u
@@ -1269,8 +1272,9 @@ static size_t classic_agreement_style(uint8_t out[22]){
     return sizeof(style);
 }
 
-static int encode_directory(cr_server*s,cr_session*session,const uint8_t*legacy,size_t legacy_len,cr_buffer*out,cr_buffer*labels){
-    cr_buffer_init(out);cr_buffer_init(labels);
+static int encode_directory(cr_server*s,cr_session*session,const uint8_t*legacy,size_t legacy_len,
+                            size_t page_offset,int paged,cr_buffer*out,cr_buffer*labels,size_t*next_offset){
+    cr_buffer_init(out);cr_buffer_init(labels);if(next_offset)*next_offset=(size_t)-1;
     if(!account_perm(session,PERM_VIEW_DROPBOXES)&&path_is_inside_dropbox(s,session,legacy,legacy_len))return cr_buffer_append_string16(out,legacy,legacy_len)||cr_buffer_append_u16(out,0)?-1:0;
     char dir[PATH_MAX];if(resolve_legacy_path(s,session,legacy,legacy_len,dir,sizeof(dir)))return-1;struct stat rootst;if(stat(dir,&rootst)||!S_ISDIR(rootst.st_mode))return-1;DIR*d=opendir(dir);if(!d)return-1;dir_item*items=NULL;size_t count=0,cap=0;struct dirent*de;
     while((de=readdir(d))){
@@ -1331,8 +1335,44 @@ static int encode_directory(cr_server*s,cr_session*session,const uint8_t*legacy,
     }
 
     if(session->personal==CR_PERSONAL_NESTED&&legacy_len==0){char vh[512];if(strlen(session->login)+2>sizeof(vh)){free(items);return-1;}vh[0]='~';strcpy(vh+1,session->login);int exists=0;for(size_t i=0;i<count;i++)if(!strcasecmp(items[i].name,vh))exists=1;if(!exists){uint8_t wm[512];size_t wn=0;if(cr_utf8_to_macroman(vh,wm,sizeof(wm),&wn)){free(items);return-1;}if(count==cap){size_t nc=cap?cap*2:32;dir_item*ni=realloc(items,nc*sizeof(*ni));if(!ni){free(items);return-1;}items=ni;cap=nc;}dir_item*x=&items[count++];memset(x,0,sizeof(*x));snprintf(x->name,sizeof(x->name),"%s",vh);memcpy(x->wire_name,wm,wn);x->wire_name_len=wn;char homefs[PATH_MAX];if(!resolve_legacy_path(s,session,wm,wn,homefs,sizeof(homefs)))x->size=visible_directory_item_count(homefs,session->modern_transport);x->file_type=FILETYPE_FOLDER;x->creator=CREATOR_FOLDER;x->flags=DIR_FLAG_FOLDER;}}
-    qsort(items,count,sizeof(*items),dir_item_cmp);if(count>UINT16_MAX){free(items);return-1;}if(cr_buffer_append_string16(out,legacy,legacy_len)||cr_buffer_append_u16(out,(uint16_t)count)){free(items);return-1;}
-    for(size_t i=0;i<count;i++){dir_item*x=&items[i];if(x->wire_name_len>UINT16_MAX-20||cr_buffer_append_u16(out,(uint16_t)(x->wire_name_len+20))||cr_buffer_append_u16(out,(uint16_t)x->wire_name_len)||cr_buffer_append(out,x->wire_name,x->wire_name_len)||cr_buffer_append_u32(out,x->size)||cr_buffer_append_u32(out,x->timestamp)||cr_buffer_append_u32(out,x->file_type)||cr_buffer_append_u32(out,x->creator)||cr_buffer_append_u16(out,x->flags)||cr_buffer_append_u8(labels,x->label)){free(items);return-1;}}
+    qsort(items,count,sizeof(*items),dir_item_cmp);
+    if(!paged&&count>UINT16_MAX){free(items);return-1;}
+
+    size_t first=paged?page_offset:0,end=count;
+    if(first>count){free(items);return-1;}
+    if(paged){
+        size_t encoded_size=2u+legacy_len+2u;
+        if(encoded_size>DIRECTORY_PAGE_MAX_BYTES){free(items);return-1;}
+        end=first;
+        while(end<count){
+            size_t record_bytes=items[end].wire_name_len+22u;
+            if(encoded_size+record_bytes>DIRECTORY_PAGE_MAX_BYTES){
+                if(end==first){free(items);return-1;}
+                break;
+            }
+            encoded_size+=record_bytes;
+            end++;
+        }
+    }
+
+    size_t page_count=end-first;
+    if(page_count>UINT16_MAX||
+       cr_buffer_append_string16(out,legacy,legacy_len)||
+       cr_buffer_append_u16(out,(uint16_t)page_count)){free(items);return-1;}
+    for(size_t i=first;i<end;i++){
+        dir_item*x=&items[i];
+        if(x->wire_name_len>UINT16_MAX-20||
+           cr_buffer_append_u16(out,(uint16_t)(x->wire_name_len+20))||
+           cr_buffer_append_u16(out,(uint16_t)x->wire_name_len)||
+           cr_buffer_append(out,x->wire_name,x->wire_name_len)||
+           cr_buffer_append_u32(out,x->size)||
+           cr_buffer_append_u32(out,x->timestamp)||
+           cr_buffer_append_u32(out,x->file_type)||
+           cr_buffer_append_u32(out,x->creator)||
+           cr_buffer_append_u16(out,x->flags)||
+           cr_buffer_append_u8(labels,x->label)){free(items);return-1;}
+    }
+    if(next_offset&&end<count)*next_offset=end;
     free(items);return 0;
 }
 
@@ -2323,7 +2363,41 @@ static int handle_server_info(cr_session*s,const cr_packet*p){
        skip the modern 0xf000... extension fields appended by current Carracho. */
     return session_send(s,CMD_SERVER_INFO,p->transaction_id,f,s->modern_transport?11:4);
 }
-static int handle_directory(cr_session*s,const cr_packet*p){const cr_tlv*path=cr_packet_field(p,1);const uint8_t*pv=path?path->value:NULL;size_t pn=path?path->length:0;cr_buffer listing,labels;if(encode_directory(s->server,s,pv,pn,&listing,&labels)){cr_buffer_free(&listing);cr_buffer_free(&labels);return send_error(s,p->transaction_id,200);}if(listing.len>UINT16_MAX||labels.len>UINT16_MAX){cr_buffer_free(&listing);cr_buffer_free(&labels);return send_error(s,p->transaction_id,200);}cr_tlv_out f[2];size_t n=0;f[n++]=(cr_tlv_out){2,listing.data,(uint16_t)listing.len};if(s->modern_transport)f[n++]=(cr_tlv_out){DIRECTORY_LABELS_FIELD,labels.data,(uint16_t)labels.len};int rc=session_send(s,CMD_DIRECTORY,p->transaction_id,f,n);cr_buffer_free(&listing);cr_buffer_free(&labels);return rc;}
+static int handle_directory(cr_session*s,const cr_packet*p){
+    const cr_tlv*path=cr_packet_field(p,1);
+    const uint8_t*pv=path?path->value:NULL;
+    size_t pn=path?path->length:0;
+    const cr_tlv*page=s->modern_transport?cr_packet_field(p,DIRECTORY_PAGE_REQUEST_OFFSET_FIELD):NULL;
+    if(page&&page->length!=4)return send_error(s,p->transaction_id,200);
+    size_t page_offset=page?(size_t)cr_read_be32(page->value):0;
+    int paged=page!=NULL;
+    size_t next_offset=(size_t)-1;
+    cr_buffer listing,labels;
+    if(encode_directory(s->server,s,pv,pn,page_offset,paged,&listing,&labels,&next_offset)){
+        cr_buffer_free(&listing);cr_buffer_free(&labels);
+        return send_error(s,p->transaction_id,200);
+    }
+    if(listing.len>UINT16_MAX||labels.len>UINT16_MAX){
+        cr_buffer_free(&listing);cr_buffer_free(&labels);
+        return send_error(s,p->transaction_id,200);
+    }
+    cr_tlv_out f[3];size_t n=0;uint8_t next_bytes[4];
+    f[n++]=(cr_tlv_out){2,listing.data,(uint16_t)listing.len};
+    if(s->modern_transport){
+        f[n++]=(cr_tlv_out){DIRECTORY_LABELS_FIELD,labels.data,(uint16_t)labels.len};
+        if(next_offset!=(size_t)-1){
+            if(next_offset>UINT32_MAX){
+                cr_buffer_free(&listing);cr_buffer_free(&labels);
+                return send_error(s,p->transaction_id,200);
+            }
+            cr_write_be32(next_bytes,(uint32_t)next_offset);
+            f[n++]=(cr_tlv_out){DIRECTORY_PAGE_NEXT_OFFSET_FIELD,next_bytes,4};
+        }
+    }
+    int rc=session_send(s,CMD_DIRECTORY,p->transaction_id,f,n);
+    cr_buffer_free(&listing);cr_buffer_free(&labels);
+    return rc;
+}
 static int handle_channel_list(cr_session*s,const cr_packet*p){cr_buffer b;if(encode_channel_list(s->server,&b))return-1;if(b.len>UINT16_MAX){cr_buffer_free(&b);return send_error(s,p->transaction_id,200);}cr_tlv_out f={0x0a,b.data,(uint16_t)b.len};int rc=session_send(s,CMD_CHANNEL_LIST,p->transaction_id,&f,1);cr_buffer_free(&b);return rc;}
 static int handle_newsgroups(cr_session*s,const cr_packet*p){cr_buffer b;cr_buffer_init(&b);pthread_mutex_lock(&s->server->state.mutex);size_t count=0;for(size_t i=0;i<s->server->state.newsgroup_count;i++){cr_newsgroup*g=&s->server->state.newsgroups[i];int visible=s->mode==CR_MODE_ADMIN?g->admin_read:s->mode==CR_MODE_ACCOUNT?g->account_read:g->guest_read;if(visible)count++;}int fail=cr_buffer_append_u32(&b,(uint32_t)count);for(size_t i=0;!fail&&i<s->server->state.newsgroup_count;i++){cr_newsgroup*g=&s->server->state.newsgroups[i];int visible=s->mode==CR_MODE_ADMIN?g->admin_read:s->mode==CR_MODE_ACCOUNT?g->account_read:g->guest_read;if(!visible)continue;uint8_t name[1024];size_t n=0;if(cr_utf8_to_macroman(g->name,name,sizeof(name),&n)||cr_buffer_append_string16(&b,name,n))fail=1;}pthread_mutex_unlock(&s->server->state.mutex);if(fail||b.len>UINT16_MAX){cr_buffer_free(&b);return send_error(s,p->transaction_id,200);}cr_tlv_out f={1,b.data,(uint16_t)b.len};int rc=session_send(s,CMD_NEWSGROUP_LIST_REPLY,p->transaction_id,&f,1);cr_buffer_free(&b);return rc;}
 

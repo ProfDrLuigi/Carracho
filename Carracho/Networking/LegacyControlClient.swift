@@ -467,6 +467,18 @@ final class LegacyControlClient {
             )))
             return
         }
+        if transferSession?.usesModernCrypto == true {
+            requestDirectoryPage(pathData: pathData, offset: 0, accumulated: [],
+                                 expectedPath: nil, completion: completion)
+            return
+        }
+        requestDirectorySingle(pathData: pathData, completion: completion)
+    }
+
+    private func requestDirectorySingle(
+        pathData: Data,
+        completion: @escaping (Result<LegacyDirectoryListing, Error>) -> Void
+    ) {
         let fields = pathData.isEmpty ? [] : [LegacyTLV(type: 1, value: pathData)]
         sendRequest(command: LegacyCommand.directory, fields: fields) { result in
             do {
@@ -488,6 +500,66 @@ final class LegacyControlClient {
                     }
                 }
                 completion(.success(listing))
+            } catch {
+                completion(.failure(error))
+            }
+        }
+    }
+
+    private func requestDirectoryPage(
+        pathData: Data,
+        offset: UInt32,
+        accumulated: [LegacyDirectoryEntry],
+        expectedPath: Data?,
+        completion: @escaping (Result<LegacyDirectoryListing, Error>) -> Void
+    ) {
+        var fields: [LegacyTLV] = []
+        if !pathData.isEmpty {
+            fields.append(LegacyTLV(type: 1, value: pathData))
+        }
+        fields.append(LegacyTLV(type: LegacyDirectoryPagingField.requestOffset,
+                                value: LegacyWire.uint32BE(offset)))
+
+        sendRequest(command: LegacyCommand.directory, fields: fields) { result in
+            do {
+                let packet = try result.get()
+                guard packet.command == LegacyCommand.directory else {
+                    throw LegacyControlClientError.unexpectedCommand(expected: LegacyCommand.directory,
+                                                                     actual: packet.command)
+                }
+                guard let payload = packet.firstField(type: 2)?.value else {
+                    throw LegacyControlClientError.missingField(2)
+                }
+                var page = try LegacyDirectoryListing.decode(payload)
+                if let expectedPath, page.currentPath != expectedPath {
+                    throw LegacyControlClientError.protocolFailure("directory page path changed during pagination")
+                }
+                if let labels = packet.firstField(type: LegacyFileLabelField.directoryLabels)?.value {
+                    guard labels.count == page.entries.count else {
+                        throw LegacyControlClientError.protocolFailure("invalid modern directory-label payload")
+                    }
+                    for index in page.entries.indices {
+                        page.entries[index].label = LegacyFileLabel(rawValue: labels[index]) ?? .none
+                    }
+                }
+
+                let combined = accumulated + page.entries
+                guard let nextField = packet.firstField(type: LegacyDirectoryPagingField.nextOffset) else {
+                    completion(.success(LegacyDirectoryListing(currentPath: expectedPath ?? page.currentPath,
+                                                               entries: combined)))
+                    return
+                }
+                let next = try nextField.uint32BE()
+                let expectedNext = UInt64(offset) + UInt64(page.entries.count)
+                guard !page.entries.isEmpty,
+                      expectedNext <= UInt64(UInt32.max),
+                      next == UInt32(expectedNext),
+                      next > offset else {
+                    throw LegacyControlClientError.protocolFailure("invalid directory pagination offset")
+                }
+                self.requestDirectoryPage(pathData: pathData, offset: next, accumulated: combined,
+                                          expectedPath: expectedPath ?? page.currentPath,
+                                          completion: completion)
             } catch {
                 completion(.failure(error))
             }
