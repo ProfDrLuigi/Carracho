@@ -186,10 +186,6 @@ def first_paragraph_after(lines: list[str], start: int) -> str:
 
 def ensure_client_changelog(path: Path, version: str, build: str, client_markdown: str) -> None:
     content = path.read_text()
-    marker = f"New in {version}"
-    if marker in content:
-        return
-
     lines = client_markdown.splitlines()
     items: list[str] = [
         f'                <li>Updated the macOS client to version {html.escape(version)} (build {html.escape(build)}).</li>'
@@ -219,19 +215,26 @@ def ensure_client_changelog(path: Path, version: str, build: str, client_markdow
         + "\n"
         "        </ul></span>\n\n"
     )
-    anchor = re.search(r'\s*<p><span class="header" lang="en">New in [^<]+</span></p>', content)
-    if not anchor:
-        raise SystemExit(f"Could not find release block anchor in {path}")
-    content = content[:anchor.start()] + "\n" + block + content[anchor.start():]
+    existing = re.search(
+        r'\s*<p><span class="header" lang="en">New in '
+        + re.escape(version)
+        + r'</span></p>.*?</ul></span>\s*',
+        content,
+        re.S,
+    )
+    if existing:
+        tail = content[existing.end() :].lstrip()
+        content = content[: existing.start()] + "\n" + block + "        " + tail
+    else:
+        anchor = re.search(r'\s*<p><span class="header" lang="en">New in [^<]+</span></p>', content)
+        if not anchor:
+            raise SystemExit(f"Could not find release block anchor in {path}")
+        content = content[:anchor.start()] + "\n" + block + content[anchor.start():]
     path.write_text(content)
 
 
 def ensure_server_changelog(path: Path, version: str, build: str, server_markdown: str) -> None:
     content = path.read_text()
-    marker = f"New in {version}"
-    if marker in content:
-        return
-
     lines = server_markdown.splitlines()
     items: list[str] = [
         f'                <li>Updated Carracho Server for macOS to version {html.escape(version)} (build {html.escape(build)}).</li>'
@@ -261,10 +264,21 @@ def ensure_server_changelog(path: Path, version: str, build: str, server_markdow
         + "\n"
         "        </ul></span>\n\n"
     )
-    anchor = re.search(r'\s*<p><span class="header" lang="en">New in [^<]+</span></p>', content)
-    if not anchor:
-        raise SystemExit(f"Could not find release block anchor in {path}")
-    content = content[:anchor.start()] + "\n" + block + content[anchor.start():]
+    existing = re.search(
+        r'\s*<p><span class="header" lang="en">New in '
+        + re.escape(version)
+        + r'</span></p>.*?</ul></span>\s*',
+        content,
+        re.S,
+    )
+    if existing:
+        tail = content[existing.end() :].lstrip()
+        content = content[: existing.start()] + "\n" + block + "        " + tail
+    else:
+        anchor = re.search(r'\s*<p><span class="header" lang="en">New in [^<]+</span></p>', content)
+        if not anchor:
+            raise SystemExit(f"Could not find release block anchor in {path}")
+        content = content[:anchor.start()] + "\n" + block + content[anchor.start():]
     path.write_text(content)
 
 
