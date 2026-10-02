@@ -277,6 +277,29 @@ final class MessageCenterStore {
         }
     }
 
+    func latestServerBootID(scope: MessageCenterStoreScope) throws -> UUID? {
+        try queue.sync {
+            let db = try openDatabase()
+            defer { sqlite3_close(db) }
+
+            var statement: OpaquePointer?
+            try prepare(db, """
+                SELECT boot_id
+                FROM server_boots_v1
+                WHERE server_host=? AND server_port=? AND account_login=?
+                ORDER BY last_seen_at DESC, boot_started_at DESC
+                LIMIT 1
+                """, &statement)
+            defer { sqlite3_finalize(statement) }
+            try bindScope(scope, to: statement!)
+
+            let result = sqlite3_step(statement)
+            if result == SQLITE_DONE { return nil }
+            guard result == SQLITE_ROW else { throw databaseError(db) }
+            return UUID(uuidString: columnText(statement!, 0))
+        }
+    }
+
     func loadBootConversations(scope: MessageCenterStoreScope,
                                  bootID: UUID) throws -> [MessageCenterStoredBootConversation] {
         try queue.sync {

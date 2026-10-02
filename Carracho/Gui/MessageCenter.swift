@@ -520,7 +520,8 @@ extension ViewController {
         appendLine("\n" + LF("Message Center storage error: %@", Self.displayMessage(for: error)))
     }
 
-    func configureMessageCenterPersistence(host: String, port: UInt16, login: String) {
+    func configureMessageCenterPersistence(host: String, port: UInt16, login: String,
+                                           includeLatestBootHistory: Bool = false) {
         let scope = MessageCenterStoreScope(host: host, port: port, login: login)
         messageCenterPersistenceScope = scope
         messageCenterServerBootID = nil
@@ -530,6 +531,21 @@ extension ViewController {
                 let restored = restoredConversation($0)
                 return (restored.id, restored)
             })
+
+            // A local Message Center is useful even while disconnected, especially immediately
+            // after an app update/relaunch. UUID-backed conversations are always safe to show.
+            // For peers without UUID metadata, show only the most recently observed boot
+            // namespace. A real connection resets this provisional boot ID and validates the
+            // current server boot from uptime before any numeric routing ID is trusted again.
+            if includeLatestBootHistory,
+               let bootID = try messageCenterStore.latestServerBootID(scope: scope) {
+                messageCenterServerBootID = bootID
+                for item in try messageCenterStore.loadBootConversations(scope: scope, bootID: bootID) {
+                    let restored = restoredBootConversation(item)
+                    privateMessageConversations[restored.id] = restored
+                }
+            }
+
             offlineMessageCenterMessages = snapshot.offlineMessages.map {
                 LegacyOfflineMessage(id: $0.id, sentAtUnix: $0.sentAtUnix,
                                      senderLogin: $0.senderLogin, senderNickname: $0.senderNickname,
@@ -542,6 +558,7 @@ extension ViewController {
             offlineMessageCenterMessages = []
             offlineMessageCenterUnreadIDs = []
             offlineMessageCenterUnreadCount = 0
+            messageCenterServerBootID = nil
             reportMessageCenterStoreError(error)
         }
         for userID in liveUsers.keys {

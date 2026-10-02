@@ -1430,7 +1430,12 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         loadTrackerBookmarks()
         buildInterface()
         applySelectedBookmarkToFields()
-        if let selectedBookmarkID { restorePersistedTransferMonitorSession(for: selectedBookmarkID) }
+        if let selectedBookmarkID,
+           let bookmark = serverBookmarks.first(where: { $0.id == selectedBookmarkID }) {
+            restorePersistedTransferMonitorSession(for: selectedBookmarkID)
+            configureMessageCenterPersistence(host: bookmark.host, port: bookmark.port, login: bookmark.login,
+                                              includeLatestBootHistory: true)
+        }
         NotificationCenter.default.addObserver(self, selector: #selector(applicationWillTerminate(_:)),
                                                name: NSApplication.willTerminateNotification, object: nil)
         configureClientCallbacks()
@@ -4681,6 +4686,8 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
             context.snapshot = nil
             context.pendingEvents.removeAll()
             restorePersistedTransferMonitorSession(for: bookmark.id)
+            configureMessageCenterPersistence(host: bookmark.host, port: bookmark.port, login: bookmark.login,
+                                              includeLatestBootHistory: true)
             refreshAdministrativeNavigationVisibility()
             selectWorkspace(.overview)
             refreshShellChrome()
