@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Carracho Client 1.1.5</title>
+  <link rel="stylesheet" href="../styles.css">
+  <style>
+    .release-page { width:min(calc(100% - 40px), 900px); margin:0 auto; padding:72px 0 110px; }
+    .release-page h1 { font-size:clamp(2.8rem,7vw,5rem); margin-bottom:28px; }
+    .release-page h2 { margin-top:54px; font-size:2rem; }
+    .release-page h3 { margin-top:34px; }
+    .release-page p, .release-page li { color:var(--muted-strong); }
+    .release-page code { padding:.12em .38em; border-radius:6px; background:rgba(255,255,255,.07); }
+    .release-page pre { margin:22px 0; border:1px solid var(--line); border-radius:16px; background:#070b12; }
+    .release-back { display:inline-flex; margin-bottom:34px; color:var(--orange-2); text-decoration:none; font-weight:700; }
+  </style>
+</head>
+<body>
+  <main class="release-page">
+    <a class="release-back" href="../">← Carracho</a>
+<h2>Carracho Client 1.1.5</h2>
+<h3>Private-message history survives app restarts</h3>
+<p>When a Private Message conversation receives its stable account UUID after messages have already arrived, Carracho now persists the complete promoted conversation history rather than only the conversation metadata. Messages collected before identity promotion therefore survive quitting and restarting the app.</p>
+<p>The promotion path merges any already restored UUID-backed history with the temporary session conversation before writing it, so a late identity update no longer discards either side of the conversation.</p>
+<h3>Boot-scoped fallback when a peer UUID is unavailable</h3>
+<p>Servers predating stable peer identity, including original/Classic servers and older modern Carracho builds, can still provide only a numeric session user ID. Carracho now persists those conversations inside a separate namespace tied to the current server boot.</p>
+<p>The client resolves that namespace from server uptime. Restarting only Carracho restores the same history; restarting the server creates a new namespace, so a recycled numeric user ID cannot inherit another user&#x27;s messages. If a stable account UUID becomes available later, the boot-scoped history is merged into the UUID-backed conversation and the temporary record is retired only after the durable UUID history has been written successfully.</p>
+<h3>Background bookmark Message Center persistence</h3>
+<p>Private Messages received while another bookmark remains connected in the background are now applied directly to that bookmark&#x27;s Message Center snapshot and persisted in that bookmark&#x27;s own server/account scope. Message edits and reactions are persisted there as well.</p>
+<p>Quitting Carracho therefore no longer loses background-server Message Center activity merely because that bookmark had not been activated again before the app exited.</p>
+<h3>Optional disconnect confirmation</h3>
+<p>A new <strong>Confirm disconnection</strong> option is available under Carracho Settings → General → App Behavior. When enabled, manually disconnecting from an active server requires confirmation before the connection is closed.</p>
+<p>Cancelling a pending automatic reconnect and internal protocol-driven disconnects remain immediate, so the confirmation is limited to the deliberate manual action it is meant to guard.</p>
+<h3>Large directory listings</h3>
+<p>Modern Carracho connections now page directory listings that would exceed the legacy 65,535-byte size of a single TLV value. The client requests successive pages automatically and merges them before presenting the folder, so directories with thousands of files no longer fail to open when their packed listing crosses the historical wire-size limit.</p>
+<p>The paging is transparent to the Files UI and preserves entry order, Finder labels and existing directory metadata.</p>
+<h3>Space bar opens Quick View</h3>
+<p>When a single previewable file is selected in the Files list, pressing the Space bar now opens the same Quick View window as the toolbar button and context-menu command.</p>
+<p>The shortcut follows the existing Quick View availability rules and does not override normal table behavior for folders, unsupported files, multiple selections or otherwise unavailable previews.</p>
+  </main>
+</body>
+</html>

@@ -23,13 +23,21 @@
     </style>
 </head>
     <body>
+        <p><span class="header" lang="en">New in 1.1.5</span></p>
+        <ul>
+            <span class="newstext">
+                <li>Updated Carracho Server for macOS to version 1.1.5 (build 16).</li>
+                <li><strong>Paged directory replies for modern clients</strong> — The Swift/macOS Server and native Linux Server now support modern directory-list paging. Each page stays below the legacy UInt16 TLV-value limit and includes a continuation offset when more entries remain.</li>
+                <li><strong>Shared support for boot-scoped client history</strong> — No new durable identity is invented for old peers that cannot provide one. Instead, the client uses the existing server-uptime information to scope numeric user IDs to one server process lifetime. Current servers continue to provide stable account UUID metadata to modern clients as introduced in 1.1.4.</li>
+        </ul></span>
+
         <p><span class="header" lang="en">New in 1.1.4</span></p>
         <ul>
             <span class="newstext">
-                <li>Updated Carracho Server for macOS to version 1.1.4 (build 15).</li>
-                <li><strong>Paged directory replies for modern clients</strong> — The macOS/Swift server and native Linux server now support modern directory-list paging. Each page stays below the legacy UInt16 TLV-value limit and includes a continuation offset when more entries remain. Clients that do not request paging continue to receive the historical single-listing response, preserving Classic compatibility.</li>
+                <li>Updated Carracho Server for macOS to version 1.1.4 (build 15) and updated native Linux Server Info/version reporting accordingly.</li>
                 <li><strong>Stable account identity for modern peer metadata</strong> — Both the Swift/macOS server and the native Linux server now include the authenticated account UUID in modern user-arrival and user-update metadata. The stable identifier is sent in initial user snapshots, new-user events and later user metadata refreshes so modern clients can distinguish account identity from the temporary numeric session user ID. Modern observers also receive the stable account identity for Classic peers, while Classic recipients continue to receive the historical packet layouts unchanged.</li>
         </ul></span>
+
 
         <p><span class="header" lang="en">New in 1.1.3</span></p>
         <ul>

@@ -21,30 +21,16 @@
   <main class="release-page">
     <a class="release-back" href="../">← Carracho</a>
 <h2>Carracho Client 1.1.4</h2>
-<h3>Space bar opens Quick View</h3>
-<p>When a single previewable file is selected in the Files list, pressing the Space bar now opens the same Quick View window as the toolbar button and context-menu command. The keyboard shortcut follows the existing Quick View availability rules and does not override normal table behavior for folders, unsupported files or unavailable previews.</p>
-<h3>Large directory listings</h3>
-<p>Modern Carracho connections now page directory listings that would exceed the legacy 65,535-byte size of a single TLV field. The client requests successive pages automatically and merges them before presenting the folder, so directories with thousands of files no longer fail to open merely because the packed listing crosses the historical wire-size limit.</p>
-<p>The paging extension is transparent to the Files UI and preserves entry order, Finder labels and existing directory metadata. Classic protocol packets remain unchanged.</p>
 <h3>Stable Message Center conversation identity</h3>
 <p>Private conversations in Message Center no longer use the server&#x27;s transient numeric <code>userID</code> as their durable identity. Modern servers now provide the authenticated account UUID for each visible user, and Carracho stores and selects conversations by that stable account identity while keeping the numeric user ID only as the current live routing address.</p>
 <p>This fixes the case where a server restart reused a numeric user ID for a different account. Previously, the stored conversation for that number could be relabelled with the new user&#x27;s nickname and avatar, making messages from one account appear inside another account&#x27;s conversation. In 1.1.4, a conversation can only reconnect to the exact same account UUID.</p>
 <p>The live mapping is also hardened against incomplete disconnects: a durable conversation with an account UUID can never be rebound merely because a later session happens to reuse the same numeric user ID.</p>
-<h3>Private-message history survives app restarts</h3>
-<p>When the stable account UUID arrives after a conversation has already collected messages in the current session, Carracho now persists the complete promoted conversation history instead of only its conversation metadata. This fixes private-message history disappearing after restarting the app in that race window.</p>
-<h3>Boot-scoped fallback when a peer UUID is unavailable</h3>
-<p>If a server does not provide a stable peer account UUID, including original/Classic servers and older modern Carracho builds, Carracho keeps that Private Message history in a separate local store keyed by the current server boot and numeric user ID. The boot namespace is resolved from server uptime: restarting only Carracho restores the same history, while restarting the server creates a new namespace so a recycled numeric user ID cannot inherit another user&#x27;s messages.</p>
-<p>If a stable account UUID arrives later, Carracho merges the boot-scoped history into the UUID-backed conversation and retires the temporary numeric-ID record only after the UUID history has been written successfully.</p>
-<h3>Background bookmark Message Center persistence</h3>
-<p>Private Messages received while another bookmark remains connected in the background are now applied directly to that bookmark&#x27;s Message Center snapshot and persisted immediately. Message edits and reactions are persisted there as well. Quitting Carracho no longer loses those events merely because the bookmark had not been activated again first.</p>
 <h3>Safer local private-message history</h3>
 <p>Message Center now stores durable Private Message conversations in a v2 SQLite schema keyed by stable peer account UUID. Older session-ID-based private-message history is deliberately <strong>not</strong> imported automatically because its account ownership cannot be proven safely after IDs have been recycled; those old rows are left untouched in the local database but ignored by the new history. Message edits, reactions, drafts, unread state, avatars, transport metadata and the existing 500-message per-conversation limit continue to use the same Message Center behavior.</p>
 <p>Offline Messages use their separate account-aware storage and are not affected by this private-conversation history change.</p>
 <h3>Safe fallback for older servers</h3>
-<p>If a server does not provide a stable peer UUID, Carracho persists the numeric-ID conversation only after it has identified the current server boot from server uptime. This applies to original/Classic servers as well as older modern Carracho servers that predate stable peer-identity metadata. The history is safe across client reconnects and app restarts, but it is not rebound after a server restart.</p>
-<p>If that boot identity cannot be established, the conversation remains session-only rather than being persisted under an identity that cannot be trusted across reconnects. This keeps older-server compatibility without recreating the history-mixing bug.</p>
-<h3>Optional disconnect confirmation</h3>
-<p>A new <strong>Confirm disconnection</strong> option is available under Carracho Settings → General → App Behavior. When enabled, manually disconnecting from an active server requires confirmation before the connection is closed. Cancelling a pending automatic reconnect and internal protocol-driven disconnects remain immediate and do not show the confirmation dialog.</p>
+<p>If a server does not provide a stable account UUID, Carracho still allows Private Messages during the current connection, but that conversation remains session-only instead of being persisted under an identity that cannot be trusted across reconnects.</p>
+<p>This keeps communication compatible with older servers without recreating the history-mixing bug.</p>
   </main>
 </body>
 </html>

@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Carracho release 1.1.5</title>
+  <link rel="stylesheet" href="../styles.css">
+  <style>
+    .release-page { width:min(calc(100% - 40px), 900px); margin:0 auto; padding:72px 0 110px; }
+    .release-page h1 { font-size:clamp(2.8rem,7vw,5rem); margin-bottom:28px; }
+    .release-page h2 { margin-top:54px; font-size:2rem; }
+    .release-page h3 { margin-top:34px; }
+    .release-page p, .release-page li { color:var(--muted-strong); }
+    .release-page code { padding:.12em .38em; border-radius:6px; background:rgba(255,255,255,.07); }
+    .release-page pre { margin:22px 0; border:1px solid var(--line); border-radius:16px; background:#070b12; }
+    .release-back { display:inline-flex; margin-bottom:34px; color:var(--orange-2); text-decoration:none; font-weight:700; }
+  </style>
+</head>
+<body>
+  <main class="release-page">
+    <a class="release-back" href="../">← Carracho</a>
+<h1>Carracho 1.1.5</h1>
+<p>Carracho 1.1.5 focuses on <strong>Message Center persistence, large Files directories, faster Finder-style preview access, and cleaner independent Client/Server versioning</strong>. The macOS Client and Server are version <strong>1.1.5 (build 16)</strong> for this release, with the native Linux Server using the same Server version metadata.</p>
+<h2>Highlights</h2>
+<ul>
+<li>Fixed Private Message history disappearing after restarting the Carracho client in several identity and multi-bookmark cases introduced around the stable-account migration.</li>
+<li>Added a safe boot-scoped persistence fallback when a server does not provide a stable peer account UUID, covering original/Classic servers and older modern Carracho servers without allowing recycled numeric user IDs to cross a server restart.</li>
+<li>Private Messages, edits and reactions received on connected background bookmarks are now persisted immediately in the correct server/account scope.</li>
+<li>Added an optional <strong>Confirm disconnection</strong> client setting for manual disconnects.</li>
+<li>Fixed large modern directory listings by transferring them in bounded pages instead of exceeding the legacy 65,535-byte TLV value limit.</li>
+<li>Added Finder-style Quick View from the Files list: pressing the Space bar on a selected previewable file opens the existing preview window.</li>
+<li>Split Client and Server version metadata into independent configuration files while retaining a separate shared GitHub release version.</li>
+<li>Release changelog generation now refreshes an existing version block deterministically instead of leaving stale generated content behind.</li>
+<li>Updated Carracho and Carracho Server version reporting to <strong>1.1.5 / build 16</strong>.</li>
+</ul>
+<h2>Carracho Client 1.1.5</h2>
+<h3>Private-message history survives app restarts</h3>
+<p>When a Private Message conversation receives its stable account UUID after messages have already arrived, Carracho now persists the complete promoted conversation history rather than only the conversation metadata. Messages collected before identity promotion therefore survive quitting and restarting the app.</p>
+<p>The promotion path merges any already restored UUID-backed history with the temporary session conversation before writing it, so a late identity update no longer discards either side of the conversation.</p>
+<h3>Boot-scoped fallback when a peer UUID is unavailable</h3>
+<p>Servers predating stable peer identity, including original/Classic servers and older modern Carracho builds, can still provide only a numeric session user ID. Carracho now persists those conversations inside a separate namespace tied to the current server boot.</p>
+<p>The client resolves that namespace from server uptime. Restarting only Carracho restores the same history; restarting the server creates a new namespace, so a recycled numeric user ID cannot inherit another user&#x27;s messages. If a stable account UUID becomes available later, the boot-scoped history is merged into the UUID-backed conversation and the temporary record is retired only after the durable UUID history has been written successfully.</p>
+<h3>Background bookmark Message Center persistence</h3>
+<p>Private Messages received while another bookmark remains connected in the background are now applied directly to that bookmark&#x27;s Message Center snapshot and persisted in that bookmark&#x27;s own server/account scope. Message edits and reactions are persisted there as well.</p>
+<p>Quitting Carracho therefore no longer loses background-server Message Center activity merely because that bookmark had not been activated again before the app exited.</p>
+<h3>Optional disconnect confirmation</h3>
+<p>A new <strong>Confirm disconnection</strong> option is available under Carracho Settings → General → App Behavior. When enabled, manually disconnecting from an active server requires confirmation before the connection is closed.</p>
+<p>Cancelling a pending automatic reconnect and internal protocol-driven disconnects remain immediate, so the confirmation is limited to the deliberate manual action it is meant to guard.</p>
+<h3>Large directory listings</h3>
+<p>Modern Carracho connections now page directory listings that would exceed the legacy 65,535-byte size of a single TLV value. The client requests successive pages automatically and merges them before presenting the folder, so directories with thousands of files no longer fail to open when their packed listing crosses the historical wire-size limit.</p>
+<p>The paging is transparent to the Files UI and preserves entry order, Finder labels and existing directory metadata.</p>
+<h3>Space bar opens Quick View</h3>
+<p>When a single previewable file is selected in the Files list, pressing the Space bar now opens the same Quick View window as the toolbar button and context-menu command.</p>
+<p>The shortcut follows the existing Quick View availability rules and does not override normal table behavior for folders, unsupported files, multiple selections or otherwise unavailable previews.</p>
+<h2>Carracho Server 1.1.5</h2>
+<h3>Paged directory replies for modern clients</h3>
+<p>The Swift/macOS Server and native Linux Server now support modern directory-list paging. Each page stays below the legacy UInt16 TLV-value limit and includes a continuation offset when more entries remain.</p>
+<p>Paging is requested explicitly by modern clients. Clients that do not request it continue to receive the historical single-listing response, leaving Classic packet layouts unchanged.</p>
+<h3>Shared support for boot-scoped client history</h3>
+<p>No new durable identity is invented for old peers that cannot provide one. Instead, the client uses the existing server-uptime information to scope numeric user IDs to one server process lifetime. Current servers continue to provide stable account UUID metadata to modern clients as introduced in 1.1.4.</p>
+<p>This keeps the 1.1.5 fallback compatible with original/older servers while preserving the 1.1.4 protection against history being rebound after a server restart.</p>
+<h2>Release tooling</h2>
+<h3>Independent Client and Server version metadata</h3>
+<p>Client and Server versions now have separate configuration sources. Version-Client.xcconfig controls the macOS Client, while Version-Server.xcconfig controls the macOS Server, native Linux Server and Debian packages.</p>
+<p>Release.xcconfig separately defines the shared GitHub release/tag version. Client and Server can therefore carry different product versions in future while still publishing their ZIP assets into one shared release when desired. Runtime version strings and native Linux build metadata derive from these configured versions rather than duplicated literals in Swift or C source.</p>
+<h3>Refreshable generated changelog blocks</h3>
+<p>The release renderer now replaces an existing generated version block when rerun instead of assuming that every version is new. This keeps the rolling Client and Server changelogs synchronized with the current release notes during release preparation and republishing.</p>
+<h2>Compatibility notes</h2>
+<ul>
+<li>Classic/Legacy packet layouts remain unchanged.</li>
+<li>Large-directory paging requires a paging-capable modern client and server. Older servers retain their historical single-TLV directory-size limit.</li>
+<li>Servers without stable peer UUID metadata use the boot-scoped Message Center fallback. A real server restart intentionally starts a fresh numeric-ID history namespace.</li>
+<li>Current 1.1.5 servers continue to provide stable account UUID metadata to modern clients, which remains the preferred durable Message Center identity.</li>
+<li>Pre-1.1.4 session-ID-only Message Center rows are still not automatically imported because their original account ownership cannot be proven safely.</li>
+<li>Client and Server version sources are now independent even though both products are <strong>1.1.5 / build 16</strong> in this release.</li>
+</ul>
+  </main>
+</body>
+</html>

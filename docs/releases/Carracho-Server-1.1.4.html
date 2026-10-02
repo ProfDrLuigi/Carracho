@@ -21,8 +21,6 @@
   <main class="release-page">
     <a class="release-back" href="../">← Carracho</a>
 <h2>Carracho Server 1.1.4</h2>
-<h3>Paged directory replies for modern clients</h3>
-<p>The macOS/Swift server and native Linux server now support modern directory-list paging. Each page stays below the legacy UInt16 TLV-value limit and includes a continuation offset when more entries remain. Clients that do not request paging continue to receive the historical single-listing response, preserving Classic compatibility.</p>
 <h3>Stable account identity for modern peer metadata</h3>
 <p>Both the Swift/macOS server and the native Linux server now include the authenticated account UUID in modern user-arrival and user-update metadata. The stable identifier is sent in initial user snapshots, new-user events and later user metadata refreshes so modern clients can distinguish account identity from the temporary numeric session user ID. Modern observers also receive the stable account identity for Classic peers, while Classic recipients continue to receive the historical packet layouts unchanged.</p>
 <p>This identity metadata does not change Private Message routing or grant access to another user&#x27;s messages. Messages are still routed to the current live session; the UUID is used by modern clients to associate local history with the correct authenticated account.</p>

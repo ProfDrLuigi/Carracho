@@ -9,26 +9,10 @@ Carracho 1.1.4 focuses on **keeping Message Center private conversations tied to
 - The Swift/macOS and native Linux servers now send stable account identity metadata to modern clients while leaving Classic packet layouts unchanged.
 - Added a new v2 local Message Center history schema that keeps durable conversations separated by stable account identity.
 - Older session-ID-based private-message history is deliberately not imported automatically because its ownership cannot be proven safely after IDs have been recycled.
-- Added an optional **Confirm disconnection** client setting that asks before a manual disconnect from an active server.
-- Fixed Message Center persistence when a private conversation receives its stable account identity after messages have already arrived; the existing in-memory history is now persisted during identity promotion and survives an app restart.
-- Restored persistent Private Message history when a server does not provide a stable peer UUID, including original/Classic and older modern servers, by isolating numeric user IDs inside a server-boot namespace derived from uptime.
-- Private Messages received on connected background bookmarks are now written to that bookmark's Message Center store immediately instead of remaining only in the in-memory pending-event queue.
-- Fixed large directory listings on modern connections: listings that exceed the legacy 65,535-byte TLV limit are now transferred in pages and transparently merged by the client.
-- Added Finder-style Quick View from the Files list: pressing the Space bar on a selected previewable file opens the existing Quick View window.
 - Improved Sparkle republishing so metadata for an existing build is regenerated from the replacement Universal 2 archive instead of retaining stale hardware requirements.
 - Updated Carracho and Carracho Server version reporting to **1.1.4 / build 15**.
 
 ## Carracho Client 1.1.4
-
-### Space bar opens Quick View
-
-When a single previewable file is selected in the Files list, pressing the Space bar now opens the same Quick View window as the toolbar button and context-menu command. The keyboard shortcut follows the existing Quick View availability rules and does not override normal table behavior for folders, unsupported files or unavailable previews.
-
-### Large directory listings
-
-Modern Carracho connections now page directory listings that would exceed the legacy 65,535-byte size of a single TLV field. The client requests successive pages automatically and merges them before presenting the folder, so directories with thousands of files no longer fail to open merely because the packed listing crosses the historical wire-size limit.
-
-The paging extension is transparent to the Files UI and preserves entry order, Finder labels and existing directory metadata. Classic protocol packets remain unchanged.
 
 ### Stable Message Center conversation identity
 
@@ -38,20 +22,6 @@ This fixes the case where a server restart reused a numeric user ID for a differ
 
 The live mapping is also hardened against incomplete disconnects: a durable conversation with an account UUID can never be rebound merely because a later session happens to reuse the same numeric user ID.
 
-### Private-message history survives app restarts
-
-When the stable account UUID arrives after a conversation has already collected messages in the current session, Carracho now persists the complete promoted conversation history instead of only its conversation metadata. This fixes private-message history disappearing after restarting the app in that race window.
-
-### Boot-scoped fallback when a peer UUID is unavailable
-
-If a server does not provide a stable peer account UUID, including original/Classic servers and older modern Carracho builds, Carracho keeps that Private Message history in a separate local store keyed by the current server boot and numeric user ID. The boot namespace is resolved from server uptime: restarting only Carracho restores the same history, while restarting the server creates a new namespace so a recycled numeric user ID cannot inherit another user's messages.
-
-If a stable account UUID arrives later, Carracho merges the boot-scoped history into the UUID-backed conversation and retires the temporary numeric-ID record only after the UUID history has been written successfully.
-
-### Background bookmark Message Center persistence
-
-Private Messages received while another bookmark remains connected in the background are now applied directly to that bookmark's Message Center snapshot and persisted immediately. Message edits and reactions are persisted there as well. Quitting Carracho no longer loses those events merely because the bookmark had not been activated again first.
-
 ### Safer local private-message history
 
 Message Center now stores durable Private Message conversations in a v2 SQLite schema keyed by stable peer account UUID. Older session-ID-based private-message history is deliberately **not** imported automatically because its account ownership cannot be proven safely after IDs have been recycled; those old rows are left untouched in the local database but ignored by the new history. Message edits, reactions, drafts, unread state, avatars, transport metadata and the existing 500-message per-conversation limit continue to use the same Message Center behavior.
@@ -60,19 +30,11 @@ Offline Messages use their separate account-aware storage and are not affected b
 
 ### Safe fallback for older servers
 
-If a server does not provide a stable peer UUID, Carracho persists the numeric-ID conversation only after it has identified the current server boot from server uptime. This applies to original/Classic servers as well as older modern Carracho servers that predate stable peer-identity metadata. The history is safe across client reconnects and app restarts, but it is not rebound after a server restart.
+If a server does not provide a stable account UUID, Carracho still allows Private Messages during the current connection, but that conversation remains session-only instead of being persisted under an identity that cannot be trusted across reconnects.
 
-If that boot identity cannot be established, the conversation remains session-only rather than being persisted under an identity that cannot be trusted across reconnects. This keeps older-server compatibility without recreating the history-mixing bug.
-
-### Optional disconnect confirmation
-
-A new **Confirm disconnection** option is available under Carracho Settings → General → App Behavior. When enabled, manually disconnecting from an active server requires confirmation before the connection is closed. Cancelling a pending automatic reconnect and internal protocol-driven disconnects remain immediate and do not show the confirmation dialog.
+This keeps communication compatible with older servers without recreating the history-mixing bug.
 
 ## Carracho Server 1.1.4
-
-### Paged directory replies for modern clients
-
-The macOS/Swift server and native Linux server now support modern directory-list paging. Each page stays below the legacy UInt16 TLV-value limit and includes a continuation offset when more entries remain. Clients that do not request paging continue to receive the historical single-listing response, preserving Classic compatibility.
 
 ### Stable account identity for modern peer metadata
 
@@ -81,10 +43,6 @@ Both the Swift/macOS server and the native Linux server now include the authenti
 This identity metadata does not change Private Message routing or grant access to another user's messages. Messages are still routed to the current live session; the UUID is used by modern clients to associate local history with the correct authenticated account.
 
 ## Release tooling
-
-### Independent product version metadata
-
-Carracho now keeps Client and Server versions in separate configuration files. `Version-Client.xcconfig` controls the macOS Client, while `Version-Server.xcconfig` controls the macOS Server, native Linux Server and Debian packages. `Release.xcconfig` separately identifies the shared GitHub release/tag, so Client and Server can carry different product versions while their ZIP assets still appear together in one release. Swift runtime version strings continue to come from the generated bundle metadata, so version literals are no longer duplicated in Swift or C source files.
 
 ### Safer Sparkle appcast republishing
 
@@ -96,7 +54,6 @@ The publishing scripts also verify that a Universal 2 release does not retain an
 
 - The new stable account-identity field is sent only to modern clients; Classic/Legacy packet layouts are unchanged.
 - The 1.1.4 macOS and native Linux servers both provide stable peer account identities to modern clients.
-- Against servers that do not provide a stable peer account UUID, Private Message history uses the server-boot-scoped fallback described above; a real server restart intentionally starts a fresh numeric-ID namespace.
-- Large-directory paging requires both a paging-capable modern client and server. Classic packet layouts are unchanged, and older servers retain their historical single-TLV directory-size limit.
+- Against older servers that do not provide a stable account UUID, Private Message conversations remain usable for the current session but are not persisted as durable history.
 - Pre-1.1.4 private Message Center history keyed by transient session user IDs is not automatically imported into the v2 history because its account ownership cannot be verified safely. Existing old rows are left untouched on disk.
 - Offline Messages are unaffected by the private-conversation storage migration.
