@@ -47,6 +47,21 @@ struct MessageCenterStoredConversation: Equatable {
     var messages: [MessageCenterStoredPrivateMessage]
 }
 
+/// Boot-scoped fallback history for peers whose server has not supplied a stable account UUID.
+/// The numeric user ID is only trusted while the exact same server process is still running.
+/// The boot ID is resolved separately from server uptime and keeps recycled IDs from crossing a
+/// server restart.
+struct MessageCenterStoredBootConversation: Equatable {
+    var userID: UInt32
+    var nickname: String
+    var picture: Data
+    var isLegacyTransport: Bool
+    var unreadCount: Int
+    var draftText: String
+    var lastActivity: Date
+    var messages: [MessageCenterStoredPrivateMessage]
+}
+
 struct MessageCenterStoredOfflineMessage: Equatable {
     var id: String
     var sentAtUnix: UInt64
@@ -63,14 +78,15 @@ struct MessageCenterStoredSnapshot: Equatable {
 
 /// Local durable storage for the Message Center.
 ///
-/// Private-message history is keyed only by the server's stable account UUID. Older database
-/// tables keyed by the transient UInt32 session user ID are intentionally left untouched but are
-/// never loaded. A server restart can recycle those IDs for another account, so treating the old
-/// rows as durable identity would risk showing one person's history under another person's name.
+/// Modern private-message history is keyed by the server's stable account UUID. Older database
+/// tables keyed only by the transient UInt32 session user ID are intentionally left untouched and
+/// never loaded, because a server restart can recycle those IDs for another account.
 ///
-/// A modern server also supplies this UUID for Classic peers because it knows the authenticated
-/// account behind their session. Against older servers that do not supply a UUID, private-message
-/// conversations remain session-only in memory. Offline messages keep their existing table.
+/// When a server does not provide a peer account UUID, including original/Classic servers and
+/// older modern builds, fallback history is namespaced by a locally resolved server-boot ID plus
+/// the numeric user ID. The boot ID is derived from server uptime, so client restarts can restore
+/// history while an actual server restart starts a fresh namespace. Offline messages keep their
+/// existing table.
 final class MessageCenterStore {
     private let databaseURL: URL
     private let queue = DispatchQueue(label: "com.carracho.message-center-store")
@@ -198,6 +214,255 @@ final class MessageCenterStore {
             let db = try openDatabase()
             defer { sqlite3_close(db) }
             try upsertConversation(conversation, scope: scope, db: db)
+        }
+    }
+
+    /// Resolves a stable local namespace for the currently running server process.
+    /// The wire protocol exposes uptime but no boot UUID. A real server restart therefore gets a
+    /// new local boot ID, while restarting only the client reuses the existing one.
+    func resolveServerBoot(scope: MessageCenterStoreScope, uptimeTicks: UInt32,
+                           observedAt: Date = Date()) throws -> UUID {
+        try queue.sync {
+            let db = try openDatabase()
+            defer { sqlite3_close(db) }
+
+            let bootStartedAt = observedAt.timeIntervalSince1970 - Double(uptimeTicks) / 60.0
+            var candidateID: UUID?
+            var candidateBootStartedAt = 0.0
+            var candidateLastUptime: UInt64 = 0
+
+            var select: OpaquePointer?
+            try prepare(db, """
+                SELECT boot_id, boot_started_at, last_uptime_ticks
+                FROM server_boots_v1
+                WHERE server_host=? AND server_port=? AND account_login=?
+                ORDER BY ABS(boot_started_at - ?) ASC
+                LIMIT 1
+                """, &select)
+            defer { sqlite3_finalize(select) }
+            try bindScope(scope, to: select!)
+            guard sqlite3_bind_double(select, 4, bootStartedAt) == SQLITE_OK else { throw databaseError(db) }
+            if sqlite3_step(select) == SQLITE_ROW {
+                candidateID = UUID(uuidString: columnText(select!, 0))
+                candidateBootStartedAt = sqlite3_column_double(select, 1)
+                candidateLastUptime = UInt64(max(0, sqlite3_column_int64(select, 2)))
+            }
+
+            // The boot-time estimate includes network/request latency. Fifteen seconds is generous
+            // enough for that jitter. Uptime must also have advanced since the last client run;
+            // equal or lower uptime is treated conservatively as a new server boot.
+            let bootTimeMatches = candidateID != nil && abs(candidateBootStartedAt - bootStartedAt) <= 15.0
+            let uptimeAdvanced = UInt64(uptimeTicks) > candidateLastUptime
+            let bootID = (bootTimeMatches && uptimeAdvanced) ? candidateID! : UUID()
+
+            var upsert: OpaquePointer?
+            try prepare(db, """
+                INSERT INTO server_boots_v1
+                (server_host, server_port, account_login, boot_id, boot_started_at, last_seen_at, last_uptime_ticks)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(server_host, server_port, account_login, boot_id) DO UPDATE SET
+                    last_seen_at=excluded.last_seen_at,
+                    last_uptime_ticks=excluded.last_uptime_ticks
+                """, &upsert)
+            defer { sqlite3_finalize(upsert) }
+            try bindScope(scope, to: upsert!)
+            try bindText(upsert!, 4, bootID.uuidString.lowercased())
+            guard sqlite3_bind_double(upsert, 5, bootStartedAt) == SQLITE_OK,
+                  sqlite3_bind_double(upsert, 6, observedAt.timeIntervalSince1970) == SQLITE_OK else {
+                throw databaseError(db)
+            }
+            try bindInt64(upsert!, 7, Int64(uptimeTicks))
+            try stepDone(upsert!, db: db)
+            return bootID
+        }
+    }
+
+    func loadBootConversations(scope: MessageCenterStoreScope,
+                                 bootID: UUID) throws -> [MessageCenterStoredBootConversation] {
+        try queue.sync {
+            let db = try openDatabase()
+            defer { sqlite3_close(db) }
+
+            var conversations: [UInt32: MessageCenterStoredBootConversation] = [:]
+            var conversationStatement: OpaquePointer?
+            try prepare(db, """
+                SELECT peer_user_id, nickname, picture, is_legacy, unread_count, draft_text, last_activity
+                FROM boot_conversations_v1
+                WHERE server_host=? AND server_port=? AND account_login=? AND boot_id=?
+                ORDER BY last_activity DESC
+                """, &conversationStatement)
+            defer { sqlite3_finalize(conversationStatement) }
+            try bindScope(scope, to: conversationStatement!)
+            try bindText(conversationStatement!, 4, bootID.uuidString.lowercased())
+            while true {
+                let result = sqlite3_step(conversationStatement)
+                if result == SQLITE_DONE { break }
+                guard result == SQLITE_ROW else { throw databaseError(db) }
+                let userID = UInt32(clamping: sqlite3_column_int64(conversationStatement, 0))
+                conversations[userID] = MessageCenterStoredBootConversation(
+                    userID: userID,
+                    nickname: columnText(conversationStatement!, 1),
+                    picture: columnBlob(conversationStatement!, 2),
+                    isLegacyTransport: sqlite3_column_int(conversationStatement, 3) != 0,
+                    unreadCount: max(0, Int(sqlite3_column_int64(conversationStatement, 4))),
+                    draftText: columnText(conversationStatement!, 5),
+                    lastActivity: Date(timeIntervalSince1970: sqlite3_column_double(conversationStatement, 6)),
+                    messages: []
+                )
+            }
+
+            var messageStatement: OpaquePointer?
+            try prepare(db, """
+                SELECT id, peer_user_id, sent_at, outgoing, body, edited, editable, reactable,
+                       my_reaction, peer_reaction
+                FROM boot_private_messages_v1
+                WHERE server_host=? AND server_port=? AND account_login=? AND boot_id=?
+                ORDER BY sent_at ASC, id ASC
+                """, &messageStatement)
+            defer { sqlite3_finalize(messageStatement) }
+            try bindScope(scope, to: messageStatement!)
+            try bindText(messageStatement!, 4, bootID.uuidString.lowercased())
+            while true {
+                let result = sqlite3_step(messageStatement)
+                if result == SQLITE_DONE { break }
+                guard result == SQLITE_ROW else { throw databaseError(db) }
+                guard let id = UUID(uuidString: columnText(messageStatement!, 0)) else { continue }
+                let userID = UInt32(clamping: sqlite3_column_int64(messageStatement, 1))
+                guard var conversation = conversations[userID] else { continue }
+                conversation.messages.append(MessageCenterStoredPrivateMessage(
+                    id: id,
+                    timestamp: Date(timeIntervalSince1970: sqlite3_column_double(messageStatement, 2)),
+                    outgoing: sqlite3_column_int(messageStatement, 3) != 0,
+                    message: columnBlob(messageStatement!, 4),
+                    edited: sqlite3_column_int(messageStatement, 5) != 0,
+                    editable: sqlite3_column_int(messageStatement, 6) != 0,
+                    reactable: sqlite3_column_int(messageStatement, 7) != 0,
+                    myReaction: sqlite3_column_type(messageStatement, 8) == SQLITE_NULL
+                        ? nil : UInt8(clamping: sqlite3_column_int(messageStatement, 8)),
+                    peerReaction: sqlite3_column_type(messageStatement, 9) == SQLITE_NULL
+                        ? nil : UInt8(clamping: sqlite3_column_int(messageStatement, 9))
+                ))
+                conversations[userID] = conversation
+            }
+
+            return conversations.values.sorted {
+                if $0.lastActivity != $1.lastActivity { return $0.lastActivity > $1.lastActivity }
+                return $0.userID < $1.userID
+            }
+        }
+    }
+
+    func saveBootConversation(_ conversation: MessageCenterStoredBootConversation,
+                                scope: MessageCenterStoreScope, bootID: UUID) throws {
+        try queue.sync {
+            let db = try openDatabase()
+            defer { sqlite3_close(db) }
+            try upsertBootConversation(conversation, scope: scope, bootID: bootID, db: db)
+        }
+    }
+
+    func saveBootConversationHistory(_ conversation: MessageCenterStoredBootConversation,
+                                       scope: MessageCenterStoreScope, bootID: UUID) throws {
+        try queue.sync {
+            let db = try openDatabase()
+            defer { sqlite3_close(db) }
+            try exec(db, "BEGIN IMMEDIATE")
+            do {
+                try upsertBootConversation(conversation, scope: scope, bootID: bootID, db: db)
+                var deleteStatement: OpaquePointer?
+                try prepare(db, """
+                    DELETE FROM boot_private_messages_v1
+                    WHERE server_host=? AND server_port=? AND account_login=? AND boot_id=? AND peer_user_id=?
+                    """, &deleteStatement)
+                defer { sqlite3_finalize(deleteStatement) }
+                try bindScope(scope, to: deleteStatement!)
+                try bindText(deleteStatement!, 4, bootID.uuidString.lowercased())
+                try bindInt64(deleteStatement!, 5, Int64(conversation.userID))
+                try stepDone(deleteStatement!, db: db)
+
+                if !conversation.messages.isEmpty {
+                    var statement: OpaquePointer?
+                    try prepare(db, bootMessageInsertSQL, &statement)
+                    defer { sqlite3_finalize(statement) }
+                    for message in conversation.messages.suffix(500) {
+                        sqlite3_reset(statement)
+                        sqlite3_clear_bindings(statement)
+                        try bindBootPrivateMessage(message, conversation: conversation, scope: scope,
+                                                     bootID: bootID, to: statement!, db: db)
+                        try stepDone(statement!, db: db)
+                    }
+                }
+                try exec(db, "COMMIT")
+            } catch {
+                try? exec(db, "ROLLBACK")
+                throw error
+            }
+        }
+    }
+
+    func insertBootPrivateMessage(_ message: MessageCenterStoredPrivateMessage,
+                                    conversation: MessageCenterStoredBootConversation,
+                                    scope: MessageCenterStoreScope, bootID: UUID) throws {
+        try queue.sync {
+            let db = try openDatabase()
+            defer { sqlite3_close(db) }
+            try exec(db, "BEGIN IMMEDIATE")
+            do {
+                try upsertBootConversation(conversation, scope: scope, bootID: bootID, db: db)
+                var statement: OpaquePointer?
+                try prepare(db, bootMessageInsertSQL, &statement)
+                defer { sqlite3_finalize(statement) }
+                try bindBootPrivateMessage(message, conversation: conversation, scope: scope,
+                                             bootID: bootID, to: statement!, db: db)
+                try stepDone(statement!, db: db)
+
+                var trim: OpaquePointer?
+                try prepare(db, """
+                    DELETE FROM boot_private_messages_v1
+                    WHERE rowid IN (
+                        SELECT rowid FROM boot_private_messages_v1
+                        WHERE server_host=? AND server_port=? AND account_login=?
+                          AND boot_id=? AND peer_user_id=?
+                        ORDER BY sent_at DESC, id DESC
+                        LIMIT -1 OFFSET 500
+                    )
+                    """, &trim)
+                defer { sqlite3_finalize(trim) }
+                try bindScope(scope, to: trim!)
+                try bindText(trim!, 4, bootID.uuidString.lowercased())
+                try bindInt64(trim!, 5, Int64(conversation.userID))
+                try stepDone(trim!, db: db)
+                try exec(db, "COMMIT")
+            } catch {
+                try? exec(db, "ROLLBACK")
+                throw error
+            }
+        }
+    }
+
+    func clearBootConversation(userID: UInt32, scope: MessageCenterStoreScope, bootID: UUID) throws {
+        try deleteBootPrivateMessages(userID: userID, scope: scope, bootID: bootID,
+                                        deleteConversation: false)
+    }
+
+    func deleteBootConversation(userID: UInt32, scope: MessageCenterStoreScope, bootID: UUID) throws {
+        try deleteBootPrivateMessages(userID: userID, scope: scope, bootID: bootID,
+                                        deleteConversation: true)
+    }
+
+    func markAllBootConversationsRead(scope: MessageCenterStoreScope, bootID: UUID) throws {
+        try queue.sync {
+            let db = try openDatabase()
+            defer { sqlite3_close(db) }
+            var statement: OpaquePointer?
+            try prepare(db, """
+                UPDATE boot_conversations_v1 SET unread_count=0
+                WHERE server_host=? AND server_port=? AND account_login=? AND boot_id=?
+                """, &statement)
+            defer { sqlite3_finalize(statement) }
+            try bindScope(scope, to: statement!)
+            try bindText(statement!, 4, bootID.uuidString.lowercased())
+            try stepDone(statement!, db: db)
         }
     }
 
@@ -423,6 +688,133 @@ final class MessageCenterStore {
         }
     }
 
+    private var bootMessageInsertSQL: String {
+        """
+        INSERT OR REPLACE INTO boot_private_messages_v1
+        (id, server_host, server_port, account_login, boot_id, peer_user_id, sent_at, outgoing,
+         body, edited, editable, reactable, my_reaction, peer_reaction)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """
+    }
+
+    private func deleteBootPrivateMessages(userID: UInt32, scope: MessageCenterStoreScope,
+                                             bootID: UUID, deleteConversation: Bool) throws {
+        try queue.sync {
+            let db = try openDatabase()
+            defer { sqlite3_close(db) }
+            try exec(db, "BEGIN IMMEDIATE")
+            do {
+                var messages: OpaquePointer?
+                try prepare(db, """
+                    DELETE FROM boot_private_messages_v1
+                    WHERE server_host=? AND server_port=? AND account_login=? AND boot_id=? AND peer_user_id=?
+                    """, &messages)
+                defer { sqlite3_finalize(messages) }
+                try bindScope(scope, to: messages!)
+                try bindText(messages!, 4, bootID.uuidString.lowercased())
+                try bindInt64(messages!, 5, Int64(userID))
+                try stepDone(messages!, db: db)
+
+                if deleteConversation {
+                    var conversation: OpaquePointer?
+                    try prepare(db, """
+                        DELETE FROM boot_conversations_v1
+                        WHERE server_host=? AND server_port=? AND account_login=? AND boot_id=? AND peer_user_id=?
+                        """, &conversation)
+                    defer { sqlite3_finalize(conversation) }
+                    try bindScope(scope, to: conversation!)
+                    try bindText(conversation!, 4, bootID.uuidString.lowercased())
+                    try bindInt64(conversation!, 5, Int64(userID))
+                    try stepDone(conversation!, db: db)
+                } else {
+                    var conversation: OpaquePointer?
+                    try prepare(db, """
+                        UPDATE boot_conversations_v1 SET unread_count=0
+                        WHERE server_host=? AND server_port=? AND account_login=? AND boot_id=? AND peer_user_id=?
+                        """, &conversation)
+                    defer { sqlite3_finalize(conversation) }
+                    try bindScope(scope, to: conversation!)
+                    try bindText(conversation!, 4, bootID.uuidString.lowercased())
+                    try bindInt64(conversation!, 5, Int64(userID))
+                    try stepDone(conversation!, db: db)
+                }
+                try exec(db, "COMMIT")
+            } catch {
+                try? exec(db, "ROLLBACK")
+                throw error
+            }
+        }
+    }
+
+    private func bindBootPrivateMessage(_ message: MessageCenterStoredPrivateMessage,
+                                          conversation: MessageCenterStoredBootConversation,
+                                          scope: MessageCenterStoreScope, bootID: UUID,
+                                          to statement: OpaquePointer,
+                                          db: OpaquePointer) throws {
+        try bindText(statement, 1, message.id.uuidString.lowercased())
+        try bindScope(scope, to: statement, startIndex: 2)
+        try bindText(statement, 5, bootID.uuidString.lowercased())
+        try bindInt64(statement, 6, Int64(conversation.userID))
+        guard sqlite3_bind_double(statement, 7, message.timestamp.timeIntervalSince1970) == SQLITE_OK,
+              sqlite3_bind_int(statement, 8, message.outgoing ? 1 : 0) == SQLITE_OK else {
+            throw databaseError(db)
+        }
+        try bindBlob(statement, 9, message.message)
+        guard sqlite3_bind_int(statement, 10, message.edited ? 1 : 0) == SQLITE_OK,
+              sqlite3_bind_int(statement, 11, message.editable ? 1 : 0) == SQLITE_OK,
+              sqlite3_bind_int(statement, 12, message.reactable ? 1 : 0) == SQLITE_OK else {
+            throw databaseError(db)
+        }
+        if let reaction = message.myReaction {
+            guard sqlite3_bind_int(statement, 13, Int32(reaction)) == SQLITE_OK else {
+                throw databaseError(db)
+            }
+        } else {
+            guard sqlite3_bind_null(statement, 13) == SQLITE_OK else { throw databaseError(db) }
+        }
+        if let reaction = message.peerReaction {
+            guard sqlite3_bind_int(statement, 14, Int32(reaction)) == SQLITE_OK else {
+                throw databaseError(db)
+            }
+        } else {
+            guard sqlite3_bind_null(statement, 14) == SQLITE_OK else { throw databaseError(db) }
+        }
+    }
+
+    private func upsertBootConversation(_ conversation: MessageCenterStoredBootConversation,
+                                          scope: MessageCenterStoreScope, bootID: UUID,
+                                          db: OpaquePointer) throws {
+        var statement: OpaquePointer?
+        try prepare(db, """
+            INSERT INTO boot_conversations_v1
+            (server_host, server_port, account_login, boot_id, peer_user_id, nickname, picture,
+             is_legacy, unread_count, draft_text, last_activity)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(server_host, server_port, account_login, boot_id, peer_user_id) DO UPDATE SET
+                nickname=excluded.nickname,
+                picture=excluded.picture,
+                is_legacy=excluded.is_legacy,
+                unread_count=excluded.unread_count,
+                draft_text=excluded.draft_text,
+                last_activity=excluded.last_activity
+            """, &statement)
+        defer { sqlite3_finalize(statement) }
+        try bindScope(scope, to: statement!)
+        try bindText(statement!, 4, bootID.uuidString.lowercased())
+        try bindInt64(statement!, 5, Int64(conversation.userID))
+        try bindText(statement!, 6, conversation.nickname)
+        try bindBlob(statement!, 7, conversation.picture)
+        guard sqlite3_bind_int(statement, 8, conversation.isLegacyTransport ? 1 : 0) == SQLITE_OK else {
+            throw databaseError(db)
+        }
+        try bindInt64(statement!, 9, Int64(max(0, conversation.unreadCount)))
+        try bindText(statement!, 10, conversation.draftText)
+        guard sqlite3_bind_double(statement, 11, conversation.lastActivity.timeIntervalSince1970) == SQLITE_OK else {
+            throw databaseError(db)
+        }
+        try stepDone(statement!, db: db)
+    }
+
     private func bindPrivateMessage(_ message: MessageCenterStoredPrivateMessage,
                                     conversation: MessageCenterStoredConversation,
                                     scope: MessageCenterStoreScope,
@@ -552,6 +944,69 @@ final class MessageCenterStore {
                 )
                 """)
             try exec(db, "CREATE INDEX IF NOT EXISTS private_messages_v2_conversation_idx ON private_messages_v2(server_host, server_port, account_login, peer_account_id, sent_at)")
+            try exec(db, """
+                CREATE TABLE IF NOT EXISTS server_boots_v1 (
+                    server_host TEXT NOT NULL,
+                    server_port INTEGER NOT NULL,
+                    account_login TEXT NOT NULL,
+                    boot_id TEXT NOT NULL,
+                    boot_started_at REAL NOT NULL,
+                    last_seen_at REAL NOT NULL,
+                    last_uptime_ticks INTEGER NOT NULL,
+                    PRIMARY KEY (server_host, server_port, account_login, boot_id)
+                )
+                """)
+            try exec(db, "CREATE INDEX IF NOT EXISTS server_boots_v1_time_idx ON server_boots_v1(server_host, server_port, account_login, boot_started_at)")
+            try exec(db, """
+                CREATE TABLE IF NOT EXISTS boot_conversations_v1 (
+                    server_host TEXT NOT NULL,
+                    server_port INTEGER NOT NULL,
+                    account_login TEXT NOT NULL,
+                    boot_id TEXT NOT NULL,
+                    peer_user_id INTEGER NOT NULL,
+                    nickname TEXT NOT NULL,
+                    picture BLOB NOT NULL,
+                    is_legacy INTEGER NOT NULL DEFAULT 0,
+                    unread_count INTEGER NOT NULL DEFAULT 0,
+                    draft_text TEXT NOT NULL DEFAULT '',
+                    last_activity REAL NOT NULL,
+                    PRIMARY KEY (server_host, server_port, account_login, boot_id, peer_user_id)
+                )
+                """)
+            var bootConversationSchema: OpaquePointer?
+            try prepare(db, "PRAGMA table_info(boot_conversations_v1)", &bootConversationSchema)
+            var bootConversationColumns = Set<String>()
+            while sqlite3_step(bootConversationSchema) == SQLITE_ROW {
+                bootConversationColumns.insert(columnText(bootConversationSchema!, 1))
+            }
+            sqlite3_finalize(bootConversationSchema)
+            if !bootConversationColumns.contains("is_legacy") {
+                try exec(db, "ALTER TABLE boot_conversations_v1 ADD COLUMN is_legacy INTEGER NOT NULL DEFAULT 0")
+            }
+
+            try exec(db, """
+                CREATE TABLE IF NOT EXISTS boot_private_messages_v1 (
+                    id TEXT NOT NULL,
+                    server_host TEXT NOT NULL,
+                    server_port INTEGER NOT NULL,
+                    account_login TEXT NOT NULL,
+                    boot_id TEXT NOT NULL,
+                    peer_user_id INTEGER NOT NULL,
+                    sent_at REAL NOT NULL,
+                    outgoing INTEGER NOT NULL,
+                    body BLOB NOT NULL,
+                    edited INTEGER NOT NULL DEFAULT 0,
+                    editable INTEGER NOT NULL DEFAULT 0,
+                    reactable INTEGER NOT NULL DEFAULT 0,
+                    my_reaction INTEGER,
+                    peer_reaction INTEGER,
+                    PRIMARY KEY (id, server_host, server_port, account_login, boot_id, peer_user_id),
+                    FOREIGN KEY (server_host, server_port, account_login, boot_id, peer_user_id)
+                        REFERENCES boot_conversations_v1(server_host, server_port, account_login, boot_id, peer_user_id)
+                        ON DELETE CASCADE
+                )
+                """)
+            try exec(db, "CREATE INDEX IF NOT EXISTS boot_private_messages_v1_conversation_idx ON boot_private_messages_v1(server_host, server_port, account_login, boot_id, peer_user_id, sent_at)")
             try exec(db, """
                 CREATE TABLE IF NOT EXISTS offline_messages (
                     server_host TEXT NOT NULL,

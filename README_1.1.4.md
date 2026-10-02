@@ -11,6 +11,8 @@ Carracho 1.1.4 focuses on **keeping Message Center private conversations tied to
 - Older session-ID-based private-message history is deliberately not imported automatically because its ownership cannot be proven safely after IDs have been recycled.
 - Added an optional **Confirm disconnection** client setting that asks before a manual disconnect from an active server.
 - Fixed Message Center persistence when a private conversation receives its stable account identity after messages have already arrived; the existing in-memory history is now persisted during identity promotion and survives an app restart.
+- Restored persistent Private Message history when a server does not provide a stable peer UUID, including original/Classic and older modern servers, by isolating numeric user IDs inside a server-boot namespace derived from uptime.
+- Private Messages received on connected background bookmarks are now written to that bookmark's Message Center store immediately instead of remaining only in the in-memory pending-event queue.
 - Improved Sparkle republishing so metadata for an existing build is regenerated from the replacement Universal 2 archive instead of retaining stale hardware requirements.
 - Updated Carracho and Carracho Server version reporting to **1.1.4 / build 15**.
 
@@ -28,6 +30,16 @@ The live mapping is also hardened against incomplete disconnects: a durable conv
 
 When the stable account UUID arrives after a conversation has already collected messages in the current session, Carracho now persists the complete promoted conversation history instead of only its conversation metadata. This fixes private-message history disappearing after restarting the app in that race window.
 
+### Boot-scoped fallback when a peer UUID is unavailable
+
+If a server does not provide a stable peer account UUID, including original/Classic servers and older modern Carracho builds, Carracho keeps that Private Message history in a separate local store keyed by the current server boot and numeric user ID. The boot namespace is resolved from server uptime: restarting only Carracho restores the same history, while restarting the server creates a new namespace so a recycled numeric user ID cannot inherit another user's messages.
+
+If a stable account UUID arrives later, Carracho merges the boot-scoped history into the UUID-backed conversation and retires the temporary numeric-ID record only after the UUID history has been written successfully.
+
+### Background bookmark Message Center persistence
+
+Private Messages received while another bookmark remains connected in the background are now applied directly to that bookmark's Message Center snapshot and persisted immediately. Message edits and reactions are persisted there as well. Quitting Carracho no longer loses those events merely because the bookmark had not been activated again first.
+
 ### Safer local private-message history
 
 Message Center now stores durable Private Message conversations in a v2 SQLite schema keyed by stable peer account UUID. Older session-ID-based private-message history is deliberately **not** imported automatically because its account ownership cannot be proven safely after IDs have been recycled; those old rows are left untouched in the local database but ignored by the new history. Message edits, reactions, drafts, unread state, avatars, transport metadata and the existing 500-message per-conversation limit continue to use the same Message Center behavior.
@@ -36,9 +48,9 @@ Offline Messages use their separate account-aware storage and are not affected b
 
 ### Safe fallback for older servers
 
-If a server does not provide a stable account UUID, Carracho still allows Private Messages during the current connection, but that conversation remains session-only instead of being persisted under an identity that cannot be trusted across reconnects.
+If a server does not provide a stable peer UUID, Carracho persists the numeric-ID conversation only after it has identified the current server boot from server uptime. This applies to original/Classic servers as well as older modern Carracho servers that predate stable peer-identity metadata. The history is safe across client reconnects and app restarts, but it is not rebound after a server restart.
 
-This keeps communication compatible with older servers without recreating the history-mixing bug.
+If that boot identity cannot be established, the conversation remains session-only rather than being persisted under an identity that cannot be trusted across reconnects. This keeps older-server compatibility without recreating the history-mixing bug.
 
 ### Optional disconnect confirmation
 
