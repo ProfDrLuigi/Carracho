@@ -201,6 +201,57 @@ final class MessageCenterStore {
         }
     }
 
+    /// Persists a complete durable conversation after a session-only conversation acquires its
+    /// stable account identity. The promotion can happen after messages have already accumulated
+    /// in memory, so saving only the conversation row would make those messages disappear after
+    /// the next application launch.
+    func saveConversationHistory(_ conversation: MessageCenterStoredConversation,
+                                 scope: MessageCenterStoreScope) throws {
+        try queue.sync {
+            let db = try openDatabase()
+            defer { sqlite3_close(db) }
+            try exec(db, "BEGIN IMMEDIATE")
+            do {
+                try upsertConversation(conversation, scope: scope, db: db)
+
+                var deleteStatement: OpaquePointer?
+                try prepare(db, """
+                    DELETE FROM private_messages_v2
+                    WHERE server_host=? AND server_port=? AND account_login=? AND peer_account_id=?
+                    """, &deleteStatement)
+                defer { sqlite3_finalize(deleteStatement) }
+                try bindScope(scope, to: deleteStatement!)
+                try bindText(deleteStatement!, 4, conversation.accountID.uuidString.lowercased())
+                try stepDone(deleteStatement!, db: db)
+
+                let messages = Array(conversation.messages.suffix(500))
+                if !messages.isEmpty {
+                    let sql = """
+                        INSERT OR REPLACE INTO private_messages_v2
+                        (id, server_host, server_port, account_login, peer_account_id, sent_at, outgoing, body,
+                         edited, editable, reactable, my_reaction, peer_reaction)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """
+                    var statement: OpaquePointer?
+                    try prepare(db, sql, &statement)
+                    defer { sqlite3_finalize(statement) }
+
+                    for message in messages {
+                        sqlite3_reset(statement)
+                        sqlite3_clear_bindings(statement)
+                        try bindPrivateMessage(message, conversation: conversation, scope: scope,
+                                               to: statement!, db: db)
+                        try stepDone(statement!, db: db)
+                    }
+                }
+                try exec(db, "COMMIT")
+            } catch {
+                try? exec(db, "ROLLBACK")
+                throw error
+            }
+        }
+    }
+
     func insertPrivateMessage(_ message: MessageCenterStoredPrivateMessage,
                               conversation: MessageCenterStoredConversation,
                               scope: MessageCenterStoreScope) throws {
@@ -218,27 +269,8 @@ final class MessageCenterStore {
                 var statement: OpaquePointer?
                 try prepare(db, sql, &statement)
                 defer { sqlite3_finalize(statement) }
-                try bindText(statement!, 1, message.id.uuidString.lowercased())
-                try bindScope(scope, to: statement!, startIndex: 2)
-                try bindText(statement!, 5, conversation.accountID.uuidString.lowercased())
-                guard sqlite3_bind_double(statement, 6, message.timestamp.timeIntervalSince1970) == SQLITE_OK,
-                      sqlite3_bind_int(statement, 7, message.outgoing ? 1 : 0) == SQLITE_OK else { throw databaseError(db) }
-                try bindBlob(statement!, 8, message.message)
-                guard sqlite3_bind_int(statement, 9, message.edited ? 1 : 0) == SQLITE_OK,
-                      sqlite3_bind_int(statement, 10, message.editable ? 1 : 0) == SQLITE_OK,
-                      sqlite3_bind_int(statement, 11, message.reactable ? 1 : 0) == SQLITE_OK else {
-                    throw databaseError(db)
-                }
-                if let reaction = message.myReaction {
-                    guard sqlite3_bind_int(statement, 12, Int32(reaction)) == SQLITE_OK else { throw databaseError(db) }
-                } else {
-                    guard sqlite3_bind_null(statement, 12) == SQLITE_OK else { throw databaseError(db) }
-                }
-                if let reaction = message.peerReaction {
-                    guard sqlite3_bind_int(statement, 13, Int32(reaction)) == SQLITE_OK else { throw databaseError(db) }
-                } else {
-                    guard sqlite3_bind_null(statement, 13) == SQLITE_OK else { throw databaseError(db) }
-                }
+                try bindPrivateMessage(message, conversation: conversation, scope: scope,
+                                       to: statement!, db: db)
                 try stepDone(statement!, db: db)
 
                 var trim: OpaquePointer?
@@ -388,6 +420,40 @@ final class MessageCenterStore {
                 try? exec(db, "ROLLBACK")
                 throw error
             }
+        }
+    }
+
+    private func bindPrivateMessage(_ message: MessageCenterStoredPrivateMessage,
+                                    conversation: MessageCenterStoredConversation,
+                                    scope: MessageCenterStoreScope,
+                                    to statement: OpaquePointer,
+                                    db: OpaquePointer) throws {
+        try bindText(statement, 1, message.id.uuidString.lowercased())
+        try bindScope(scope, to: statement, startIndex: 2)
+        try bindText(statement, 5, conversation.accountID.uuidString.lowercased())
+        guard sqlite3_bind_double(statement, 6, message.timestamp.timeIntervalSince1970) == SQLITE_OK,
+              sqlite3_bind_int(statement, 7, message.outgoing ? 1 : 0) == SQLITE_OK else {
+            throw databaseError(db)
+        }
+        try bindBlob(statement, 8, message.message)
+        guard sqlite3_bind_int(statement, 9, message.edited ? 1 : 0) == SQLITE_OK,
+              sqlite3_bind_int(statement, 10, message.editable ? 1 : 0) == SQLITE_OK,
+              sqlite3_bind_int(statement, 11, message.reactable ? 1 : 0) == SQLITE_OK else {
+            throw databaseError(db)
+        }
+        if let reaction = message.myReaction {
+            guard sqlite3_bind_int(statement, 12, Int32(reaction)) == SQLITE_OK else {
+                throw databaseError(db)
+            }
+        } else {
+            guard sqlite3_bind_null(statement, 12) == SQLITE_OK else { throw databaseError(db) }
+        }
+        if let reaction = message.peerReaction {
+            guard sqlite3_bind_int(statement, 13, Int32(reaction)) == SQLITE_OK else {
+                throw databaseError(db)
+            }
+        } else {
+            guard sqlite3_bind_null(statement, 13) == SQLITE_OK else { throw databaseError(db) }
         }
     }
 

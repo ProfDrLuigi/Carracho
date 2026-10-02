@@ -10,6 +10,7 @@ Carracho 1.1.4 focuses on **keeping Message Center private conversations tied to
 - Added a new v2 local Message Center history schema that keeps durable conversations separated by stable account identity.
 - Older session-ID-based private-message history is deliberately not imported automatically because its ownership cannot be proven safely after IDs have been recycled.
 - Added an optional **Confirm disconnection** client setting that asks before a manual disconnect from an active server.
+- Fixed Message Center persistence when a private conversation receives its stable account identity after messages have already arrived; the existing in-memory history is now persisted during identity promotion and survives an app restart.
 - Improved Sparkle republishing so metadata for an existing build is regenerated from the replacement Universal 2 archive instead of retaining stale hardware requirements.
 - Updated Carracho and Carracho Server version reporting to **1.1.4 / build 15**.
 
@@ -22,6 +23,10 @@ Private conversations in Message Center no longer use the server's transient num
 This fixes the case where a server restart reused a numeric user ID for a different account. Previously, the stored conversation for that number could be relabelled with the new user's nickname and avatar, making messages from one account appear inside another account's conversation. In 1.1.4, a conversation can only reconnect to the exact same account UUID.
 
 The live mapping is also hardened against incomplete disconnects: a durable conversation with an account UUID can never be rebound merely because a later session happens to reuse the same numeric user ID.
+
+### Private-message history survives app restarts
+
+When the stable account UUID arrives after a conversation has already collected messages in the current session, Carracho now persists the complete promoted conversation history instead of only its conversation metadata. This fixes private-message history disappearing after restarting the app in that race window.
 
 ### Safer local private-message history
 

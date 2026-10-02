@@ -107,6 +107,7 @@
           <li>Added a new v2 local Message Center history schema that keeps durable conversations separated by stable account identity.</li>
           <li>Older session-ID-based private-message history is deliberately not imported automatically because its ownership cannot be proven safely after IDs have been recycled.</li>
           <li>Added an optional <strong>Confirm disconnection</strong> client setting that asks before a manual disconnect from an active server.</li>
+          <li>Fixed Message Center persistence when a private conversation receives its stable account identity after messages have already arrived; the existing in-memory history is now persisted during identity promotion and survives an app restart.</li>
           <li>Improved Sparkle republishing so metadata for an existing build is regenerated from the replacement Universal 2 archive instead of retaining stale hardware requirements.</li>
           <li>Updated Carracho and Carracho Server version reporting to <strong>1.1.4 / build 15</strong>.</li>
           <!-- RELEASE_HIGHLIGHTS_END -->

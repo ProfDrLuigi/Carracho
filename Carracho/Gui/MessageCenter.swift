@@ -293,7 +293,7 @@ extension ViewController {
             accountID: accountID,
             nickname: conversation.nickname,
             picture: conversation.picture,
-            isLegacyTransport: false,
+            isLegacyTransport: conversation.isLegacyTransport,
             unreadCount: conversation.unreadCount,
             draftText: conversation.draftText,
             lastActivity: conversation.lastActivity,
@@ -406,7 +406,11 @@ extension ViewController {
             conversation.picture = user.picture
             conversation.isLegacyTransport = user.isLegacyTransport
             privateMessageConversations[accountID] = conversation
-            persistPrivateConversation(accountID)
+            if transientID != nil {
+                persistPrivateConversationHistory(accountID)
+            } else {
+                persistPrivateConversation(accountID)
+            }
             return accountID
         }
 
@@ -492,6 +496,17 @@ extension ViewController {
               let stored = storedConversation(conversation) else { return }
         do {
             try messageCenterStore.saveConversation(stored, scope: scope)
+        } catch {
+            reportMessageCenterStoreError(error)
+        }
+    }
+
+    func persistPrivateConversationHistory(_ conversationID: UUID) {
+        guard let scope = messageCenterPersistenceScope,
+              let conversation = privateMessageConversations[conversationID],
+              let stored = storedConversation(conversation) else { return }
+        do {
+            try messageCenterStore.saveConversationHistory(stored, scope: scope)
         } catch {
             reportMessageCenterStoreError(error)
         }
