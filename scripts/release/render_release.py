@@ -226,7 +226,7 @@ def ensure_client_changelog(path: Path, version: str, build: str, client_markdow
     path.write_text(content)
 
 
-def ensure_server_changelog(path: Path, version: str, server_markdown: str) -> None:
+def ensure_server_changelog(path: Path, version: str, build: str, server_markdown: str) -> None:
     content = path.read_text()
     marker = f"New in {version}"
     if marker in content:
@@ -234,7 +234,7 @@ def ensure_server_changelog(path: Path, version: str, server_markdown: str) -> N
 
     lines = server_markdown.splitlines()
     items: list[str] = [
-        f'                <li>Updated Carracho Server for macOS to version {html.escape(version)}.</li>'
+        f'                <li>Updated Carracho Server for macOS to version {html.escape(version)} (build {html.escape(build)}).</li>'
     ]
     for index, line in enumerate(lines):
         if not line.startswith("### "):
@@ -268,29 +268,38 @@ def ensure_server_changelog(path: Path, version: str, server_markdown: str) -> N
     path.write_text(content)
 
 
-def update_homepage(path: Path, version: str, build: str, summary: str, release_highlights: list[str]) -> None:
+def update_homepage(
+    path: Path,
+    release_version: str,
+    client_version: str,
+    client_build: str,
+    server_version: str,
+    server_build: str,
+    summary: str,
+    release_highlights: list[str],
+) -> None:
     content = path.read_text()
     content = re.sub(
-        r"Carracho\s+\d+\.\d+\.\d+\s+·\s+macOS 10\.15\+",
-        f"Carracho {version} · macOS 10.15+",
+        r"Carracho(?:\s+release)?\s+[^·<]+\s+·\s+macOS 10\.15\+",
+        f"Carracho release {release_version} · macOS 10.15+",
         content,
         count=1,
     )
     content = re.sub(
-        r"<strong>\d+\.\d+\.\d+</strong><span>Current release</span>",
-        f"<strong>{version}</strong><span>Current release</span>",
+        r"<strong>[^<]+</strong><span>Current release</span>",
+        f"<strong>{release_version}</strong><span>Current release</span>",
         content,
         count=1,
     )
     content = re.sub(
-        r"<strong>\d+</strong><span>Current build</span>",
-        f"<strong>{build}</strong><span>Current build</span>",
+        r"<strong>[^<]+</strong><span>(?:Current build|Client / Server builds)</span>",
+        f"<strong>{client_build} / {server_build}</strong><span>Client / Server builds</span>",
         content,
         count=1,
     )
     content = re.sub(
-        r"(<section id=\"whats-new\".*?<div class=\"eyebrow\">What's new in )[^<]+",
-        lambda m: m.group(1) + version,
+        r'(<section id="whats-new".*?<div class="eyebrow">What\'s new in )[^<]+',
+        lambda m: m.group(1) + release_version,
         content,
         count=1,
         flags=re.S,
@@ -314,27 +323,41 @@ def update_homepage(path: Path, version: str, build: str, summary: str, release_
     if not release_match:
         raise SystemExit(f"Could not update release card in {path}")
 
+    product_line = ""
+    if client_version != server_version or client_build != server_build:
+        product_line = (
+            f" Client {client_version} (build {client_build}) · "
+            f"Server {server_version} (build {server_build})."
+        )
     replacement = (
         release_match.group(1)
-        + f"Carracho {version}"
+        + f"Carracho release {release_version}"
         + release_match.group(2)
         + "\n            "
         + html.escape(summary)
+        + html.escape(product_line)
         + "\n          "
         + release_match.group(4)
         + release_match.group(5)
-        + f"Get {version}"
+        + f"Get release {release_version}"
         + release_match.group(6)
         + release_match.group(7)
-        + f"releases/{version}.html"
+        + f"releases/{release_version}.html"
         + release_match.group(8)
     )
     content = content[: release_match.start()] + replacement + content[release_match.end() :]
     path.write_text(content)
 
 
-
-def update_root_readme(path: Path, version: str, build: str, summary: str) -> None:
+def update_root_readme(
+    path: Path,
+    release_version: str,
+    client_version: str,
+    client_build: str,
+    server_version: str,
+    server_build: str,
+    summary: str,
+) -> None:
     content = path.read_text()
     start = content.find("### Current release:")
     if start < 0:
@@ -343,17 +366,22 @@ def update_root_readme(path: Path, version: str, build: str, summary: str) -> No
     if end < 0:
         raise SystemExit(f"Could not find end of current release block in {path}")
     replacement = (
-        f"### Current release: {version}\n\n"
+        f"### Current release: {release_version}\n\n"
         + summary
         + "\n\n"
-        + f"The full release notes are available in [`README_{version}.md`](README_{version}.md).\n"
+        + f"- Client: **{client_version} (build {client_build})**\n"
+        + f"- Server: **{server_version} (build {server_build})**\n\n"
+        + f"The full release notes are available in [`README_{release_version}.md`](README_{release_version}.md).\n"
     )
     path.write_text(content[:start] + replacement + content[end:])
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--version", required=True)
-    parser.add_argument("--build", required=True)
+    parser.add_argument("--release-version", required=True)
+    parser.add_argument("--client-version", required=True)
+    parser.add_argument("--client-build", required=True)
+    parser.add_argument("--server-version", required=True)
+    parser.add_argument("--server-build", required=True)
     parser.add_argument("--notes", type=Path, required=True)
     parser.add_argument("--client-changelog", type=Path, required=True)
     parser.add_argument("--server-changelog", type=Path, required=True)
@@ -363,28 +391,49 @@ def main() -> None:
     args = parser.parse_args()
 
     markdown = args.notes.read_text()
-    expected_title = f"# Carracho {args.version}"
+    expected_title = f"# Carracho {args.release_version}"
     if expected_title not in markdown:
-        raise SystemExit(f"{args.notes} does not describe Carracho {args.version}")
+        raise SystemExit(f"{args.notes} does not describe Carracho release {args.release_version}")
 
-    client_md = section(markdown, f"Carracho Client {args.version}")
-    server_md = section(markdown, f"Carracho Server {args.version}")
+    client_md = section(markdown, f"Carracho Client {args.client_version}")
+    server_md = section(markdown, f"Carracho Server {args.server_version}")
     args.docs_releases.mkdir(parents=True, exist_ok=True)
-    (args.docs_releases / f"{args.version}.html").write_text(
-        standalone_html(f"Carracho {args.version}", markdown)
+    (args.docs_releases / f"{args.release_version}.html").write_text(
+        standalone_html(f"Carracho release {args.release_version}", markdown)
     )
-    (args.docs_releases / f"Carracho-Client-{args.version}.html").write_text(
-        standalone_html(f"Carracho Client {args.version}", client_md)
+    (args.docs_releases / f"Carracho-Client-{args.client_version}.html").write_text(
+        standalone_html(f"Carracho Client {args.client_version}", client_md)
     )
-    (args.docs_releases / f"Carracho-Server-{args.version}.html").write_text(
-        standalone_html(f"Carracho Server {args.version}", server_md)
+    (args.docs_releases / f"Carracho-Server-{args.server_version}.html").write_text(
+        standalone_html(f"Carracho Server {args.server_version}", server_md)
     )
 
     summary = intro_summary(markdown)
-    ensure_client_changelog(args.client_changelog, args.version, args.build, client_md)
-    ensure_server_changelog(args.server_changelog, args.version, server_md)
-    update_homepage(args.docs_index, args.version, args.build, summary, highlights(markdown))
-    update_root_readme(args.root_readme, args.version, args.build, summary)
+    ensure_client_changelog(
+        args.client_changelog, args.client_version, args.client_build, client_md
+    )
+    ensure_server_changelog(
+        args.server_changelog, args.server_version, args.server_build, server_md
+    )
+    update_homepage(
+        args.docs_index,
+        args.release_version,
+        args.client_version,
+        args.client_build,
+        args.server_version,
+        args.server_build,
+        summary,
+        highlights(markdown),
+    )
+    update_root_readme(
+        args.root_readme,
+        args.release_version,
+        args.client_version,
+        args.client_build,
+        args.server_version,
+        args.server_build,
+        summary,
+    )
 
 
 if __name__ == "__main__":

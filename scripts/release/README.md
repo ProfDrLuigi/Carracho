@@ -49,31 +49,49 @@ For that optional mode, configure the notarytool profile once with `scripts/rele
 
 Client and Server use the existing `SUPublicEDKey`. `generate_appcast` reads the matching EdDSA private key from the login Keychain account `ed25519` by default. Override it with `SPARKLE_KEY_ACCOUNT`.
 
-## Version source
+## Version sources
 
-`Version.xcconfig` is the single source of truth for the product version and build number:
+Client and Server versions are intentionally independent:
 
 ```text
-MARKETING_VERSION = <version>
-CURRENT_PROJECT_VERSION = <build>
+Version-Client.xcconfig
+  MARKETING_VERSION = <client version>
+  CURRENT_PROJECT_VERSION = <client build>
+
+Version-Server.xcconfig
+  MARKETING_VERSION = <server version>
+  CURRENT_PROJECT_VERSION = <server build>
 ```
 
-Xcode inherits these values for both macOS targets. Swift reads the generated bundle values through `CarrachoBuildInfo`. The native Linux build and Debian packaging load the same `Version.xcconfig` through `scripts/load-version.sh`. For a normal release, change the version/build only in `Version.xcconfig`.
+The macOS Client target inherits `Version-Client.xcconfig`. The macOS Server, native Linux Server and Debian packages use `Version-Server.xcconfig`. Swift reads each app's generated bundle values through `CarrachoBuildInfo`.
+
+The shared GitHub release/tag is a separate value:
+
+```text
+Release.xcconfig
+  CARRACHO_RELEASE_VERSION = <release version>
+```
+
+This lets one GitHub Release contain different product versions, for example Client 1.1.5 and Server 1.1.4. Both ZIP assets still use their own product version in the filename and Sparkle feed.
+
+For scripted overrides, use `CARRACHO_CLIENT_VERSION_OVERRIDE` / `CARRACHO_CLIENT_BUILD_OVERRIDE` or `CARRACHO_SERVER_VERSION_OVERRIDE` / `CARRACHO_SERVER_BUILD_OVERRIDE`. The older generic `CARRACHO_VERSION_OVERRIDE` / `CARRACHO_BUILD_OVERRIDE` remain fallback overrides for one-product tooling such as Debian package builds.
 
 ## Release prerequisites
 
 Before running either publisher:
 
-- `Version.xcconfig` must contain the intended `MARKETING_VERSION` and `CURRENT_PROJECT_VERSION` for the release;
-- `README_<version>.md` must contain `## Highlights`, `## Carracho Client <version>`, and `## Carracho Server <version>`;
+- `Version-Client.xcconfig` must contain the intended Client version/build;
+- `Version-Server.xcconfig` must contain the intended Server version/build;
+- `Release.xcconfig` must contain the shared GitHub release version;
+- `README_<release version>.md` must contain `## Highlights`, `## Carracho Client <client version>`, and `## Carracho Server <server version>`;
 - source changes must be committed;
 - the tracked working tree must be clean.
 
 Both publishers render the same website/release metadata. They generate product-specific release-note pages:
 
 ```text
-docs/releases/Carracho-Client-<version>.html
-docs/releases/Carracho-Server-<version>.html
+docs/releases/Carracho-Client-<client version>.html
+docs/releases/Carracho-Server-<server version>.html
 ```
 
 The Sparkle feeds stay separate:

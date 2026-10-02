@@ -22,6 +22,9 @@ See the collapsible **Security and modern encryption** section below for the pro
 
 Carracho 1.1.4 focuses on keeping Message Center private conversations tied to the correct account across reconnects and server restarts. The macOS client and server are version 1.1.4 (build 15), and the stable peer-identity extension is implemented by both the Swift/macOS and native Linux servers.
 
+- Client: **1.1.4 (build 15)**
+- Server: **1.1.4 (build 15)**
+
 The full release notes are available in [`README_1.1.4.md`](README_1.1.4.md).
 
 ## At a glance

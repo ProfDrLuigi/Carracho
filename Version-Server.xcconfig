@@ -1,0 +1,3 @@
+// Carracho Server version. Used by macOS Server, native Linux Server and Debian packages.
+MARKETING_VERSION = 1.1.4
+CURRENT_PROJECT_VERSION = 15

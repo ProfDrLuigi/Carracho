@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
-  <title>Carracho 1.1.4</title>
+  <title>Carracho release 1.1.4</title>
   <link rel="stylesheet" href="../styles.css">
   <style>
     .release-page { width:min(calc(100% - 40px), 900px); margin:0 auto; padding:72px 0 110px; }
@@ -48,8 +48,8 @@
 <p>Both the Swift/macOS server and the native Linux server now include the authenticated account UUID in modern user-arrival and user-update metadata. The stable identifier is sent in initial user snapshots, new-user events and later user metadata refreshes so modern clients can distinguish account identity from the temporary numeric session user ID. Modern observers also receive the stable account identity for Classic peers, while Classic recipients continue to receive the historical packet layouts unchanged.</p>
 <p>This identity metadata does not change Private Message routing or grant access to another user&#x27;s messages. Messages are still routed to the current live session; the UUID is used by modern clients to associate local history with the correct authenticated account.</p>
 <h2>Release tooling</h2>
-<h3>Centralized version metadata</h3>
-<p>Carracho now keeps the release version and build number in <code>Version.xcconfig</code> as the single source of truth. The macOS Client and Server inherit those values through Xcode, Swift runtime version strings use the generated bundle metadata, and the native Linux build plus Debian packaging read the same configuration. Release bumps no longer require updating version literals in Swift or C source files.</p>
+<h3>Independent product version metadata</h3>
+<p>Carracho now keeps Client and Server versions in separate configuration files. <code>Version-Client.xcconfig</code> controls the macOS Client, while <code>Version-Server.xcconfig</code> controls the macOS Server, native Linux Server and Debian packages. <code>Release.xcconfig</code> separately identifies the shared GitHub release/tag, so Client and Server can carry different product versions while their ZIP assets still appear together in one release. Swift runtime version strings continue to come from the generated bundle metadata, so version literals are no longer duplicated in Swift or C source files.</p>
 <h3>Safer Sparkle appcast republishing</h3>
 <p>Republishing an existing build number now removes the old item from the copied appcast before Sparkle regenerates the feed entry. This forces Sparkle to infer system and hardware metadata from the replacement archive instead of carrying forward stale metadata from an earlier artifact.</p>
 <p>The publishing scripts also verify that a Universal 2 release does not retain an <code>arm64</code>-only hardware requirement before accepting the generated appcast.</p>

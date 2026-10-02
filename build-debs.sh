@@ -58,7 +58,7 @@ done
 if [[ -n "$VERSION_OVERRIDE" ]]; then
     export CARRACHO_VERSION_OVERRIDE="$VERSION_OVERRIDE"
 fi
-. "$ROOT/scripts/load-version.sh"
+. "$ROOT/scripts/load-version.sh" server
 
 [[ "$(uname -s)" == "Linux" ]] || {
     echo "error: Debian packages must be built on Linux." >&2
@@ -80,7 +80,7 @@ export EXTRA_CFLAGS
 
 VERSION="$CARRACHO_VERSION"
 [[ -n "$VERSION" ]] || {
-    echo "error: could not determine package version from Version.xcconfig" >&2
+    echo "error: could not determine package version from Version-Server.xcconfig" >&2
     exit 1
 }
 if ! dpkg --validate-version "$VERSION" >/dev/null 2>&1; then

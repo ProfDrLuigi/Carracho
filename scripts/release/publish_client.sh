@@ -42,26 +42,6 @@ restore_xcode_package_lock_if_deleted() {
     fi
 }
 
-project_value() {
-    local key="$1"
-    local values
-
-    values="$(
-        sed -n "s/.*${key} = \([^;]*\);/\1/p" \
-            "$ROOT/Carracho.xcodeproj/project.pbxproj" \
-        | tr -d '"' \
-        | sort -u
-    )"
-
-    [ -n "$values" ] || die "Could not read $key from project.pbxproj"
-
-    if [ "$(printf '%s\n' "$values" | wc -l | tr -d ' ')" != "1" ]; then
-        printf '%s\n' "$values" >&2
-        die "$key is not consistent across project configurations"
-    fi
-
-    printf '%s' "$values"
-}
 
 load_github_token() {
     local inherited_github_token="${GITHUB_TOKEN:-}"
@@ -270,12 +250,22 @@ verify_universal_app() {
     echo "$executable: $archs"
 }
 
-VERSION="$(project_value MARKETING_VERSION)"
-BUILD_NUMBER="$(project_value CURRENT_PROJECT_VERSION)"
+# Product versions are independent; GitHub release identity is shared.
+. "$ROOT/scripts/load-version.sh" client
+CLIENT_VERSION="$CARRACHO_VERSION"
+CLIENT_BUILD="$CARRACHO_BUILD"
+RELEASE_VERSION="$CARRACHO_RELEASE_VERSION"
 
-TAG="Carracho${VERSION}"
+. "$ROOT/scripts/load-version.sh" server
+SERVER_VERSION="$CARRACHO_VERSION"
+SERVER_BUILD="$CARRACHO_BUILD"
+
+VERSION="$CLIENT_VERSION"
+BUILD_NUMBER="$CLIENT_BUILD"
+
+TAG="Carracho${RELEASE_VERSION}"
 ASSET_NAME="Carracho-Client-${VERSION}.zip"
-RELEASE_NOTES="$ROOT/README_${VERSION}.md"
+RELEASE_NOTES="$ROOT/README_${RELEASE_VERSION}.md"
 
 WORK_ROOT="$ROOT/.build/publish-client/${VERSION}"
 DERIVED_DATA="$WORK_ROOT/DerivedData"
@@ -287,17 +277,17 @@ FEED_DIR="$WORK_ROOT/feed"
 DOCS_RELEASES="$ROOT/docs/releases"
 DOCS_CLIENT="$ROOT/docs/client"
 
-say "Preparing Carracho Client $VERSION (build $BUILD_NUMBER)"
+say "Preparing Carracho Client $VERSION (build $BUILD_NUMBER) for shared release $RELEASE_VERSION"
 echo "Apple signing mode: $SIGNING_MODE"
 
 [ -f "$RELEASE_NOTES" ] || die "Missing $RELEASE_NOTES"
-grep -Fq "# Carracho $VERSION" "$RELEASE_NOTES" \
+grep -Fq "# Carracho $RELEASE_VERSION" "$RELEASE_NOTES" \
     || die "$RELEASE_NOTES has the wrong release title"
 grep -Fq "## Highlights" "$RELEASE_NOTES" \
     || die "$RELEASE_NOTES has no Highlights section"
-grep -Fq "## Carracho Client $VERSION" "$RELEASE_NOTES" \
+grep -Fq "## Carracho Client $CLIENT_VERSION" "$RELEASE_NOTES" \
     || die "$RELEASE_NOTES has no client release section"
-grep -Fq "## Carracho Server $VERSION" "$RELEASE_NOTES" \
+grep -Fq "## Carracho Server $SERVER_VERSION" "$RELEASE_NOTES" \
     || die "$RELEASE_NOTES has no server release section"
 
 [ "$(git_safe branch --show-current)" = "$BRANCH" ] \
@@ -329,8 +319,11 @@ git_safe merge-base --is-ancestor "origin/$BRANCH" HEAD \
 
 say "Rendering release notes, changelog and GitHub Pages metadata"
 python3 "$ROOT/scripts/release/render_release.py" \
-    --version "$VERSION" \
-    --build "$BUILD_NUMBER" \
+    --release-version "$RELEASE_VERSION" \
+    --client-version "$CLIENT_VERSION" \
+    --client-build "$CLIENT_BUILD" \
+    --server-version "$SERVER_VERSION" \
+    --server-build "$SERVER_BUILD" \
     --notes "$RELEASE_NOTES" \
     --root-readme "$ROOT/README.md" \
     --client-changelog "$ROOT/carrachoclient.html" \
@@ -354,7 +347,7 @@ if [ -n "$(
         carrachoserver.html \
         docs/index.html \
         docs/releases
-    git_safe commit -m "Prepare Carracho $VERSION release"
+    git_safe commit -m "Prepare Carracho $RELEASE_VERSION release"
 fi
 
 case "$SIGNING_MODE" in
@@ -602,10 +595,10 @@ if [ "$SHARED_RELEASE_EXISTS" = "0" ]; then
             fi
 
             say "Moving local $TAG tag to current HEAD"
-            git_safe tag -f -a "$TAG" -m "Carracho $VERSION" "$HEAD_COMMIT"
+            git_safe tag -f -a "$TAG" -m "Carracho $RELEASE_VERSION" "$HEAD_COMMIT"
         fi
     else
-        git_safe tag -a "$TAG" -m "Carracho $VERSION" "$HEAD_COMMIT"
+        git_safe tag -a "$TAG" -m "Carracho $RELEASE_VERSION" "$HEAD_COMMIT"
     fi
 fi
 
@@ -640,7 +633,7 @@ say "Creating/updating GitHub Release and uploading $ASSET_NAME"
 python3 "$ROOT/scripts/release/github_release.py" \
     --repo "$GITHUB_REPO" \
     --tag "$TAG" \
-    --title "Carracho $VERSION" \
+    --title "Carracho $RELEASE_VERSION" \
     --notes "$RELEASE_NOTES" \
     --asset "$FINAL_ZIP" \
     --target "$BRANCH"

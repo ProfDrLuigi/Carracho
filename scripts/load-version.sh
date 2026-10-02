@@ -1,11 +1,31 @@
 #!/bin/sh
-# Loads the single Carracho version source used by Xcode, Swift and native Linux builds.
+# Loads product-specific Carracho version metadata plus the shared GitHub release train.
 : "${ROOT:?ROOT must point at the Carracho repository root}"
 
-VERSION_FILE="${CARRACHO_VERSION_FILE:-$ROOT/Version.xcconfig}"
+PRODUCT="${1:-${CARRACHO_PRODUCT:-}}"
+CARRACHO_PRODUCT="$PRODUCT"
+case "$PRODUCT" in
+    client)
+        VERSION_FILE="${CARRACHO_CLIENT_VERSION_FILE:-${CARRACHO_VERSION_FILE:-$ROOT/Version-Client.xcconfig}}"
+        PRODUCT_VERSION_OVERRIDE="${CARRACHO_CLIENT_VERSION_OVERRIDE:-${CARRACHO_VERSION_OVERRIDE:-}}"
+        PRODUCT_BUILD_OVERRIDE="${CARRACHO_CLIENT_BUILD_OVERRIDE:-${CARRACHO_BUILD_OVERRIDE:-}}"
+        ;;
+    server)
+        VERSION_FILE="${CARRACHO_SERVER_VERSION_FILE:-${CARRACHO_VERSION_FILE:-$ROOT/Version-Server.xcconfig}}"
+        PRODUCT_VERSION_OVERRIDE="${CARRACHO_SERVER_VERSION_OVERRIDE:-${CARRACHO_VERSION_OVERRIDE:-}}"
+        PRODUCT_BUILD_OVERRIDE="${CARRACHO_SERVER_BUILD_OVERRIDE:-${CARRACHO_BUILD_OVERRIDE:-}}"
+        ;;
+    *)
+        echo "error: product must be 'client' or 'server'" >&2
+        exit 2
+        ;;
+esac
 
-version_value() {
-    key="$1"
+RELEASE_FILE="${CARRACHO_RELEASE_FILE:-$ROOT/Release.xcconfig}"
+
+config_value() {
+    file="$1"
+    key="$2"
     awk -F= -v key="$key" '
         {
             name=$1
@@ -18,22 +38,30 @@ version_value() {
                 exit
             }
         }
-    ' "$VERSION_FILE"
+    ' "$file"
 }
 
 [ -f "$VERSION_FILE" ] || {
     echo "error: version configuration not found: $VERSION_FILE" >&2
     exit 1
 }
+[ -f "$RELEASE_FILE" ] || {
+    echo "error: release configuration not found: $RELEASE_FILE" >&2
+    exit 1
+}
 
-CARRACHO_VERSION="$(version_value MARKETING_VERSION)"
-CARRACHO_BUILD="$(version_value CURRENT_PROJECT_VERSION)"
+CARRACHO_VERSION="$(config_value "$VERSION_FILE" MARKETING_VERSION)"
+CARRACHO_BUILD="$(config_value "$VERSION_FILE" CURRENT_PROJECT_VERSION)"
+CARRACHO_RELEASE_VERSION="$(config_value "$RELEASE_FILE" CARRACHO_RELEASE_VERSION)"
 
-if [ -n "${CARRACHO_VERSION_OVERRIDE:-}" ]; then
-    CARRACHO_VERSION="$CARRACHO_VERSION_OVERRIDE"
+if [ -n "$PRODUCT_VERSION_OVERRIDE" ]; then
+    CARRACHO_VERSION="$PRODUCT_VERSION_OVERRIDE"
 fi
-if [ -n "${CARRACHO_BUILD_OVERRIDE:-}" ]; then
-    CARRACHO_BUILD="$CARRACHO_BUILD_OVERRIDE"
+if [ -n "$PRODUCT_BUILD_OVERRIDE" ]; then
+    CARRACHO_BUILD="$PRODUCT_BUILD_OVERRIDE"
+fi
+if [ -n "${CARRACHO_RELEASE_VERSION_OVERRIDE:-}" ]; then
+    CARRACHO_RELEASE_VERSION="$CARRACHO_RELEASE_VERSION_OVERRIDE"
 fi
 
 case "$CARRACHO_VERSION" in
@@ -50,4 +78,11 @@ case "$CARRACHO_BUILD" in
         ;;
 esac
 
-export CARRACHO_VERSION CARRACHO_BUILD
+case "$CARRACHO_RELEASE_VERSION" in
+    ""|*[!0-9A-Za-z.+_~-]*)
+        echo "error: invalid CARRACHO_RELEASE_VERSION in $RELEASE_FILE: $CARRACHO_RELEASE_VERSION" >&2
+        exit 1
+        ;;
+esac
+
+export CARRACHO_PRODUCT CARRACHO_VERSION CARRACHO_BUILD CARRACHO_RELEASE_VERSION

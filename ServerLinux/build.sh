@@ -2,7 +2,7 @@
 set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
-. "$ROOT/scripts/load-version.sh"
+. "$ROOT/scripts/load-version.sh" server
 mkdir -p .build/linux/etc .build/linux/db .build/linux/generated
 
 VERSION_HEADER=".build/linux/generated/carracho_version.h"

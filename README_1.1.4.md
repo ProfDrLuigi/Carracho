@@ -44,9 +44,9 @@ This identity metadata does not change Private Message routing or grant access t
 
 ## Release tooling
 
-### Centralized version metadata
+### Independent product version metadata
 
-Carracho now keeps the release version and build number in `Version.xcconfig` as the single source of truth. The macOS Client and Server inherit those values through Xcode, Swift runtime version strings use the generated bundle metadata, and the native Linux build plus Debian packaging read the same configuration. Release bumps no longer require updating version literals in Swift or C source files.
+Carracho now keeps Client and Server versions in separate configuration files. `Version-Client.xcconfig` controls the macOS Client, while `Version-Server.xcconfig` controls the macOS Server, native Linux Server and Debian packages. `Release.xcconfig` separately identifies the shared GitHub release/tag, so Client and Server can carry different product versions while their ZIP assets still appear together in one release. Swift runtime version strings continue to come from the generated bundle metadata, so version literals are no longer duplicated in Swift or C source files.
 
 ### Safer Sparkle appcast republishing
 
