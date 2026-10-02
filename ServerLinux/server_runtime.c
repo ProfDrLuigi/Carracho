@@ -61,6 +61,7 @@
 #define SETTING_GUEST_UPLOAD_APPROVAL_ENABLED 0xf0000009u
 #define USER_FIELD_GROUP_COLOR 0xf0000003u
 #define USER_FIELD_LEGACY_TRANSPORT 0xf0000004u
+#define USER_FIELD_ACCOUNT_IDENTIFIER 0xf0000006u
 #define CLIENT_FIELD_OPERATING_SYSTEM 0xf1000000u
 #define CLIENT_FIELD_CPU_ARCHITECTURE 0xf1000001u
 #define CLIENT_FIELD_VERSION 0xf1000002u
@@ -1383,6 +1384,20 @@ static void append_session_group_color(cr_session*s,cr_tlv_out*fields,size_t*cou
     cr_write_be32(color_bytes,s->group_color_rgb);
     fields[(*count)++]=(cr_tlv_out){USER_FIELD_GROUP_COLOR,color_bytes,4};
 }
+static int stable_account_identifier(const char*account_id,uint8_t out[36]){
+    if(!account_id||strlen(account_id)!=36)return 0;
+    for(size_t i=0;i<36;i++){
+        unsigned char c=(unsigned char)account_id[i];
+        if(i==8||i==13||i==18||i==23){
+            if(c!='-')return 0;
+            out[i]=c;
+            continue;
+        }
+        if(!isxdigit(c))return 0;
+        out[i]=(uint8_t)tolower(c);
+    }
+    return 1;
+}
 static int send_initial_user_updates(cr_session*recipient){
     if(!recipient||!recipient->modern_transport)return 0;
     cr_server*server=recipient->server;int rc=0;
@@ -1390,28 +1405,30 @@ static int send_initial_user_updates(cr_session*recipient){
     for(size_t i=0;i<server->allocated_session_count;i++){
         cr_session*source=server->sessions[i];
         if(!session_ready_for_async(source))continue;
-        uint8_t uid[4],color[4];cr_write_be32(uid,source->user_id);
-        cr_tlv_out fields[5];size_t n=0;
+        uint8_t uid[4],color[4],account_id[36];cr_write_be32(uid,source->user_id);
+        cr_tlv_out fields[6];size_t n=0;
         fields[n++]=(cr_tlv_out){1,uid,4};
         fields[n++]=(cr_tlv_out){2,source->nickname,(uint16_t)source->nickname_len};
         if(source->picture_len<=UINT16_MAX)
             fields[n++]=(cr_tlv_out){0xb4,source->picture,(uint16_t)source->picture_len};
         fields[n++]=(cr_tlv_out){0xf0000002u,source->status_message,(uint16_t)source->status_message_len};
         append_session_group_color(source,fields,&n,color);
+        if(stable_account_identifier(source->account_id,account_id))
+            fields[n++]=(cr_tlv_out){USER_FIELD_ACCOUNT_IDENTIFIER,account_id,36};
         if(session_send(recipient,CMD_USER_UPDATE,0,fields,n)){rc=-1;break;}
     }
     pthread_mutex_unlock(&server->mutex);
     return rc;
 }
 static void broadcast_user_arrived(cr_session*s){
-    uint8_t uid[4],flags[2],color[4],legacy=(uint8_t)(s->modern_transport?0:1);
+    uint8_t uid[4],flags[2],color[4],account_id[36],legacy=(uint8_t)(s->modern_transport?0:1);
     uint8_t*classic_picture=NULL;size_t classic_picture_len=0;
     (void)classic_avatar_payload(s->picture,s->picture_len,&classic_picture,&classic_picture_len);
     cr_write_be32(uid,s->user_id);cr_write_be16(flags,s->sleeping?0x0100:0);
     cr_tlv_out classic_fields[4]={{1,uid,4},{2,s->nickname,(uint16_t)s->nickname_len},{3,flags,2}};
     size_t classic_count=3;
     if(classic_picture_len)classic_fields[classic_count++]=(cr_tlv_out){0xb4,classic_picture,(uint16_t)classic_picture_len};
-    cr_tlv_out modern_fields[7];size_t modern_count=0;
+    cr_tlv_out modern_fields[8];size_t modern_count=0;
     modern_fields[modern_count++]=classic_fields[0];
     modern_fields[modern_count++]=classic_fields[1];
     modern_fields[modern_count++]=classic_fields[2];
@@ -1420,6 +1437,8 @@ static void broadcast_user_arrived(cr_session*s){
     modern_fields[modern_count++]=(cr_tlv_out){0xf0000002u,s->status_message,(uint16_t)s->status_message_len};
     append_session_group_color(s,modern_fields,&modern_count,color);
     modern_fields[modern_count++]=(cr_tlv_out){USER_FIELD_LEGACY_TRANSPORT,&legacy,1};
+    if(stable_account_identifier(s->account_id,account_id))
+        modern_fields[modern_count++]=(cr_tlv_out){USER_FIELD_ACCOUNT_IDENTIFIER,account_id,36};
     pthread_mutex_lock(&s->server->mutex);
     for(size_t i=0;i<s->server->allocated_session_count;i++){
         cr_session*x=s->server->sessions[i];
@@ -3209,18 +3228,20 @@ static int handle_user_update(cr_session *s, const cr_packet *p) {
     if(status){s->status_message_len=status_len;if(status_len)memcpy(s->status_message,status_message,status_len);}
     if(pic){free(s->picture);s->picture=picture_copy;s->picture_len=picture_len;picture_copy=NULL;}
     memcpy(event_nick,s->nickname,s->nickname_len);size_t en=s->nickname_len;size_t ep=s->picture_len;size_t es=s->status_message_len;if(es)memcpy(event_status,s->status_message,es);
-    uint8_t uid[4],color[4];cr_write_be32(uid,s->user_id);
+    uint8_t uid[4],color[4],account_id[36];cr_write_be32(uid,s->user_id);
     uint8_t*classic_picture=NULL;size_t classic_picture_len=0;
     if(pic&&picture_len)(void)classic_avatar_payload(s->picture,s->picture_len,&classic_picture,&classic_picture_len);
     cr_tlv_out classic_fields[3]={{1,uid,4},{2,event_nick,(uint16_t)en}};size_t classic_count=2;
     if(pic&&(!picture_len||classic_picture_len))
         classic_fields[classic_count++]=(cr_tlv_out){0xb4,classic_picture,(uint16_t)classic_picture_len};
-    cr_tlv_out modern_fields[5];size_t modern_count=0;
+    cr_tlv_out modern_fields[6];size_t modern_count=0;
     modern_fields[modern_count++]=classic_fields[0];
     modern_fields[modern_count++]=classic_fields[1];
     modern_fields[modern_count++]=(cr_tlv_out){0xb4,s->picture,(uint16_t)ep};
     modern_fields[modern_count++]=(cr_tlv_out){0xf0000002u,event_status,(uint16_t)es};
     append_session_group_color(s,modern_fields,&modern_count,color);
+    if(stable_account_identifier(s->account_id,account_id))
+        modern_fields[modern_count++]=(cr_tlv_out){USER_FIELD_ACCOUNT_IDENTIFIER,account_id,36};
     for(size_t i=0;i<s->server->allocated_session_count;i++){
         cr_session*x=s->server->sessions[i];
         if(!session_ready_for_async(x))continue;
@@ -4311,14 +4332,16 @@ static void refresh_connected_account_state(cr_server*server){
     pthread_mutex_lock(&server->mutex);
     for(size_t si=0;si<server->allocated_session_count;si++){
         cr_session*source=server->sessions[si];if(!session_ready_for_async(source))continue;
-        uint8_t uid[4],color[4];cr_write_be32(uid,source->user_id);
+        uint8_t uid[4],color[4],account_id[36];cr_write_be32(uid,source->user_id);
         cr_tlv_out classic_fields[2]={{1,uid,4},{2,source->nickname,(uint16_t)source->nickname_len}};
-        cr_tlv_out modern_fields[5];size_t modern_count=0;
+        cr_tlv_out modern_fields[6];size_t modern_count=0;
         modern_fields[modern_count++]=classic_fields[0];
         modern_fields[modern_count++]=classic_fields[1];
         modern_fields[modern_count++]=(cr_tlv_out){0xb4,source->picture,(uint16_t)source->picture_len};
         modern_fields[modern_count++]=(cr_tlv_out){0xf0000002u,source->status_message,(uint16_t)source->status_message_len};
         append_session_group_color(source,modern_fields,&modern_count,color);
+        if(stable_account_identifier(source->account_id,account_id))
+            modern_fields[modern_count++]=(cr_tlv_out){USER_FIELD_ACCOUNT_IDENTIFIER,account_id,36};
         for(size_t ri=0;ri<server->allocated_session_count;ri++){
             cr_session*dest=server->sessions[ri];
             if(!session_ready_for_async(dest))continue;
