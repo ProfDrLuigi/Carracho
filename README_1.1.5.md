@@ -12,6 +12,7 @@ Carracho 1.1.5 focuses on **Message Center persistence, large Files directories,
 - Added Finder-style Quick View from the Files list: pressing the Space bar on a selected previewable file opens the existing preview window.
 - Split Client and Server version metadata into independent configuration files while retaining a separate shared GitHub release version.
 - Release changelog generation now refreshes an existing version block deterministically instead of leaving stale generated content behind.
+- Fixed the Xcode **Sync Server** source deployment so native Linux rebuilds receive the shared version loader and Server/release metadata required by the new version configuration.
 - Updated Carracho and Carracho Server version reporting to **1.1.5 / build 16**.
 
 ## Carracho Client 1.1.5
@@ -73,6 +74,12 @@ This keeps the 1.1.5 fallback compatible with original/older servers while prese
 Client and Server versions now have separate configuration sources. Version-Client.xcconfig controls the macOS Client, while Version-Server.xcconfig controls the macOS Server, native Linux Server and Debian packages.
 
 Release.xcconfig separately defines the shared GitHub release/tag version. Client and Server can therefore carry different product versions in future while still publishing their ZIP assets into one shared release when desired. Runtime version strings and native Linux build metadata derive from these configured versions rather than duplicated literals in Swift or C source.
+
+### Complete Linux source synchronization
+
+The Xcode **Sync Server** target now transfers the shared scripts directory together with Version-Server.xcconfig and Release.xcconfig into /opt/carracho/sources. Native source rebuilds therefore have all metadata required by ServerLinux/build.sh after the Client/Server version split.
+
+compile.sh also validates the required synced source files before stopping the running service. An incomplete source upload now fails immediately with a clear error instead of first taking the live Carracho Server offline and only then discovering the missing build metadata.
 
 ### Refreshable generated changelog blocks
 

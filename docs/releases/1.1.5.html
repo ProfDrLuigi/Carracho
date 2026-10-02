@@ -32,6 +32,7 @@
 <li>Added Finder-style Quick View from the Files list: pressing the Space bar on a selected previewable file opens the existing preview window.</li>
 <li>Split Client and Server version metadata into independent configuration files while retaining a separate shared GitHub release version.</li>
 <li>Release changelog generation now refreshes an existing version block deterministically instead of leaving stale generated content behind.</li>
+<li>Fixed the Xcode <strong>Sync Server</strong> source deployment so native Linux rebuilds receive the shared version loader and Server/release metadata required by the new version configuration.</li>
 <li>Updated Carracho and Carracho Server version reporting to <strong>1.1.5 / build 16</strong>.</li>
 </ul>
 <h2>Carracho Client 1.1.5</h2>
@@ -64,6 +65,9 @@
 <h3>Independent Client and Server version metadata</h3>
 <p>Client and Server versions now have separate configuration sources. Version-Client.xcconfig controls the macOS Client, while Version-Server.xcconfig controls the macOS Server, native Linux Server and Debian packages.</p>
 <p>Release.xcconfig separately defines the shared GitHub release/tag version. Client and Server can therefore carry different product versions in future while still publishing their ZIP assets into one shared release when desired. Runtime version strings and native Linux build metadata derive from these configured versions rather than duplicated literals in Swift or C source.</p>
+<h3>Complete Linux source synchronization</h3>
+<p>The Xcode <strong>Sync Server</strong> target now transfers the shared scripts directory together with Version-Server.xcconfig and Release.xcconfig into /opt/carracho/sources. Native source rebuilds therefore have all metadata required by ServerLinux/build.sh after the Client/Server version split.</p>
+<p>compile.sh also validates the required synced source files before stopping the running service. An incomplete source upload now fails immediately with a clear error instead of first taking the live Carracho Server offline and only then discovering the missing build metadata.</p>
 <h3>Refreshable generated changelog blocks</h3>
 <p>The release renderer now replaces an existing generated version block when rerun instead of assuming that every version is new. This keeps the rolling Client and Server changelogs synchronized with the current release notes during release preparation and republishing.</p>
 <h2>Compatibility notes</h2>

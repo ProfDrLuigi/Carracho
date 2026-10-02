@@ -13,6 +13,24 @@ HTTP_ENV="$LIVE_ETC/carracho-server.env"
 SYSTEMD_DROPIN_DIR="/etc/systemd/system/carracho.service.d"
 SYSTEMD_DROPIN="$SYSTEMD_DROPIN_DIR/webadmin.conf"
 
+required_source_files=(
+    "$ROOT/ServerLinux/build.sh"
+    "$ROOT/TrackerLinux/build.sh"
+    "$ROOT/scripts/load-version.sh"
+    "$ROOT/Version-Server.xcconfig"
+    "$ROOT/Release.xcconfig"
+    "$WEBADMIN_BUILD"
+)
+
+for required_file in "${required_source_files[@]}"; do
+    if [ ! -f "$required_file" ]; then
+        echo "error: Incomplete Carracho source sync; required file is missing:" >&2
+        echo "       $required_file" >&2
+        echo "       Run the Xcode 'Sync Server' target again before compiling." >&2
+        exit 1
+    fi
+done
+
 FRESH_SERVER_DB=0
 if [ ! -e /opt/carracho/db/server.db ] \
    && [ ! -e /opt/carracho/server-state.json ] \
