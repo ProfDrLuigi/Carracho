@@ -19,7 +19,7 @@ extension ViewController {
         clientSettingsGeneralWasVisited = resumeConnectionAfterIdentitySetup
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 760, height: 800),
+            contentRect: NSRect(x: 0, y: 0, width: 760, height: 828),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
@@ -29,7 +29,7 @@ extension ViewController {
         window.delegate = self
         window.appearance = NSAppearance(named: .darkAqua)
         window.backgroundColor = CarrachoTheme.canvas
-        window.minSize = NSSize(width: 720, height: 768)
+        window.minSize = NSSize(width: 720, height: 796)
         clientSettingsWindow = window
 
         let root = CarrachoBackgroundView()
@@ -83,7 +83,7 @@ extension ViewController {
                 content.bottomAnchor.constraint(equalTo: contentHost.bottomAnchor),
             ])
         }
-        contentHost.heightAnchor.constraint(equalToConstant: 636).isActive = true
+        contentHost.heightAnchor.constraint(equalToConstant: 664).isActive = true
 
         let restoreDefaults = NSButton(title: L("Restore Defaults"), target: self,
                                        action: #selector(settingsRestoreSoundDefaults(_:)))
@@ -226,7 +226,19 @@ extension ViewController {
         confirmDisconnect.toolTip = L("Ask for confirmation before manually disconnecting from a server.")
         clientSettingsConfirmDisconnectCheckbox = confirmDisconnect
 
-        let appBehaviorStack = verticalStack([appBehaviorTitle, quitOnClose, confirmDisconnect], spacing: 7)
+        let dockPrivateMessageBadge = NSButton(
+            checkboxWithTitle: L("Show unread private messages on the Dock icon"),
+            target: nil,
+            action: nil
+        )
+        dockPrivateMessageBadge.state = dockPrivateMessageBadgeEnabled ? .on : .off
+        dockPrivateMessageBadge.toolTip = L("Show the number of unread private messages as a badge on the Carracho Dock icon.")
+        clientSettingsDockPrivateMessageBadgeCheckbox = dockPrivateMessageBadge
+
+        let appBehaviorStack = verticalStack(
+            [appBehaviorTitle, quitOnClose, confirmDisconnect, dockPrivateMessageBadge],
+            spacing: 7
+        )
         pin(appBehaviorStack, in: appBehaviorCard, inset: 14)
 
         let stack = verticalStack([identityCard, downloadsCard, serverMessagesCard, appBehaviorCard], spacing: 12)
@@ -239,7 +251,7 @@ extension ViewController {
             identityCard.heightAnchor.constraint(equalToConstant: 300),
             downloadsCard.heightAnchor.constraint(equalToConstant: 90),
             serverMessagesCard.heightAnchor.constraint(equalToConstant: 105),
-            appBehaviorCard.heightAnchor.constraint(equalToConstant: 98),
+            appBehaviorCard.heightAnchor.constraint(equalToConstant: 126),
         ])
         return container
     }
@@ -545,6 +557,10 @@ extension ViewController {
         if let checkbox = clientSettingsConfirmDisconnectCheckbox {
             UserDefaults.standard.set(checkbox.state == .on, forKey: Self.confirmDisconnectDefaultsKey)
         }
+        if let checkbox = clientSettingsDockPrivateMessageBadgeCheckbox {
+            UserDefaults.standard.set(checkbox.state == .on, forKey: Self.dockPrivateMessageBadgeDefaultsKey)
+        }
+        updateDockPrivateMessageBadge()
     }
 
     func emitClientEvent(_ event: ClientSoundEvent, notificationTitle: String, notificationBody: String,

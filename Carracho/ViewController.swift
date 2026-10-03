@@ -800,6 +800,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
     weak var clientSettingsShowUserPresenceNotificationsCheckbox: NSButton?
     weak var clientSettingsQuitOnLastWindowCloseCheckbox: NSButton?
     weak var clientSettingsConfirmDisconnectCheckbox: NSButton?
+    weak var clientSettingsDockPrivateMessageBadgeCheckbox: NSButton?
     weak var clientSettingsAvatarView: AvatarDropView?
     var clientSettingsPendingDownloadFolderPath: String?
     var resumeConnectionAfterIdentitySetup = false
@@ -1304,6 +1305,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
     static let showUserPresenceNotificationsDefaultsKey = "Carracho.ShowUserPresenceNotifications.v1"
     static let quitOnLastWindowCloseDefaultsKey = "Carracho.QuitOnLastWindowClose.v1"
     static let confirmDisconnectDefaultsKey = "Carracho.ConfirmDisconnect.v1"
+    static let dockPrivateMessageBadgeDefaultsKey = "Carracho.DockPrivateMessageBadge.v1"
     static let globalAvatarIdentity = LocalAvatarIdentity(host: "__carracho_global_profile__", port: 0, login: "profile")
     var remoteTransferSnapshot: [LegacyTransferInfoRecord] = []
     var remoteManagedTransferSnapshot: [LegacyManagedTransferRecord] = []
@@ -4580,6 +4582,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
                 }
             }
             context.snapshot = snapshot
+            updateDockPrivateMessageBadge()
             // The snapshot now already contains this PM. Do not replay it on activation, or it
             // would be appended a second time.
             return true
@@ -5223,6 +5226,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
     }
 
     func reloadBookmarkStack() {
+        defer { updateDockPrivateMessageBadge() }
         for view in bookmarkStack.arrangedSubviews {
             bookmarkStack.removeArrangedSubview(view)
             view.removeFromSuperview()
@@ -6695,6 +6699,12 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         UserDefaults.standard.bool(forKey: Self.confirmDisconnectDefaultsKey)
     }
 
+    var dockPrivateMessageBadgeEnabled: Bool {
+        let defaults = UserDefaults.standard
+        guard defaults.object(forKey: Self.dockPrivateMessageBadgeDefaultsKey) != nil else { return true }
+        return defaults.bool(forKey: Self.dockPrivateMessageBadgeDefaultsKey)
+    }
+
     var queuedClientTransferIDs: [UUID] {
         transferMonitorOrder.reversed().filter { id in
             guard let item = transferMonitorItems[id] else { return false }
@@ -7112,6 +7122,26 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
     var privateMessageUnreadCount: Int {
         let conversations = privateMessageConversations.values.reduce(0) { min(999, $0 + $1.unreadCount) }
         return min(999, conversations + offlineMessageCenterUnreadCount)
+    }
+
+    var dockPrivateMessageUnreadCount: Int {
+        var total = privateMessageConversations.values.reduce(0) { min(10_000, $0 + $1.unreadCount) }
+        for (bookmarkID, context) in bookmarkConnections where bookmarkID != activeBookmarkConnectionID {
+            guard let snapshot = context.snapshot else { continue }
+            for conversation in snapshot.privateMessageConversations.values {
+                total = min(10_000, total + conversation.unreadCount)
+            }
+        }
+        return total
+    }
+
+    func updateDockPrivateMessageBadge() {
+        guard dockPrivateMessageBadgeEnabled else {
+            NSApp.dockTile.badgeLabel = nil
+            return
+        }
+        let unread = dockPrivateMessageUnreadCount
+        NSApp.dockTile.badgeLabel = unread == 0 ? nil : (unread > 999 ? "999+" : String(unread))
     }
 
     func refreshRemoteBanner(logErrors: Bool) {

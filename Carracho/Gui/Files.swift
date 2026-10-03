@@ -1922,6 +1922,7 @@ extension ViewController {
         clientSettingsAboutView = nil
         clientSettingsDownloadFolderField = nil
         clientSettingsConfirmDisconnectCheckbox = nil
+        clientSettingsDockPrivateMessageBadgeCheckbox = nil
         clientSettingsAvatarView = nil
         clientSettingsPendingDownloadFolderPath = nil
     }
@@ -2400,6 +2401,8 @@ extension ViewController {
             clientSettingsDownloadFolderField = nil
             clientSettingsShowUserPresenceNotificationsCheckbox = nil
             clientSettingsQuitOnLastWindowCloseCheckbox = nil
+            clientSettingsConfirmDisconnectCheckbox = nil
+            clientSettingsDockPrivateMessageBadgeCheckbox = nil
             clientSettingsAvatarView = nil
             clientSettingsPendingDownloadFolderPath = nil
             return

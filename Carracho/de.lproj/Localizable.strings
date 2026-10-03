@@ -2117,6 +2117,8 @@
 "Quit Carracho when the last window is closed" = "Carracho beenden, wenn das letzte Fenster geschlossen wird";
 "Confirm disconnection" = "Trennung bestätigen";
 "Ask for confirmation before manually disconnecting from a server." = "Vor dem manuellen Trennen von einem Server eine Bestätigung anfordern.";
+"Show unread private messages on the Dock icon" = "Ungelesene private Nachrichten am Dock-Symbol anzeigen";
+"Show the number of unread private messages as a badge on the Carracho Dock icon." = "Die Anzahl ungelesener privater Nachrichten als Badge am Carracho-Dock-Symbol anzeigen.";
 "When disabled, the red close button only closes the window and Carracho stays running in the Dock." = "Wenn deaktiviert, schließt der rote Schließen-Knopf nur das Fenster und Carracho läuft im Dock weiter.";
 "Upload Files or Folders" = "Dateien oder Ordner hochladen";
 "Choose one or more files or folders to upload to the current server folder." = "Wähle eine oder mehrere Dateien oder Ordner aus, die in den aktuellen Serverordner hochgeladen werden sollen.";

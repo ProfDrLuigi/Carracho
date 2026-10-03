@@ -1187,7 +1187,9 @@ extension ViewController {
         if conversation.entries.count > 500 { conversation.entries.removeFirst(conversation.entries.count - 500) }
         conversation.lastActivity = timestamp
         if !outgoing {
-            let visibleAndSelected = currentWorkspace == .messageCenter &&
+            let visibleAndSelected = NSApp.isActive &&
+                view.window?.isKeyWindow == true &&
+                currentWorkspace == .messageCenter &&
                 selectedPrivateConversationID == conversationID
             if visibleAndSelected { conversation.unreadCount = 0 }
             else { conversation.unreadCount = min(999, conversation.unreadCount + 1) }
@@ -1608,6 +1610,7 @@ extension ViewController {
         isReloadingPrivateMessageTable = false
 
         updateMessageCenterSidebarBadge()
+        updateDockPrivateMessageBadge()
         privateMessageMarkReadButton.isEnabled = privateMessageUnreadCount > 0
         privateMessageNewButton.isEnabled = client.isConnected && !liveUsers.isEmpty
 
