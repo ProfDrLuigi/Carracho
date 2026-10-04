@@ -23,6 +23,15 @@
     </style>
 </head>
     <body>
+        <p><span class="header" lang="en">New in 1.1.6</span></p>
+        <ul>
+            <span class="newstext">
+                <li>Updated Carracho Server for macOS to version 1.1.6 (build 17).</li>
+                <li><strong>Dedicated Server and Tracker system services</strong> — The macOS Server and Tracker can now run as two independent launchd system services. Both jobs use the same compact carracho-serverd helper embedded in the Server app, while Server and Tracker retain separate launchd jobs and separate running/automatic-start state.</li>
+                <li><strong>System Service is the single control surface</strong> — Server and Tracker runtime control is now consolidated under the always-visible System Service section for each component. The old duplicate Start/Stop controls in the page header, application menu and status menu have been removed.</li>
+                <li><strong>Daemon update reminder after an app update</strong> — The Server app now compares the daemon helper embedded in the current app with the binary installed for the system services. The comparison is byte-for-byte, so rebuilt hotfixes are detected even if their marketing version happens to be unchanged.</li>
+        </ul></span>
+
         <p><span class="header" lang="en">New in 1.1.5</span></p>
         <ul>
             <span class="newstext">

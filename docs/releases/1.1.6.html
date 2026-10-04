@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Carracho release 1.1.6</title>
+  <link rel="stylesheet" href="../styles.css">
+  <style>
+    .release-page { width:min(calc(100% - 40px), 900px); margin:0 auto; padding:72px 0 110px; }
+    .release-page h1 { font-size:clamp(2.8rem,7vw,5rem); margin-bottom:28px; }
+    .release-page h2 { margin-top:54px; font-size:2rem; }
+    .release-page h3 { margin-top:34px; }
+    .release-page p, .release-page li { color:var(--muted-strong); }
+    .release-page code { padding:.12em .38em; border-radius:6px; background:rgba(255,255,255,.07); }
+    .release-page pre { margin:22px 0; border:1px solid var(--line); border-radius:16px; background:#070b12; }
+    .release-back { display:inline-flex; margin-bottom:34px; color:var(--orange-2); text-decoration:none; font-weight:700; }
+  </style>
+</head>
+<body>
+  <main class="release-page">
+    <a class="release-back" href="../">← Carracho</a>
+<h1>Carracho 1.1.6</h1>
+<p>Carracho 1.1.6 focuses on <strong>more durable messaging, clearer unread indicators, and a redesigned macOS Server service model</strong>. The macOS Client and Server are version <strong>1.1.6 (build 17)</strong> for this release, with the native Linux Server using the same Server version metadata.</p>
+<h2>Highlights</h2>
+<ul>
+<li>Message Center history for the selected bookmark is now available immediately after launching the client, even before reconnecting to the server.</li>
+<li>Added an optional Dock badge showing the total number of unread private messages, including unread conversations on connected background bookmarks.</li>
+<li>Added a News sidebar badge showing the total number of unread threaded News posts.</li>
+<li>Reworked the macOS Server and Tracker into independent launchd system services backed by a compact shared headless daemon binary instead of copying a second complete Server app into the daemon directory.</li>
+<li>Server and Tracker installation, removal, start/stop and automatic startup are now controlled exclusively from their always-visible <strong>System Service</strong> sections.</li>
+<li>The macOS Server app now detects when an installed daemon differs from the daemon embedded in the updated app and offers <strong>Update Now</strong> on every app launch until the service binary is refreshed.</li>
+<li>Hardened Linux source synchronization so native rebuilds receive the shared version/release metadata and fail before stopping the live service when required source files are missing.</li>
+<li>Updated Carracho and Carracho Server version reporting to <strong>1.1.6 / build 17</strong>.</li>
+</ul>
+<h2>Carracho Client 1.1.6</h2>
+<h3>Message Center history while offline</h3>
+<p>The selected server bookmark now restores its persisted Message Center history as soon as the client starts, without requiring a successful connection first. Stable account-UUID conversations are restored directly from the bookmark&#x27;s server/account scope.</p>
+<p>For peers that still rely on the boot-scoped fallback introduced in 1.1.5, Carracho can display the most recently observed server-boot history while disconnected. A real connection still revalidates the server boot before a numeric session identity is trusted for new routing or persistence.</p>
+<p>Switching to a saved bookmark while disconnected also loads that bookmark&#x27;s locally persisted Message Center history, making previous conversations useful even when the remote server is unavailable.</p>
+<h3>Unread private-message Dock badge</h3>
+<p>Carracho can now show the total number of unread private messages directly on its Dock icon. The count includes the active server as well as connected background bookmarks, and unread state is only cleared when the relevant conversation is actually visible in the active key window.</p>
+<p>The feature is enabled by default and can be switched off under <strong>Settings → General → App Behavior → Show unread private messages on the Dock icon</strong>. Disabling it clears the Dock badge immediately.</p>
+<h3>Unread News sidebar badge</h3>
+<p>The main <strong>News</strong> sidebar item now shows the total number of unread threaded News posts using the same red badge presentation as the other unread counters in the client.</p>
+<p>The count comes from the existing per-server/per-account News read state, updates during background News polling, decreases as individual threads are actually read, and is restored correctly when switching back to a connected bookmark session. Merely opening the News workspace does not clear unread posts.</p>
+<h2>Carracho Server 1.1.6</h2>
+<h3>Dedicated Server and Tracker system services</h3>
+<p>The macOS Server and Tracker can now run as two independent launchd system services. Both jobs use the same compact carracho-serverd helper embedded in the Server app, while Server and Tracker retain separate launchd jobs and separate running/automatic-start state.</p>
+<p>Installing a service copies only the headless daemon binary and the service definitions required to run it. The daemon directory no longer needs a second complete copy of <strong>Carracho Server.app</strong>, avoiding duplicated application bundles under /Applications and the service installation.</p>
+<p>The helper is built as a Universal 2 binary and contains the headless Server/Tracker runtime rather than the AppKit administration UI or Sparkle updater.</p>
+<h3>System Service is the single control surface</h3>
+<p>Server and Tracker runtime control is now consolidated under the always-visible <strong>System Service</strong> section for each component. The old duplicate Start/Stop controls in the page header, application menu and status menu have been removed.</p>
+<p>Each service can be installed or uninstalled independently, started or stopped independently, and configured independently for automatic startup with macOS. Current running state and startup-at-boot state are separate: disabling automatic startup does not stop a service that is already running.</p>
+<p>The <strong>System Service</strong> section is permanently expanded and no longer has a disclosure arrow, so installation and runtime controls remain visible without another layer of navigation.</p>
+<h3>Daemon update reminder after an app update</h3>
+<p>The Server app now compares the daemon helper embedded in the current app with the binary installed for the system services. The comparison is byte-for-byte, so rebuilt hotfixes are detected even if their marketing version happens to be unchanged.</p>
+<p>When an installed daemon differs from the helper in the updated app, <strong>Reinstall</strong> changes to <strong>Update Now</strong>. On every normal launch of the Server app, a warning explains that the application was updated and the system service must also be refreshed. The warning continues to appear until the installed daemon matches the current app.</p>
+<p>Choosing <strong>Update Now</strong> performs the same privileged service refresh used by the System Service controls while preserving the installed sibling service&#x27;s running and automatic-start state. Because Server and Tracker share the daemon binary, updating either installed service refreshes the common executable.</p>
+<h2>Release tooling</h2>
+<h3>Safer Linux source synchronization</h3>
+<p>The Xcode <strong>Sync Server</strong> target now transfers the shared scripts directory together with Version-Server.xcconfig and Release.xcconfig into /opt/carracho/sources. Native Linux builds therefore receive the version loader and metadata required by the split Client/Server version configuration.</p>
+<p>compile.sh now validates all required synchronized source files before stopping the live service. An incomplete source upload fails immediately with a clear error instead of taking the running Carracho Server offline and only then discovering missing build metadata.</p>
+<h3>Release packaging for the headless macOS daemon</h3>
+<p>The macOS Server release publisher now validates and signs the embedded carracho-serverd helper together with the application bundle. The packaged Server app therefore contains the exact helper used by the System Service installer and daemon-update comparison.</p>
+<h2>Compatibility notes</h2>
+<ul>
+<li>Classic/Legacy protocol packet layouts remain unchanged in 1.1.6.</li>
+<li>Message Center offline restoration remains scoped by server/account identity; numeric fallback history is still limited to the most recently known server-boot namespace.</li>
+<li>The Dock badge is a client preference and does not change server behavior or private-message persistence.</li>
+<li>Threaded News unread badges require the modern threaded-News query support already used by the 1.1.5 News read-state system.</li>
+<li>macOS Server and Tracker remain independently controllable launchd jobs even though they share one installed carracho-serverd executable.</li>
+<li>After updating the macOS Server app, an already installed system service should be updated from <strong>System Service → Update Now</strong> before relying on the new daemon code.</li>
+<li>Client, macOS Server and native Linux Server are all <strong>1.1.6 / build 17</strong> in this release.</li>
+</ul>
+  </main>
+</body>
+</html>

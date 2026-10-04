@@ -10,10 +10,8 @@ Carracho 1.1.5 focuses on **Message Center persistence, large Files directories,
 - Added an optional **Confirm disconnection** client setting for manual disconnects.
 - Fixed large modern directory listings by transferring them in bounded pages instead of exceeding the legacy 65,535-byte TLV value limit.
 - Added Finder-style Quick View from the Files list: pressing the Space bar on a selected previewable file opens the existing preview window.
-- Added a News sidebar badge that shows the total number of unread threaded News posts and updates as posts arrive or are read.
 - Split Client and Server version metadata into independent configuration files while retaining a separate shared GitHub release version.
 - Release changelog generation now refreshes an existing version block deterministically instead of leaving stale generated content behind.
-- Fixed the Xcode **Sync Server** source deployment so native Linux rebuilds receive the shared version loader and Server/release metadata required by the new version configuration.
 - Updated Carracho and Carracho Server version reporting to **1.1.5 / build 16**.
 
 ## Carracho Client 1.1.5
@@ -54,12 +52,6 @@ When a single previewable file is selected in the Files list, pressing the Space
 
 The shortcut follows the existing Quick View availability rules and does not override normal table behavior for folders, unsupported files, multiple selections or otherwise unavailable previews.
 
-### Unread News badge
-
-The main **News** sidebar item now shows the total number of unread threaded News posts using the same red badge presentation as the other unread counters in the client.
-
-The count comes from the existing per-server/per-account News read state, updates during background News polling, decreases as individual threads are actually read, and is restored correctly when switching back to a connected bookmark session. Merely opening the News workspace does not clear unread posts.
-
 ## Carracho Server 1.1.5
 
 ### Paged directory replies for modern clients
@@ -81,12 +73,6 @@ This keeps the 1.1.5 fallback compatible with original/older servers while prese
 Client and Server versions now have separate configuration sources. Version-Client.xcconfig controls the macOS Client, while Version-Server.xcconfig controls the macOS Server, native Linux Server and Debian packages.
 
 Release.xcconfig separately defines the shared GitHub release/tag version. Client and Server can therefore carry different product versions in future while still publishing their ZIP assets into one shared release when desired. Runtime version strings and native Linux build metadata derive from these configured versions rather than duplicated literals in Swift or C source.
-
-### Complete Linux source synchronization
-
-The Xcode **Sync Server** target now transfers the shared scripts directory together with Version-Server.xcconfig and Release.xcconfig into /opt/carracho/sources. Native source rebuilds therefore have all metadata required by ServerLinux/build.sh after the Client/Server version split.
-
-compile.sh also validates the required synced source files before stopping the running service. An incomplete source upload now fails immediately with a clear error instead of first taking the live Carracho Server offline and only then discovering the missing build metadata.
 
 ### Refreshable generated changelog blocks
 

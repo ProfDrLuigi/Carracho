@@ -18,14 +18,14 @@ The modern transport protects far more than login traffic: chat/control packets,
 
 See the collapsible **Security and modern encryption** section below for the protocol details.
 
-### Current release: 1.1.5
+### Current release: 1.1.6
 
-Carracho 1.1.5 focuses on Message Center persistence, large Files directories, faster Finder-style preview access, and cleaner independent Client/Server versioning. The macOS Client and Server are version 1.1.5 (build 16) for this release, with the native Linux Server using the same Server version metadata.
+Carracho 1.1.6 focuses on more durable messaging, clearer unread indicators, and a redesigned macOS Server service model. The macOS Client and Server are version 1.1.6 (build 17) for this release, with the native Linux Server using the same Server version metadata.
 
-- Client: **1.1.5 (build 16)**
-- Server: **1.1.5 (build 16)**
+- Client: **1.1.6 (build 17)**
+- Server: **1.1.6 (build 17)**
 
-The full release notes are available in [`README_1.1.5.md`](README_1.1.5.md).
+The full release notes are available in [`README_1.1.6.md`](README_1.1.6.md).
 
 ## At a glance
 
