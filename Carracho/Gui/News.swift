@@ -725,6 +725,7 @@ extension ViewController {
         newsThreadPreviewsByCategory = [:]
         newsThreadPreviewLoading = [:]
         updateInlineNewsReplyState()
+        updateNewsSidebarBadge()
     }
 
     func saveNewsReadState() {
@@ -748,6 +749,31 @@ extension ViewController {
         let (total, overflow) = thread.replyCount.addingReportingOverflow(1)
         return newsReadState.unreadCount(category: group, threadID: thread.threadID,
                                          totalPosts: overflow ? UInt32.max : total)
+    }
+
+    var totalNewsUnreadCount: Int {
+        guard client.isConnected, newsBadgesSupported else { return 0 }
+        return newsThreadsByCategory.reduce(0) { partial, entry in
+            let unread = newsReadState.unreadCount(category: entry.key, totals: newsThreadTotals(entry.value))
+            return min(999, partial + min(999, unread))
+        }
+    }
+
+    func updateNewsSidebarBadge() {
+        guard let button = sidebarButtons[.news] as? CarrachoSidebarButton else { return }
+        let unread = totalNewsUnreadCount
+        button.unreadBadgeCount = unread
+        if unread > 0 {
+            button.toolTip = unread == 1
+                ? LF("%@ unread News post", String(unread))
+                : LF("%@ unread News posts", String(unread))
+            button.setAccessibilityLabel(unread == 1
+                ? LF("News, %@ unread post", String(unread))
+                : LF("News, %@ unread posts", String(unread)))
+        } else {
+            button.toolTip = L("News")
+            button.setAccessibilityLabel(L("News"))
+        }
     }
 
     func reloadNewsTablesPreservingSelection(category preferredCategory: Data? = nil,
@@ -778,6 +804,7 @@ extension ViewController {
             newsArticleTable.deselectAll(nil)
         }
         isReloadingNewsTable = false
+        updateNewsSidebarBadge()
     }
 
     func updateNewsThreadSnapshot(group: Data, threads: [LegacyNewsThreadSummary]) {

@@ -10,6 +10,7 @@ Carracho 1.1.5 focuses on **Message Center persistence, large Files directories,
 - Added an optional **Confirm disconnection** client setting for manual disconnects.
 - Fixed large modern directory listings by transferring them in bounded pages instead of exceeding the legacy 65,535-byte TLV value limit.
 - Added Finder-style Quick View from the Files list: pressing the Space bar on a selected previewable file opens the existing preview window.
+- Added a News sidebar badge that shows the total number of unread threaded News posts and updates as posts arrive or are read.
 - Split Client and Server version metadata into independent configuration files while retaining a separate shared GitHub release version.
 - Release changelog generation now refreshes an existing version block deterministically instead of leaving stale generated content behind.
 - Fixed the Xcode **Sync Server** source deployment so native Linux rebuilds receive the shared version loader and Server/release metadata required by the new version configuration.
@@ -52,6 +53,12 @@ The paging is transparent to the Files UI and preserves entry order, Finder labe
 When a single previewable file is selected in the Files list, pressing the Space bar now opens the same Quick View window as the toolbar button and context-menu command.
 
 The shortcut follows the existing Quick View availability rules and does not override normal table behavior for folders, unsupported files, multiple selections or otherwise unavailable previews.
+
+### Unread News badge
+
+The main **News** sidebar item now shows the total number of unread threaded News posts using the same red badge presentation as the other unread counters in the client.
+
+The count comes from the existing per-server/per-account News read state, updates during background News polling, decreases as individual threads are actually read, and is restored correctly when switching back to a connected bookmark session. Merely opening the News workspace does not clear unread posts.
 
 ## Carracho Server 1.1.5
 

@@ -4106,6 +4106,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         newsReadScope = nil
         newsThreadsByCategory = [:]
         newsBadgesSupported = true
+        updateNewsSidebarBadge()
         activeChannel = nil
         channelMembers = [:]
         joinedChannels = [:]
@@ -4238,6 +4239,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         newsReadScope = snapshot.newsReadScope
         newsThreadsByCategory = snapshot.newsThreadsByCategory
         newsBadgesSupported = snapshot.newsBadgesSupported
+        updateNewsSidebarBadge()
         activeChannel = snapshot.activeChannel
         channelMembers = snapshot.channelMembers
         joinedChannels = snapshot.joinedChannels
@@ -6256,6 +6258,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         newsReadScope = nil
         newsReadState = NewsReadState()
         newsBadgesSupported = true
+        updateNewsSidebarBadge()
         isAwaitingAgreementAcceptance = false
         deferredInteractiveEvents.removeAll()
         stopNewsBadgePolling()

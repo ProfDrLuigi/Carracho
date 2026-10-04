@@ -2145,3 +2145,8 @@
 "Update Now" = "Jetzt updaten";
 "System Service Update Required" = "Systemdienst muss aktualisiert werden";
 "Carracho Server was updated to version %@ (build %@). The installed system service must now be updated as well so the app and daemon use the same build. This reminder will appear each time the app starts until the daemon update is installed." = "Carracho Server wurde auf Version %@ (Build %@) aktualisiert. Der installierte Systemdienst muss jetzt ebenfalls aktualisiert werden, damit App und Daemon auf demselben Stand sind. Diese Meldung erscheint bei jedem App-Start, bis das Daemon-Update installiert wurde.";
+
+"%@ unread News post" = "%@ ungelesener News-Beitrag";
+"%@ unread News posts" = "%@ ungelesene News-Beiträge";
+"News, %@ unread post" = "News, %@ ungelesener Beitrag";
+"News, %@ unread posts" = "News, %@ ungelesene Beiträge";

@@ -2145,3 +2145,8 @@
 "Update Now" = "Update Now";
 "System Service Update Required" = "System Service Update Required";
 "Carracho Server was updated to version %@ (build %@). The installed system service must now be updated as well so the app and daemon use the same build. This reminder will appear each time the app starts until the daemon update is installed." = "Carracho Server was updated to version %@ (build %@). The installed system service must now be updated as well so the app and daemon use the same build. This reminder will appear each time the app starts until the daemon update is installed.";
+
+"%@ unread News post" = "%@ unread News post";
+"%@ unread News posts" = "%@ unread News posts";
+"News, %@ unread post" = "News, %@ unread post";
+"News, %@ unread posts" = "News, %@ unread posts";
