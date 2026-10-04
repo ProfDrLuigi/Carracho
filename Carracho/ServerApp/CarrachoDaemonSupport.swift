@@ -41,6 +41,33 @@ final class CarrachoLaunchDaemonManager {
     static let legacyInstalledAppURL = daemonDirectoryURL.appendingPathComponent("Carracho Server.app", isDirectory: true)
     static let launchDaemonsURL = URL(fileURLWithPath: "/Library/LaunchDaemons", isDirectory: true)
 
+    /// Returns true when at least one system service is installed but its shared daemon binary
+    /// does not exactly match the helper embedded in the currently running Server app.
+    /// The comparison is intentionally byte-for-byte: a rebuilt hotfix with the same marketing
+    /// version still requires the installed daemon to be refreshed.
+    func installedDaemonNeedsUpdate() -> Bool {
+        guard isInstalled(.server) || isInstalled(.tracker) else { return false }
+
+        let bundled = bundledDaemonURL()
+        let manager = FileManager.default
+        guard manager.isExecutableFile(atPath: bundled.path),
+              manager.isExecutableFile(atPath: Self.binaryURL.path) else {
+            return true
+        }
+
+        do {
+            return try !filesMatch(bundled, Self.binaryURL)
+        } catch {
+            // If the installed helper cannot be read reliably, treating it as stale is safer
+            // than silently claiming it matches the app.
+            return true
+        }
+    }
+
+    func serviceIsInstalled(_ kind: CarrachoDaemonKind) -> Bool {
+        isInstalled(kind)
+    }
+
     func status(for kind: CarrachoDaemonKind, rootURL: URL) -> CarrachoLaunchDaemonStatus {
         let installed = isInstalled(kind)
         let snapshot = readSnapshot(for: kind, rootURL: rootURL)
@@ -90,10 +117,7 @@ final class CarrachoLaunchDaemonManager {
                  startsAtBoot: Bool = true,
                  startNow: Bool = true) throws {
         let sourceAppURL = Bundle.main.bundleURL.standardizedFileURL
-        let sourceExecutable = sourceAppURL.appendingPathComponent(
-            "Contents/Helpers/carracho-serverd",
-            isDirectory: false
-        )
+        let sourceExecutable = bundledDaemonURL()
         guard sourceAppURL.pathExtension == "app",
               FileManager.default.isExecutableFile(atPath: sourceExecutable.path) else {
             throw CarrachoLaunchDaemonError.noExecutable
@@ -282,6 +306,35 @@ final class CarrachoLaunchDaemonManager {
         try body.write(to: script, atomically: true, encoding: .utf8)
         try manager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
         try runPrivileged(scriptURL: script)
+    }
+
+    private func bundledDaemonURL() -> URL {
+        Bundle.main.bundleURL.standardizedFileURL.appendingPathComponent(
+            "Contents/Helpers/carracho-serverd",
+            isDirectory: false
+        )
+    }
+
+    private func filesMatch(_ lhs: URL, _ rhs: URL) throws -> Bool {
+        let manager = FileManager.default
+        let leftSize = (try manager.attributesOfItem(atPath: lhs.path)[.size] as? NSNumber)?.uint64Value
+        let rightSize = (try manager.attributesOfItem(atPath: rhs.path)[.size] as? NSNumber)?.uint64Value
+        guard leftSize == rightSize else { return false }
+
+        let left = try FileHandle(forReadingFrom: lhs)
+        let right = try FileHandle(forReadingFrom: rhs)
+        defer {
+            try? left.close()
+            try? right.close()
+        }
+
+        let chunkSize = 256 * 1024
+        while true {
+            let leftChunk = left.readData(ofLength: chunkSize)
+            let rightChunk = right.readData(ofLength: chunkSize)
+            guard leftChunk == rightChunk else { return false }
+            if leftChunk.isEmpty { return true }
+        }
     }
 
     private func isInstalled(_ kind: CarrachoDaemonKind) -> Bool {

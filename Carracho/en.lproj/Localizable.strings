@@ -2141,3 +2141,7 @@
 "Tracker system service will not start automatically with macOS." = "Tracker system service will not start automatically with macOS.";
 "Tracker Automatic Startup Could Not Be Changed" = "Tracker Automatic Startup Could Not Be Changed";
 "ERROR: Tracker automatic startup change failed: %@" = "ERROR: Tracker automatic startup change failed: %@";
+
+"Update Now" = "Update Now";
+"System Service Update Required" = "System Service Update Required";
+"Carracho Server was updated to version %@ (build %@). The installed system service must now be updated as well so the app and daemon use the same build. This reminder will appear each time the app starts until the daemon update is installed." = "Carracho Server was updated to version %@ (build %@). The installed system service must now be updated as well so the app and daemon use the same build. This reminder will appear each time the app starts until the daemon update is installed.";

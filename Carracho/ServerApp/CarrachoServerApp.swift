@@ -266,6 +266,9 @@ final class CarrachoServerAppDelegate: NSObject, NSApplicationDelegate, NSMenuDe
                                      hideDockIcon: CarrachoServerPresentationPreferences.hideDockIcon)
         controller.showWindow(nil)
         NSApplication.shared.activate(ignoringOtherApps: true)
+        DispatchQueue.main.async { [weak controller] in
+            controller?.presentDaemonUpdateNoticeIfNeeded()
+        }
     }
 
     private func installMainMenu() {
@@ -773,6 +776,8 @@ final class CarrachoServerWindowController: NSWindowController, NSTextFieldDeleg
     private let daemonManager = CarrachoLaunchDaemonManager()
     private var cachedServerDaemonStatus = CarrachoLaunchDaemonStatus(installed: false, loaded: false, running: false, snapshot: nil)
     private var cachedTrackerDaemonStatus = CarrachoLaunchDaemonStatus(installed: false, loaded: false, running: false, snapshot: nil)
+    private var daemonBinaryNeedsUpdate = false
+    private var daemonUpdateNoticePresented = false
     private var service: CarrachoServerService?
     private var statusTimer: Timer?
     private var daemonLogSignatures: [CarrachoDaemonKind: String] = [:]
@@ -1737,6 +1742,9 @@ final class CarrachoServerWindowController: NSWindowController, NSTextFieldDeleg
 
     private func refreshRuntimeStatus(checkLaunchd: Bool = true) {
         guard let service else { return }
+        if checkLaunchd {
+            daemonBinaryNeedsUpdate = daemonManager.installedDaemonNeedsUpdate()
+        }
         let serverDaemon = checkLaunchd ? daemonStatus(.server) : heartbeatDaemonStatus(.server)
         if serverDaemon.installed { updateServerDaemonStatus(serverDaemon) }
         else { updateStatus(service.status) }
@@ -1752,7 +1760,7 @@ final class CarrachoServerWindowController: NSWindowController, NSTextFieldDeleg
         let trackerDaemon = cachedTrackerDaemonStatus
 
         serverDaemonStatusLabel.stringValue = daemonStatusText(serverDaemon)
-        serverDaemonInstallButton.title = serverDaemon.installed ? L("Reinstall…") : L("Install…")
+        serverDaemonInstallButton.title = daemonInstallButtonTitle(for: serverDaemon)
         serverDaemonInstallButton.isEnabled = serverOperationState == .idle
         serverDaemonUninstallButton.title = L("Uninstall…")
         serverDaemonUninstallButton.isEnabled = serverDaemon.installed && serverOperationState == .idle
@@ -1764,7 +1772,7 @@ final class CarrachoServerWindowController: NSWindowController, NSTextFieldDeleg
         serverDaemonAutoStartButton.isEnabled = serverOperationState == .idle
 
         trackerDaemonStatusLabel.stringValue = daemonStatusText(trackerDaemon)
-        trackerDaemonInstallButton.title = trackerDaemon.installed ? L("Reinstall…") : L("Install…")
+        trackerDaemonInstallButton.title = daemonInstallButtonTitle(for: trackerDaemon)
         trackerDaemonInstallButton.isEnabled = !trackerOperationInProgress
         trackerDaemonUninstallButton.title = L("Uninstall…")
         trackerDaemonUninstallButton.isEnabled = trackerDaemon.installed && !trackerOperationInProgress
@@ -1776,6 +1784,51 @@ final class CarrachoServerWindowController: NSWindowController, NSTextFieldDeleg
         }
         trackerDaemonAutoStartButton.isEnabled = !trackerOperationInProgress
         updateApplyButtonStates()
+    }
+
+    private func daemonInstallButtonTitle(for status: CarrachoLaunchDaemonStatus) -> String {
+        guard status.installed else { return L("Install…") }
+        return daemonBinaryNeedsUpdate ? L("Update Now") : L("Reinstall…")
+    }
+
+    fileprivate func presentDaemonUpdateNoticeIfNeeded() {
+        guard smokeDumpPath == nil, !daemonUpdateNoticePresented else { return }
+
+        daemonBinaryNeedsUpdate = daemonManager.installedDaemonNeedsUpdate()
+        refreshDaemonControls()
+        guard daemonBinaryNeedsUpdate else { return }
+
+        let serverInstalled = daemonManager.serviceIsInstalled(.server)
+        let trackerInstalled = daemonManager.serviceIsInstalled(.tracker)
+        guard serverInstalled || trackerInstalled else { return }
+
+        daemonUpdateNoticePresented = true
+
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = L("System Service Update Required")
+        alert.informativeText = LF(
+            "Carracho Server was updated to version %@ (build %@). The installed system service must now be updated as well so the app and daemon use the same build. This reminder will appear each time the app starts until the daemon update is installed.",
+            CarrachoBuildInfo.version,
+            CarrachoBuildInfo.build
+        )
+        alert.addButton(withTitle: L("Update Now"))
+        alert.addButton(withTitle: L("Later"))
+
+        let handleResponse: (NSApplication.ModalResponse) -> Void = { [weak self] response in
+            guard response == .alertFirstButtonReturn, let self else { return }
+            if serverInstalled {
+                self.installServerDaemon(nil)
+            } else if trackerInstalled {
+                self.installTrackerDaemon(nil)
+            }
+        }
+
+        if let window, window.isVisible {
+            alert.beginSheetModal(for: window, completionHandler: handleResponse)
+        } else {
+            handleResponse(alert.runModal())
+        }
     }
 
     private func daemonStatusText(_ status: CarrachoLaunchDaemonStatus) -> String {
