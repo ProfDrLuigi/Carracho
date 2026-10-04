@@ -67,9 +67,6 @@ private struct CarrachoServerMenuBarSnapshot {
 enum CarrachoServerApplication {
     static func main() {
         CarrachoServerPresentationPreferences.registerDefaults()
-        if let daemonKind = CarrachoDaemonEntryPoint.requestedKind() {
-            exit(CarrachoDaemonEntryPoint.run(kind: daemonKind))
-        }
         let application = NSApplication.shared
         let delegate = CarrachoServerAppDelegate()
         application.setActivationPolicy(.regular)
@@ -777,9 +774,17 @@ final class CarrachoServerWindowController: NSWindowController, NSTextFieldDeleg
     private let serverDaemonStatusLabel = NSTextField(labelWithString: L("Not installed"))
     private let serverDaemonInstallButton = NSButton(title: L("Install"), target: nil, action: nil)
     private let serverDaemonUninstallButton = NSButton(title: L("Uninstall"), target: nil, action: nil)
+    private let serverDaemonStartStopButton = NSButton(title: L("Start Service"), target: nil, action: nil)
+    private let serverDaemonAutoStartButton = NSButton(
+        checkboxWithTitle: L("Start automatically with macOS"), target: nil, action: nil
+    )
     private let trackerDaemonStatusLabel = NSTextField(labelWithString: L("Not installed"))
     private let trackerDaemonInstallButton = NSButton(title: L("Install"), target: nil, action: nil)
     private let trackerDaemonUninstallButton = NSButton(title: L("Uninstall"), target: nil, action: nil)
+    private let trackerDaemonStartStopButton = NSButton(title: L("Start Service"), target: nil, action: nil)
+    private let trackerDaemonAutoStartButton = NSButton(
+        checkboxWithTitle: L("Start automatically with macOS"), target: nil, action: nil
+    )
     private let serverLog = ServerLogPanel(title: L("Server Log"))
     private let trackerLog = ServerLogPanel(title: L("Tracker Log"))
     private let serviceTabs = NSSegmentedControl(labels: [L("Server"), L("Tracker"), L("Bot")], trackingMode: .selectOne, target: nil, action: nil)
@@ -991,12 +996,23 @@ final class CarrachoServerWindowController: NSWindowController, NSTextFieldDeleg
 
         serverDaemonInstallButton.target = self
         serverDaemonInstallButton.action = #selector(installServerDaemon(_:))
+        serverDaemonUninstallButton.target = self
+        serverDaemonUninstallButton.action = #selector(uninstallServerDaemon(_:))
+        serverDaemonStartStopButton.target = self
+        serverDaemonStartStopButton.action = #selector(toggleServer(_:))
+        serverDaemonAutoStartButton.target = self
+        serverDaemonAutoStartButton.action = #selector(serverDaemonAutoStartChanged(_:))
+        serverDaemonAutoStartButton.state = .on
+
         trackerDaemonInstallButton.target = self
         trackerDaemonInstallButton.action = #selector(installTrackerDaemon(_:))
-        serverDaemonUninstallButton.target = self
-        serverDaemonUninstallButton.action = #selector(showServerDaemonMenu(_:))
         trackerDaemonUninstallButton.target = self
-        trackerDaemonUninstallButton.action = #selector(showTrackerDaemonMenu(_:))
+        trackerDaemonUninstallButton.action = #selector(uninstallTrackerDaemon(_:))
+        trackerDaemonStartStopButton.target = self
+        trackerDaemonStartStopButton.action = #selector(toggleTracker(_:))
+        trackerDaemonAutoStartButton.target = self
+        trackerDaemonAutoStartButton.action = #selector(trackerDaemonAutoStartChanged(_:))
+        trackerDaemonAutoStartButton.state = .on
 
         menuBarIconButton.target = self
         menuBarIconButton.action = #selector(menuBarIconPreferenceChanged(_:))
@@ -1135,31 +1151,44 @@ final class CarrachoServerWindowController: NSWindowController, NSTextFieldDeleg
         return card(body)
     }
 
-    private func daemonMenuButton(_ button: NSButton, help: String) {
-        button.title = ""
-        button.bezelStyle = .texturedRounded
-        if #available(macOS 11.0, *) { button.image = NSImage(systemSymbolName: "ellipsis", accessibilityDescription: help) }
-        button.toolTip = help
-        button.setAccessibilityLabel(help)
-        button.controlSize = .small
-        button.translatesAutoresizingMaskIntoConstraints = false
-        button.widthAnchor.constraint(equalToConstant: 34).isActive = true
-    }
-
     private func makeDaemonCard(kind: CarrachoDaemonKind) -> NSView {
         let status = kind == .server ? serverDaemonStatusLabel : trackerDaemonStatusLabel
         let install = kind == .server ? serverDaemonInstallButton : trackerDaemonInstallButton
-        let menu = kind == .server ? serverDaemonUninstallButton : trackerDaemonUninstallButton
-        status.font = .systemFont(ofSize: 11.5)
+        let uninstall = kind == .server ? serverDaemonUninstallButton : trackerDaemonUninstallButton
+        let startStop = kind == .server ? serverDaemonStartStopButton : trackerDaemonStartStopButton
+        let autoStart = kind == .server ? serverDaemonAutoStartButton : trackerDaemonAutoStartButton
+
+        status.font = .systemFont(ofSize: 11.5, weight: .medium)
         status.textColor = .secondaryLabelColor
         status.lineBreakMode = .byTruncatingTail
         status.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        install.controlSize = .small
-        daemonMenuButton(menu, help: kind == .server ? L("Server service actions") : L("Tracker service actions"))
-        let note = NSTextField(wrappingLabelWithString: L("Installed services run independently of this window and are configured to start with macOS. Installation and removal require administrator approval."))
+
+        for button in [install, uninstall, startStop] {
+            button.controlSize = .small
+            button.bezelStyle = .rounded
+        }
+        startStop.translatesAutoresizingMaskIntoConstraints = false
+        startStop.widthAnchor.constraint(greaterThanOrEqualToConstant: 105).isActive = true
+        autoStart.controlSize = .small
+
+        let controls = stack([
+            install,
+            uninstall,
+            startStop,
+            NSView(),
+            autoStart,
+        ])
+        let note = NSTextField(wrappingLabelWithString: L(
+            "Installed services run independently of this window. Automatic startup can be enabled or disabled separately. Installation and removal require administrator approval."
+        ))
         note.font = .systemFont(ofSize: 11)
         note.textColor = .secondaryLabelColor
-        return card(stack([stack([status, NSView(), install, menu]), note], vertical: true))
+
+        return card(stack([
+            stack([status, NSView()]),
+            controls,
+            note,
+        ], vertical: true, spacing: 8))
     }
 
     private func makeNavigation() -> NSView {
@@ -1535,7 +1564,7 @@ final class CarrachoServerWindowController: NSWindowController, NSTextFieldDeleg
         serverPortApplyButton.isEnabled = validServer && serverChanged && !trackerConflict && serverOperationState == .idle
 
         let trackerDaemon = cachedTrackerDaemonStatus
-        let trackerActive = service.trackerStatus.isRunning || (trackerDaemon.loaded && service.trackerConfiguration.enabled)
+        let trackerActive = trackerDaemon.installed ? trackerDaemon.loaded : service.trackerStatus.isRunning
         let validTracker = trackerPort.map { $0 > 0 && !portsConflict(serverPort: service.serverState.advanced.controlPort, trackerPort: $0) } == true
         trackerPortButton.isEnabled = validTracker && trackerPort != service.trackerConfiguration.port && !trackerActive && !trackerOperationInProgress
         trackerStartStopButton.isEnabled = !trackerOperationInProgress
@@ -1593,56 +1622,6 @@ final class CarrachoServerWindowController: NSWindowController, NSTextFieldDeleg
         fileRootsHelpLabel.isHidden.toggle()
         if #available(macOS 11.0, *) {
             fileRootsHelpButton.image = NSImage(systemSymbolName: fileRootsHelpLabel.isHidden ? "chevron.right" : "chevron.down", accessibilityDescription: L("Folder details"))
-        }
-    }
-
-    @objc private func showServerDaemonMenu(_ sender: NSButton) {
-        let menu = NSMenu(title: L("Server Service"))
-        let status = daemonStatus(.server)
-        if status.installed {
-            let restart = NSMenuItem(title: status.loaded ? L("Restart Service") : L("Start Service"), action: #selector(restartServerDaemonFromMenu(_:)), keyEquivalent: "")
-            restart.target = self
-            menu.addItem(restart)
-            let remove = NSMenuItem(title: L("Uninstall Service…"), action: #selector(uninstallServerDaemon(_:)), keyEquivalent: "")
-            remove.target = self
-            menu.addItem(remove)
-        }
-        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.maxY + 2), in: sender)
-    }
-
-    @objc private func restartServerDaemonFromMenu(_ sender: Any?) {
-        do {
-            try daemonManager.setRunning(true, kind: .server)
-            appendLog(L("Server system service restarted."))
-            refreshRuntimeStatus(); refreshDaemonControls()
-        } catch {
-            presentError(title: L("Server Service Could Not Be Restarted"), error: error)
-        }
-    }
-
-    @objc private func showTrackerDaemonMenu(_ sender: NSButton) {
-        let menu = NSMenu(title: L("Tracker Service"))
-        let status = daemonStatus(.tracker)
-        if status.installed {
-            let restart = NSMenuItem(title: status.loaded ? L("Restart Service") : L("Start Service"), action: #selector(restartTrackerDaemonFromMenu(_:)), keyEquivalent: "")
-            restart.target = self
-            restart.isEnabled = service?.trackerConfiguration.enabled == true
-            menu.addItem(restart)
-            let remove = NSMenuItem(title: L("Uninstall Service…"), action: #selector(uninstallTrackerDaemon(_:)), keyEquivalent: "")
-            remove.target = self
-            menu.addItem(remove)
-        }
-        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.maxY + 2), in: sender)
-    }
-
-    @objc private func restartTrackerDaemonFromMenu(_ sender: Any?) {
-        guard service?.trackerConfiguration.enabled == true else { return }
-        do {
-            try daemonManager.setRunning(true, kind: .tracker)
-            appendTrackerLog(L("Tracker system service restarted."))
-            refreshRuntimeStatus(); refreshDaemonControls()
-        } catch {
-            presentError(title: L("Tracker Service Could Not Be Restarted"), error: error)
         }
     }
 
@@ -1783,13 +1762,11 @@ final class CarrachoServerWindowController: NSWindowController, NSTextFieldDeleg
         let serverDaemon = cachedServerDaemonStatus
         let trackerDaemon = cachedTrackerDaemonStatus
         let serverRunning = serverDaemon.installed ? serverDaemon.loaded : service.status.isRunning
-        let trackerRunning = trackerDaemon.running || service.trackerStatus.isRunning ||
-            (trackerDaemon.loaded && service.trackerConfiguration.enabled)
+        let trackerRunning = trackerDaemon.installed ? trackerDaemon.loaded : service.trackerStatus.isRunning
         let trackerStatus: String
         if trackerDaemon.installed {
             if trackerDaemon.running { trackerStatus = L("Running as system service") }
-            else if trackerDaemon.loaded && service.trackerConfiguration.enabled { trackerStatus = L("Starting as system service") }
-            else if service.trackerConfiguration.enabled { trackerStatus = L("Configured to run · system service stopped") }
+            else if trackerDaemon.loaded { trackerStatus = L("Starting as system service") }
             else { trackerStatus = L("Stopped · system service installed") }
         } else if service.trackerStatus.isRunning {
             trackerStatus = L("Running in this app")
@@ -1832,23 +1809,34 @@ final class CarrachoServerWindowController: NSWindowController, NSTextFieldDeleg
     }
 
     private func refreshDaemonControls() {
-        guard let service else { return }
+        guard service != nil else { return }
         let serverDaemon = cachedServerDaemonStatus
         let trackerDaemon = cachedTrackerDaemonStatus
 
         serverDaemonStatusLabel.stringValue = daemonStatusText(serverDaemon)
         serverDaemonInstallButton.title = serverDaemon.installed ? L("Reinstall…") : L("Install…")
         serverDaemonInstallButton.isEnabled = serverOperationState == .idle
+        serverDaemonUninstallButton.title = L("Uninstall…")
         serverDaemonUninstallButton.isEnabled = serverDaemon.installed && serverOperationState == .idle
-
-        if trackerDaemon.installed && !service.trackerConfiguration.enabled && trackerDaemon.loaded {
-            trackerDaemonStatusLabel.stringValue = L("Installed · idle (tracker stopped)")
-        } else {
-            trackerDaemonStatusLabel.stringValue = daemonStatusText(trackerDaemon)
+        serverDaemonStartStopButton.title = serverDaemon.loaded ? L("Stop Service") : L("Start Service")
+        serverDaemonStartStopButton.isEnabled = serverDaemon.installed && serverOperationState == .idle
+        if serverDaemon.installed {
+            serverDaemonAutoStartButton.state = serverDaemon.startsAtBoot ? .on : .off
         }
+        serverDaemonAutoStartButton.isEnabled = serverOperationState == .idle
+
+        trackerDaemonStatusLabel.stringValue = daemonStatusText(trackerDaemon)
         trackerDaemonInstallButton.title = trackerDaemon.installed ? L("Reinstall…") : L("Install…")
         trackerDaemonInstallButton.isEnabled = !trackerOperationInProgress
+        trackerDaemonUninstallButton.title = L("Uninstall…")
         trackerDaemonUninstallButton.isEnabled = trackerDaemon.installed && !trackerOperationInProgress
+        let trackerRunning = trackerDaemon.loaded
+        trackerDaemonStartStopButton.title = trackerRunning ? L("Stop Service") : L("Start Service")
+        trackerDaemonStartStopButton.isEnabled = trackerDaemon.installed && !trackerOperationInProgress
+        if trackerDaemon.installed {
+            trackerDaemonAutoStartButton.state = trackerDaemon.startsAtBoot ? .on : .off
+        }
+        trackerDaemonAutoStartButton.isEnabled = !trackerOperationInProgress
         updateApplyButtonStates()
     }
 
@@ -1908,31 +1896,23 @@ final class CarrachoServerWindowController: NSWindowController, NSTextFieldDeleg
     }
 
     private func updateTrackerDaemonStatus(_ daemon: CarrachoLaunchDaemonStatus) {
-        guard let service else { return }
-        let configuredToRun = service.trackerConfiguration.enabled
         if daemon.running, let snapshot = daemon.snapshot {
             trackerStatusDot.layer?.backgroundColor = NSColor.systemGreen.cgColor
             trackerStatusLabel.stringValue = LF("Running as system service · TCP %@", snapshot.port.map(String.init) ?? "?")
             trackerServersValue.stringValue = String(snapshot.registeredServers)
             setServerPrimaryButtonTitle(trackerStartStopButton, L("Stop Tracker"))
-        } else if daemon.loaded && configuredToRun {
+        } else if daemon.loaded {
             trackerStatusDot.layer?.backgroundColor = NSColor.systemOrange.cgColor
             trackerStatusLabel.stringValue = L("Starting · system service loaded")
             trackerServersValue.stringValue = "—"
             setServerPrimaryButtonTitle(trackerStartStopButton, L("Stop Tracker"))
-        } else if configuredToRun {
-            trackerStatusDot.layer?.backgroundColor = NSColor.systemRed.cgColor
-            trackerStatusLabel.stringValue = L("Configured to run, but system service is stopped")
-            trackerServersValue.stringValue = "0"
-            setServerPrimaryButtonTitle(trackerStartStopButton, L("Start Tracker"))
         } else {
             trackerStatusDot.layer?.backgroundColor = NSColor.systemGray.cgColor
             trackerStatusLabel.stringValue = daemon.installed ? L("Stopped · system service installed") : L("Stopped")
             trackerServersValue.stringValue = "0"
             setServerPrimaryButtonTitle(trackerStartStopButton, L("Start Tracker"))
         }
-        let active = daemon.loaded && configuredToRun
-        trackerPortField.isEnabled = !active && !trackerOperationInProgress
+        trackerPortField.isEnabled = !daemon.loaded && !trackerOperationInProgress
         trackerStartStopButton.isEnabled = !trackerOperationInProgress
         updateApplyButtonStates()
     }
@@ -2367,8 +2347,7 @@ final class CarrachoServerWindowController: NSWindowController, NSTextFieldDeleg
     @objc private func toggleTracker(_ sender: Any?) {
         guard let service, !trackerOperationInProgress else { return }
         let daemon = daemonStatus(.tracker)
-        let currentlyRunning = daemon.running || service.trackerStatus.isRunning ||
-            (daemon.loaded && service.trackerConfiguration.enabled)
+        let currentlyRunning = daemon.installed ? daemon.loaded : service.trackerStatus.isRunning
         let shouldRun = !currentlyRunning
 
         if shouldRun && portsConflict(serverPort: service.serverState.advanced.controlPort,
@@ -2389,25 +2368,11 @@ final class CarrachoServerWindowController: NSWindowController, NSTextFieldDeleg
         }
 
         if daemon.installed {
-            let previousEnabled = service.trackerConfiguration.enabled
             do {
+                try daemonManager.setRunning(shouldRun, kind: .tracker)
                 if shouldRun {
-                    try service.setTrackerEnabled(true, manageRuntime: false)
-                    do {
-                        try daemonManager.setRunning(true, kind: .tracker)
-                    } catch {
-                        if !previousEnabled { try? service.setTrackerEnabled(false, manageRuntime: false) }
-                        throw error
-                    }
                     appendTrackerLog(LF("Tracker system service started on TCP %@.", String(service.trackerConfiguration.port)))
                 } else {
-                    try daemonManager.setRunning(false, kind: .tracker)
-                    do {
-                        try service.setTrackerEnabled(false, manageRuntime: false)
-                    } catch {
-                        if previousEnabled { try? daemonManager.setRunning(true, kind: .tracker) }
-                        throw error
-                    }
                     appendTrackerLog(L("Tracker system service stopped."))
                 }
             } catch {
@@ -2445,7 +2410,7 @@ final class CarrachoServerWindowController: NSWindowController, NSTextFieldDeleg
             return
         }
         let daemon = daemonStatus(.tracker)
-        let trackerActive = service.trackerStatus.isRunning || (daemon.loaded && service.trackerConfiguration.enabled)
+        let trackerActive = daemon.installed ? daemon.loaded : service.trackerStatus.isRunning
         guard !trackerActive else {
             presentMessage(title: L("Stop the Tracker First"), message: L("The tracker TCP port can be changed only while the effective tracker process is stopped."), style: .warning)
             return
@@ -2474,10 +2439,22 @@ final class CarrachoServerWindowController: NSWindowController, NSTextFieldDeleg
 
     @objc private func installServerDaemon(_ sender: Any?) {
         guard let root = serverStateRootURL, let service else { return }
+        let existing = daemonStatus(.server)
+        let startsAtBoot = existing.installed
+            ? existing.startsAtBoot
+            : serverDaemonAutoStartButton.state == .on
+        let startNow = existing.installed ? existing.loaded : true
         do {
             if service.status.isRunning { service.stop() }
-            try daemonManager.install(.server, rootURL: root)
-            appendLog(L("System server daemon installed and started."))
+            try daemonManager.install(
+                .server,
+                rootURL: root,
+                startsAtBoot: startsAtBoot,
+                startNow: startNow
+            )
+            appendLog(startNow
+                ? L("System server daemon installed and started.")
+                : L("System server daemon installed; server remains stopped."))
             refreshRuntimeStatus()
             refreshDaemonControls()
         } catch {
@@ -2485,6 +2462,25 @@ final class CarrachoServerWindowController: NSWindowController, NSTextFieldDeleg
             appendLog(LF("ERROR: Server daemon install failed: %@", error.localizedDescription))
             refreshDaemonControls()
         }
+    }
+
+    @objc private func serverDaemonAutoStartChanged(_ sender: NSButton) {
+        guard cachedServerDaemonStatus.installed else { return }
+        let desired = sender.state == .on
+        let previous = cachedServerDaemonStatus.startsAtBoot
+        sender.isEnabled = false
+        do {
+            try daemonManager.setStartsAtBoot(desired, kind: .server)
+            appendLog(desired
+                ? L("Server system service will start automatically with macOS.")
+                : L("Server system service will not start automatically with macOS."))
+        } catch {
+            sender.state = previous ? .on : .off
+            presentError(title: L("Server Automatic Startup Could Not Be Changed"), error: error)
+            appendLog(LF("ERROR: Server automatic startup change failed: %@", error.localizedDescription))
+        }
+        refreshRuntimeStatus()
+        refreshDaemonControls()
     }
 
     @objc private func uninstallServerDaemon(_ sender: Any?) {
@@ -2503,10 +2499,20 @@ final class CarrachoServerWindowController: NSWindowController, NSTextFieldDeleg
 
     @objc private func installTrackerDaemon(_ sender: Any?) {
         guard let root = serverStateRootURL, let service else { return }
+        let existing = daemonStatus(.tracker)
+        let startsAtBoot = existing.installed
+            ? existing.startsAtBoot
+            : trackerDaemonAutoStartButton.state == .on
+        let startNow = existing.installed ? existing.loaded : true
         do {
             service.trackerRuntime.stop()
-            try daemonManager.install(.tracker, rootURL: root)
-            appendTrackerLog(service.trackerConfiguration.enabled
+            try daemonManager.install(
+                .tracker,
+                rootURL: root,
+                startsAtBoot: startsAtBoot,
+                startNow: startNow
+            )
+            appendTrackerLog(startNow
                 ? L("System tracker daemon installed; tracker is running as a service.")
                 : L("System tracker daemon installed; tracker remains stopped."))
             refreshRuntimeStatus()
@@ -2516,6 +2522,25 @@ final class CarrachoServerWindowController: NSWindowController, NSTextFieldDeleg
             appendTrackerLog(LF("ERROR: Tracker daemon install failed: %@", error.localizedDescription))
             refreshDaemonControls()
         }
+    }
+
+    @objc private func trackerDaemonAutoStartChanged(_ sender: NSButton) {
+        guard cachedTrackerDaemonStatus.installed else { return }
+        let desired = sender.state == .on
+        let previous = cachedTrackerDaemonStatus.startsAtBoot
+        sender.isEnabled = false
+        do {
+            try daemonManager.setStartsAtBoot(desired, kind: .tracker)
+            appendTrackerLog(desired
+                ? L("Tracker system service will start automatically with macOS.")
+                : L("Tracker system service will not start automatically with macOS."))
+        } catch {
+            sender.state = previous ? .on : .off
+            presentError(title: L("Tracker Automatic Startup Could Not Be Changed"), error: error)
+            appendTrackerLog(LF("ERROR: Tracker automatic startup change failed: %@", error.localizedDescription))
+        }
+        refreshRuntimeStatus()
+        refreshDaemonControls()
     }
 
     @objc private func uninstallTrackerDaemon(_ sender: Any?) {

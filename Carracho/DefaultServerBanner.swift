@@ -1,15 +1,119 @@
-import AppKit
 import Foundation
 
-/// Produces the built-in Carracho logo as PNG data for a newly-created server.
-/// This is deliberately an app/bootstrap concern rather than a ServerState default:
-/// once an administrator removes or replaces the banner, reopening that server must
-/// never silently put the bundled logo back.
+/// Built-in Classic-compatible server banner.
+///
+/// These are the exact PNG bytes produced by the historical Carracho Server 1.1.5 asset path
+/// (NSImage -> TIFF -> PNG). Keeping them in code lets the GUI server and standalone daemon share
+/// identical wire behavior without installing an asset catalog beside carracho-serverd.
 enum CarrachoDefaultServerBanner {
+    private static let encodedPNG = """
+            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
+        """
+
     static func pngData() -> Data? {
-        guard let image = NSImage(named: "ClassicServerBanner"),
-              let tiff = image.tiffRepresentation,
-              let bitmap = NSBitmapImageRep(data: tiff) else { return nil }
-        return bitmap.representation(using: .png, properties: [:])
+        Data(base64Encoded: encodedPNG, options: .ignoreUnknownCharacters)
     }
 }

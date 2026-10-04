@@ -2127,3 +2127,17 @@
 "Move %@ selected items to the server Trash?" = "%@ ausgewählte Elemente in den Server-Papierkorb verschieben?";
 "%@ of %@ selected items could not be deleted." = "%@ von %@ ausgewählten Elementen konnten nicht gelöscht werden.";
 "Delete failed for %@: %@" = "Löschen von %@ fehlgeschlagen: %@";
+
+"Start automatically with macOS" = "Automatisch mit macOS starten";
+"Stop Service" = "Dienst stoppen";
+"Uninstall…" = "Deinstallieren…";
+"Installed services run independently of this window. Automatic startup can be enabled or disabled separately. Installation and removal require administrator approval." = "Installierte Dienste laufen unabhängig von diesem Fenster. Der automatische Start mit macOS kann separat ein- oder ausgeschaltet werden. Installation und Entfernung erfordern Administratorrechte.";
+"System server daemon installed; server remains stopped." = "System-Server-Daemon installiert; der Server bleibt gestoppt.";
+"Server system service will start automatically with macOS." = "Der Server-Systemdienst startet automatisch mit macOS.";
+"Server system service will not start automatically with macOS." = "Der Server-Systemdienst startet nicht automatisch mit macOS.";
+"Server Automatic Startup Could Not Be Changed" = "Automatischer Server-Start konnte nicht geändert werden";
+"ERROR: Server automatic startup change failed: %@" = "FEHLER: Änderung des automatischen Server-Starts fehlgeschlagen: %@";
+"Tracker system service will start automatically with macOS." = "Der Tracker-Systemdienst startet automatisch mit macOS.";
+"Tracker system service will not start automatically with macOS." = "Der Tracker-Systemdienst startet nicht automatisch mit macOS.";
+"Tracker Automatic Startup Could Not Be Changed" = "Automatischer Tracker-Start konnte nicht geändert werden";
+"ERROR: Tracker automatic startup change failed: %@" = "FEHLER: Änderung des automatischen Tracker-Starts fehlgeschlagen: %@";

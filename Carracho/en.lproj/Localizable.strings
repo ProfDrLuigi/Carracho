@@ -2127,3 +2127,17 @@
 "Move %@ selected items to the server Trash?" = "Move %@ selected items to the server Trash?";
 "%@ of %@ selected items could not be deleted." = "%@ of %@ selected items could not be deleted.";
 "Delete failed for %@: %@" = "Delete failed for %@: %@";
+
+"Start automatically with macOS" = "Start automatically with macOS";
+"Stop Service" = "Stop Service";
+"Uninstall…" = "Uninstall…";
+"Installed services run independently of this window. Automatic startup can be enabled or disabled separately. Installation and removal require administrator approval." = "Installed services run independently of this window. Automatic startup can be enabled or disabled separately. Installation and removal require administrator approval.";
+"System server daemon installed; server remains stopped." = "System server daemon installed; server remains stopped.";
+"Server system service will start automatically with macOS." = "Server system service will start automatically with macOS.";
+"Server system service will not start automatically with macOS." = "Server system service will not start automatically with macOS.";
+"Server Automatic Startup Could Not Be Changed" = "Server Automatic Startup Could Not Be Changed";
+"ERROR: Server automatic startup change failed: %@" = "ERROR: Server automatic startup change failed: %@";
+"Tracker system service will start automatically with macOS." = "Tracker system service will start automatically with macOS.";
+"Tracker system service will not start automatically with macOS." = "Tracker system service will not start automatically with macOS.";
+"Tracker Automatic Startup Could Not Be Changed" = "Tracker Automatic Startup Could Not Be Changed";
+"ERROR: Tracker automatic startup change failed: %@" = "ERROR: Tracker automatic startup change failed: %@";

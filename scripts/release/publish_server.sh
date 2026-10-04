@@ -378,14 +378,20 @@ case "$SIGNING_MODE" in
 
         # Xcode strips development-only content while embedding Sparkle.framework.
         # With Team: None this leaves the copied framework seal stale and Sparkle's
-        # generate_appcast rejects the archive. Re-seal only the framework wrapper
-        # while preserving Sparkle's nested helper/XPC signatures and runtime flags,
-        # then seal the outer app ad-hoc. No Apple identity or Team ID is involved.
+        # generate_appcast rejects the archive. Re-seal the standalone server daemon
+        # helper and the framework wrapper, preserve Sparkle's nested signatures/runtime
+        # flags, then seal the outer app ad-hoc. No Apple identity or Team ID is involved.
         SPARKLE_FRAMEWORK="$FINAL_APP/Contents/Frameworks/Sparkle.framework"
         [ -d "$SPARKLE_FRAMEWORK" ] \
             || die "Embedded Sparkle.framework was not found in the Release app"
 
-        say "Applying Team-None ad-hoc bundle seals for Sparkle"
+        DAEMON_HELPER="$FINAL_APP/Contents/Helpers/carracho-serverd"
+        if [ ! -x "$DAEMON_HELPER" ]; then
+            die "Embedded carracho-serverd helper was not found in the Release app"
+        fi
+
+        say "Applying Team-None ad-hoc bundle seals for daemon helper and Sparkle"
+        /usr/bin/codesign --force --sign - --timestamp=none "$DAEMON_HELPER"
         /usr/bin/codesign --force --sign - --timestamp=none \
             --preserve-metadata=identifier,entitlements,requirements,flags,runtime \
             "$SPARKLE_FRAMEWORK"
