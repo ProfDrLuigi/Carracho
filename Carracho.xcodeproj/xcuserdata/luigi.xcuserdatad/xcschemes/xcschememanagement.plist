@@ -4,6 +4,11 @@
 <dict>
 	<key>SchemeUserState</key>
 	<dict>
+		<key>Carracho Server Daemon.xcscheme_^#shared#^_</key>
+		<dict>
+			<key>orderHint</key>
+			<integer>5</integer>
+		</dict>
 		<key>Carracho Server.xcscheme_^#shared#^_</key>
 		<dict>
 			<key>orderHint</key>
@@ -33,6 +38,11 @@
 	<key>SuppressBuildableAutocreation</key>
 	<dict>
 		<key>2A80A9BF305D5B9600ECFBC3</key>
+		<dict>
+			<key>primary</key>
+			<true/>
+		</dict>
+		<key>2A9D10053080000100DA0005</key>
 		<dict>
 			<key>primary</key>
 			<true/>
