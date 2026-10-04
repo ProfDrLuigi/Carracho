@@ -56,11 +56,7 @@ private struct CarrachoServerMenuBarSnapshot {
     var connections: String
     var transfers: String
     var ports: String
-    var serverRunning: Bool
-    var canToggleServer: Bool
-    var trackerRunning: Bool
     var trackerStatus: String
-    var canToggleTracker: Bool
 }
 
 @main
@@ -104,30 +100,33 @@ private final class ServerCardView: NSView {
 private final class ServerResponsiveStatusView: NSView {
     private let identity: NSView
     private let metrics: NSView
-    private let action: NSView
+    private let action: NSView?
     private let collapseWidth: CGFloat = 700
     private var compact: Bool?
     private var wideConstraints: [NSLayoutConstraint] = []
     private var compactConstraints: [NSLayoutConstraint] = []
 
-    init(identity: NSView, metrics: NSView, action: NSView) {
+    init(identity: NSView, metrics: NSView, action: NSView? = nil) {
         self.identity = identity
         self.metrics = metrics
         self.action = action
         super.init(frame: .zero)
-        for view in [identity, metrics, action] {
+
+        for view in [identity, metrics] {
             view.translatesAutoresizingMaskIntoConstraints = false
             addSubview(view)
         }
+        if let action {
+            action.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(action)
+        }
+
         wideConstraints = [
             identity.leadingAnchor.constraint(equalTo: leadingAnchor),
             identity.topAnchor.constraint(equalTo: topAnchor),
             identity.bottomAnchor.constraint(equalTo: bottomAnchor),
             metrics.leadingAnchor.constraint(equalTo: identity.trailingAnchor, constant: 24),
             metrics.centerYAnchor.constraint(equalTo: identity.centerYAnchor),
-            action.trailingAnchor.constraint(equalTo: trailingAnchor),
-            action.centerYAnchor.constraint(equalTo: identity.centerYAnchor),
-            metrics.trailingAnchor.constraint(lessThanOrEqualTo: action.leadingAnchor, constant: -24),
         ]
         compactConstraints = [
             identity.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -136,11 +135,25 @@ private final class ServerResponsiveStatusView: NSView {
             metrics.leadingAnchor.constraint(equalTo: leadingAnchor),
             metrics.topAnchor.constraint(equalTo: identity.bottomAnchor, constant: 8),
             metrics.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor),
-            action.leadingAnchor.constraint(equalTo: leadingAnchor),
-            action.topAnchor.constraint(equalTo: metrics.bottomAnchor, constant: 8),
-            action.bottomAnchor.constraint(equalTo: bottomAnchor),
-            action.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor),
         ]
+
+        if let action {
+            wideConstraints += [
+                action.trailingAnchor.constraint(equalTo: trailingAnchor),
+                action.centerYAnchor.constraint(equalTo: identity.centerYAnchor),
+                metrics.trailingAnchor.constraint(lessThanOrEqualTo: action.leadingAnchor, constant: -24),
+            ]
+            compactConstraints += [
+                action.leadingAnchor.constraint(equalTo: leadingAnchor),
+                action.topAnchor.constraint(equalTo: metrics.bottomAnchor, constant: 8),
+                action.bottomAnchor.constraint(equalTo: bottomAnchor),
+                action.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor),
+            ]
+        } else {
+            wideConstraints.append(metrics.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor))
+            compactConstraints.append(metrics.bottomAnchor.constraint(equalTo: bottomAnchor))
+        }
+
         NSLayoutConstraint.activate(compactConstraints)
         compact = true
     }
@@ -348,22 +361,6 @@ final class CarrachoServerAppDelegate: NSObject, NSApplicationDelegate, NSMenuDe
 
     private func rebuildApplicationServerMenu() {
         applicationServerMenu.removeAllItems()
-        let snapshot = windowController?.menuBarSnapshot()
-        let serverRunning = snapshot?.serverRunning == true
-        let toggleServer = NSMenuItem(title: serverRunning ? L("Stop Server") : L("Start Server"),
-                                      action: #selector(toggleServerFromStatusMenu(_:)), keyEquivalent: "")
-        toggleServer.target = self
-        toggleServer.isEnabled = snapshot?.canToggleServer ?? (windowController != nil)
-        applicationServerMenu.addItem(toggleServer)
-
-        let trackerRunning = snapshot?.trackerRunning == true
-        let tracker = NSMenuItem(title: trackerRunning ? L("Stop Tracker") : L("Start Tracker"),
-                                 action: #selector(toggleTrackerFromStatusMenu(_:)), keyEquivalent: "")
-        tracker.target = self
-        tracker.isEnabled = snapshot?.canToggleTracker ?? (windowController != nil)
-        applicationServerMenu.addItem(tracker)
-        applicationServerMenu.addItem(.separator())
-
         let windowVisible = windowController?.window?.isVisible == true
         let show = NSMenuItem(title: windowVisible ? L("Hide Server Window") : L("Show Server Window"),
                               action: #selector(toggleServerWindow(_:)), keyEquivalent: "")
@@ -466,21 +463,6 @@ final class CarrachoServerAppDelegate: NSObject, NSApplicationDelegate, NSMenuDe
             statusMenu.addItem(state)
         }
 
-        statusMenu.addItem(.separator())
-
-        let serverRunning = snapshot?.serverRunning == true
-        let toggleServer = NSMenuItem(title: serverRunning ? L("Stop Server") : L("Start Server"),
-                                      action: #selector(toggleServerFromStatusMenu(_:)), keyEquivalent: "")
-        toggleServer.target = self
-        toggleServer.isEnabled = snapshot?.canToggleServer == true
-        statusMenu.addItem(toggleServer)
-
-        let trackerRunning = snapshot?.trackerRunning == true
-        let tracker = NSMenuItem(title: trackerRunning ? L("Stop Tracker") : L("Start Tracker"),
-                                 action: #selector(toggleTrackerFromStatusMenu(_:)), keyEquivalent: "")
-        tracker.target = self
-        tracker.isEnabled = snapshot?.canToggleTracker == true
-        statusMenu.addItem(tracker)
         if let trackerStatus = snapshot?.trackerStatus, !trackerStatus.isEmpty {
             let trackerState = NSMenuItem(title: LF("Tracker: %@", trackerStatus), action: nil, keyEquivalent: "")
             trackerState.isEnabled = false
@@ -509,18 +491,6 @@ final class CarrachoServerAppDelegate: NSObject, NSApplicationDelegate, NSMenuDe
         let quit = NSMenuItem(title: L("Quit Carracho Server"), action: #selector(quitServerApp(_:)), keyEquivalent: "q")
         quit.target = self
         statusMenu.addItem(quit)
-    }
-
-    @objc private func toggleServerFromStatusMenu(_ sender: Any?) {
-        windowController?.toggleServerFromMenuBar()
-        rebuildStatusMenu()
-        rebuildApplicationServerMenu()
-    }
-
-    @objc private func toggleTrackerFromStatusMenu(_ sender: Any?) {
-        windowController?.toggleTrackerFromMenuBar()
-        rebuildStatusMenu()
-        rebuildApplicationServerMenu()
     }
 
     @objc private func toggleServerWindow(_ sender: Any?) {
@@ -726,7 +696,6 @@ final class CarrachoServerWindowController: NSWindowController, NSTextFieldDeleg
     private let statusDot = NSView()
     private let statusTitle = NSTextField(labelWithString: L("Loading…"))
     private let statusDetail = NSTextField(labelWithString: L("Opening server state"))
-    private let startStopButton = NSButton(title: L("Start Server"), target: nil, action: nil)
     private let portValue = NSTextField(labelWithString: "—")
     private let clientsValue = NSTextField(labelWithString: "0")
     private let transfersValue = NSTextField(labelWithString: "0")
@@ -757,7 +726,6 @@ final class CarrachoServerWindowController: NSWindowController, NSTextFieldDeleg
     private let fileRootsHelpLabel = NSTextField(wrappingLabelWithString: L("Account and group roots remain relative to the selected base folder. Choosing a folder changes only the configured root; files are not moved, copied, or deleted."))
     private let trackerStatusDot = NSView()
     private let trackerStatusLabel = NSTextField(labelWithString: L("Not running"))
-    private let trackerStartStopButton = NSButton(title: L("Start Tracker"), target: nil, action: nil)
     private let trackerPortField = NSTextField(string: String(LegacyTrackerProtocol.port))
     private let trackerPortButton = NSButton(title: L("Set Port"), target: nil, action: nil)
     private let trackerServersValue = NSTextField(labelWithString: "0")
@@ -869,13 +837,13 @@ final class CarrachoServerWindowController: NSWindowController, NSTextFieldDeleg
             makeHeader(),
             ServerResponsiveColumnsView(left: [makeServerSettingsCard()], right: [makeFilesRootCard()]),
             makeDisclosure(title: L("HTTP Administration API"), content: makeHTTPAdminCard()),
-            makeDisclosure(title: L("System Service"), content: makeDaemonCard(kind: .server)),
+            makePermanentSection(title: L("System Service"), content: makeDaemonCard(kind: .server)),
             makeDisclosure(title: L("Administrator"), content: makeAdminCard()),
             serverLog,
         ], vertical: true, spacing: 12)
         let tracker = stack([
             makeTrackerHeader(), makeTrackerCard(),
-            makeDisclosure(title: L("System Service"), content: makeDaemonCard(kind: .tracker)),
+            makePermanentSection(title: L("System Service"), content: makeDaemonCard(kind: .tracker)),
             trackerLog,
         ], vertical: true, spacing: 12)
         let bot = stack([
@@ -903,17 +871,6 @@ final class CarrachoServerWindowController: NSWindowController, NSTextFieldDeleg
             root.widthAnchor.constraint(lessThanOrEqualToConstant: 1180),
             preferredWidth,
         ])
-
-        startStopButton.target = self
-        startStopButton.action = #selector(toggleServer(_:))
-        startStopButton.keyEquivalent = "\r"
-        startStopButton.isEnabled = false
-        startStopButton.controlSize = .regular
-        startStopButton.font = .systemFont(ofSize: 13, weight: .semibold)
-        applyServerPrimaryButtonStyle(startStopButton)
-        startStopButton.setAccessibilityLabel(L("Start or stop server"))
-        startStopButton.translatesAutoresizingMaskIntoConstraints = false
-        startStopButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 130).isActive = true
 
         passwordButton.target = self
         passwordButton.action = #selector(administratorAction(_:))
@@ -970,15 +927,6 @@ final class CarrachoServerWindowController: NSWindowController, NSTextFieldDeleg
         legacyUseSeparateRadio.action = #selector(useSeparateLegacyRoot(_:))
         fileRootsHelpButton.target = self
         fileRootsHelpButton.action = #selector(toggleFileRootHelp(_:))
-
-        trackerStartStopButton.target = self
-        trackerStartStopButton.action = #selector(toggleTracker(_:))
-        trackerStartStopButton.controlSize = .regular
-        trackerStartStopButton.font = .systemFont(ofSize: 12, weight: .semibold)
-        applyServerPrimaryButtonStyle(trackerStartStopButton)
-        trackerStartStopButton.setAccessibilityLabel(L("Start or stop tracker"))
-        trackerStartStopButton.translatesAutoresizingMaskIntoConstraints = false
-        trackerStartStopButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 130).isActive = true
 
         botStartStopButton.target = self
         botStartStopButton.action = #selector(toggleBot(_:))
@@ -1060,7 +1008,7 @@ final class CarrachoServerWindowController: NSWindowController, NSTextFieldDeleg
             metric(title: L("Transfers"), value: transfersValue),
         ], spacing: 24)
         metrics.setContentHuggingPriority(.required, for: .horizontal)
-        let row = ServerResponsiveStatusView(identity: identityRow, metrics: metrics, action: startStopButton)
+        let row = ServerResponsiveStatusView(identity: identityRow, metrics: metrics)
         row.translatesAutoresizingMaskIntoConstraints = false
         return row
     }
@@ -1232,8 +1180,6 @@ final class CarrachoServerWindowController: NSWindowController, NSTextFieldDeleg
         serverPage?.isHidden = selected != 0
         trackerPage?.isHidden = selected != 1
         botPage?.isHidden = selected != 2
-        startStopButton.keyEquivalent = selected == 0 ? "\r" : ""
-        trackerStartStopButton.keyEquivalent = selected == 1 ? "\r" : ""
         botStartStopButton.keyEquivalent = selected == 2 ? "\r" : ""
         window?.makeFirstResponder(sender)
     }
@@ -1245,6 +1191,15 @@ final class CarrachoServerWindowController: NSWindowController, NSTextFieldDeleg
 
     private func makeDisclosure(title: String, content: NSView) -> NSView {
         ServerDisclosureView(title: title, content: content)
+    }
+
+    private func makePermanentSection(title: String, content: NSView) -> NSView {
+        let label = NSTextField(labelWithString: title)
+        label.font = .systemFont(ofSize: 12, weight: .medium)
+        let section = stack([label, content], vertical: true, spacing: 8)
+        content.translatesAutoresizingMaskIntoConstraints = false
+        content.widthAnchor.constraint(equalTo: section.widthAnchor).isActive = true
+        return section
     }
 
     private func makeBackgroundControlCard() -> NSView {
@@ -1391,8 +1346,10 @@ final class CarrachoServerWindowController: NSWindowController, NSTextFieldDeleg
         icon.widthAnchor.constraint(equalToConstant: 54).isActive = true
         icon.heightAnchor.constraint(equalToConstant: 54).isActive = true
         let identity = stack([icon, stack([title, stack([trackerStatusDot, trackerStatusLabel, NSView()])], vertical: true, spacing: 4)], spacing: 12)
-        return ServerResponsiveStatusView(identity: identity,
-            metrics: metric(title: L("Registered servers"), value: trackerServersValue), action: trackerStartStopButton)
+        return ServerResponsiveStatusView(
+            identity: identity,
+            metrics: metric(title: L("Registered servers"), value: trackerServersValue)
+        )
     }
 
     private func makeTrackerCard() -> NSView {
@@ -1567,7 +1524,6 @@ final class CarrachoServerWindowController: NSWindowController, NSTextFieldDeleg
         let trackerActive = trackerDaemon.installed ? trackerDaemon.loaded : service.trackerStatus.isRunning
         let validTracker = trackerPort.map { $0 > 0 && !portsConflict(serverPort: service.serverState.advanced.controlPort, trackerPort: $0) } == true
         trackerPortButton.isEnabled = validTracker && trackerPort != service.trackerConfiguration.port && !trackerActive && !trackerOperationInProgress
-        trackerStartStopButton.isEnabled = !trackerOperationInProgress
 
         let token = httpAdminTokenField.stringValue
         httpAdminCopyTokenButton.isEnabled = !token.isEmpty
@@ -1649,8 +1605,6 @@ final class CarrachoServerWindowController: NSWindowController, NSTextFieldDeleg
             statusDetail.stringValue = error.localizedDescription
             statusDot.layer?.backgroundColor = NSColor.systemRed.cgColor
             appendLog(LF("ERROR: %@", error.localizedDescription))
-            startStopButton.isEnabled = false
-            trackerStartStopButton.isEnabled = false
             passwordButton.isEnabled = false
             fileRootButton.isEnabled = false
             legacyFileRootButton.isEnabled = false
@@ -1693,7 +1647,6 @@ final class CarrachoServerWindowController: NSWindowController, NSTextFieldDeleg
         fileRootValue.toolTip = service.filesURL.path
         refreshLegacyFileRootDisplay()
         trackerPortField.stringValue = String(service.trackerConfiguration.port)
-        startStopButton.isEnabled = true
         passwordButton.isEnabled = service.administratorAccount != nil
         refreshAdminAccount()
         refreshServerSettings()
@@ -1759,10 +1712,7 @@ final class CarrachoServerWindowController: NSWindowController, NSTextFieldDeleg
 
     fileprivate func menuBarSnapshot() -> CarrachoServerMenuBarSnapshot? {
         guard let service else { return nil }
-        let serverDaemon = cachedServerDaemonStatus
         let trackerDaemon = cachedTrackerDaemonStatus
-        let serverRunning = serverDaemon.installed ? serverDaemon.loaded : service.status.isRunning
-        let trackerRunning = trackerDaemon.installed ? trackerDaemon.loaded : service.trackerStatus.isRunning
         let trackerStatus: String
         if trackerDaemon.installed {
             if trackerDaemon.running { trackerStatus = L("Running as system service") }
@@ -1781,20 +1731,8 @@ final class CarrachoServerWindowController: NSWindowController, NSTextFieldDeleg
             connections: clientsValue.stringValue,
             transfers: transfersValue.stringValue,
             ports: portValue.stringValue,
-            serverRunning: serverRunning,
-            canToggleServer: serverOperationState == .idle,
-            trackerRunning: trackerRunning,
-            trackerStatus: trackerStatus,
-            canToggleTracker: !trackerOperationInProgress
+            trackerStatus: trackerStatus
         )
-    }
-
-    fileprivate func toggleServerFromMenuBar() {
-        toggleServer(nil)
-    }
-
-    fileprivate func toggleTrackerFromMenuBar() {
-        toggleTracker(nil)
     }
 
     private func refreshRuntimeStatus(checkLaunchd: Bool = true) {
@@ -1855,7 +1793,6 @@ final class CarrachoServerWindowController: NSWindowController, NSTextFieldDeleg
             let transfer = snapshot.transferPort.map(String.init) ?? "?"
             statusDetail.stringValue = LF("Independent of this window · control TCP %@, transfers TCP %@", control, transfer)
             statusDot.layer?.backgroundColor = NSColor.systemGreen.cgColor
-            setServerPrimaryButtonTitle(startStopButton, L("Stop Server"))
             portValue.stringValue = "\(control) / \(transfer)"
             clientsValue.stringValue = String(snapshot.connectedClients)
             transfersValue.stringValue = String(snapshot.activeFileTransfers)
@@ -1863,7 +1800,6 @@ final class CarrachoServerWindowController: NSWindowController, NSTextFieldDeleg
             statusTitle.stringValue = L("Starting · System Service")
             statusDetail.stringValue = L("launchd has loaded the service; waiting for a live listener heartbeat.")
             statusDot.layer?.backgroundColor = NSColor.systemOrange.cgColor
-            setServerPrimaryButtonTitle(startStopButton, L("Stop Server"))
             portValue.stringValue = "—"
             clientsValue.stringValue = "—"
             transfersValue.stringValue = "—"
@@ -1871,7 +1807,6 @@ final class CarrachoServerWindowController: NSWindowController, NSTextFieldDeleg
             statusTitle.stringValue = L("Error · System Service")
             statusDetail.stringValue = lastServerOperationError
             statusDot.layer?.backgroundColor = NSColor.systemRed.cgColor
-            setServerPrimaryButtonTitle(startStopButton, L("Start Server"))
             portValue.stringValue = "—"
             clientsValue.stringValue = "—"
             transfersValue.stringValue = "—"
@@ -1879,7 +1814,6 @@ final class CarrachoServerWindowController: NSWindowController, NSTextFieldDeleg
             statusTitle.stringValue = L("Stopped · Service installed")
             statusDetail.stringValue = L("No server listener is active. The installed service remains available.")
             statusDot.layer?.backgroundColor = NSColor.systemGray.cgColor
-            setServerPrimaryButtonTitle(startStopButton, L("Start Server"))
             portValue.stringValue = "—"
             clientsValue.stringValue = "0"
             transfersValue.stringValue = "0"
@@ -1890,7 +1824,6 @@ final class CarrachoServerWindowController: NSWindowController, NSTextFieldDeleg
         legacyFileRootButton.isEnabled = !effectiveRunning && legacyUseSeparateRadio.state == .on
         legacyUseModernRadio.isEnabled = !effectiveRunning
         legacyUseSeparateRadio.isEnabled = !effectiveRunning
-        startStopButton.isEnabled = serverOperationState == .idle
         applyServerOperationPresentationIfNeeded()
         updateApplyButtonStates()
     }
@@ -1900,20 +1833,16 @@ final class CarrachoServerWindowController: NSWindowController, NSTextFieldDeleg
             trackerStatusDot.layer?.backgroundColor = NSColor.systemGreen.cgColor
             trackerStatusLabel.stringValue = LF("Running as system service · TCP %@", snapshot.port.map(String.init) ?? "?")
             trackerServersValue.stringValue = String(snapshot.registeredServers)
-            setServerPrimaryButtonTitle(trackerStartStopButton, L("Stop Tracker"))
         } else if daemon.loaded {
             trackerStatusDot.layer?.backgroundColor = NSColor.systemOrange.cgColor
             trackerStatusLabel.stringValue = L("Starting · system service loaded")
             trackerServersValue.stringValue = "—"
-            setServerPrimaryButtonTitle(trackerStartStopButton, L("Stop Tracker"))
         } else {
             trackerStatusDot.layer?.backgroundColor = NSColor.systemGray.cgColor
             trackerStatusLabel.stringValue = daemon.installed ? L("Stopped · system service installed") : L("Stopped")
             trackerServersValue.stringValue = "0"
-            setServerPrimaryButtonTitle(trackerStartStopButton, L("Start Tracker"))
         }
         trackerPortField.isEnabled = !daemon.loaded && !trackerOperationInProgress
-        trackerStartStopButton.isEnabled = !trackerOperationInProgress
         updateApplyButtonStates()
     }
 
@@ -1998,19 +1927,16 @@ final class CarrachoServerWindowController: NSWindowController, NSTextFieldDeleg
             let transfer = status.transferPort.map(String.init) ?? "?"
             statusDetail.stringValue = LF("GUI-managed listeners · control TCP %@, transfers TCP %@", control, transfer)
             statusDot.layer?.backgroundColor = NSColor.systemGreen.cgColor
-            setServerPrimaryButtonTitle(startStopButton, L("Stop Server"))
             portValue.stringValue = "\(control) / \(transfer)"
         } else if let lastServerOperationError {
             statusTitle.stringValue = L("Error")
             statusDetail.stringValue = lastServerOperationError
             statusDot.layer?.backgroundColor = NSColor.systemRed.cgColor
-            setServerPrimaryButtonTitle(startStopButton, L("Start Server"))
             portValue.stringValue = "—"
         } else {
             statusTitle.stringValue = L("Stopped")
             statusDetail.stringValue = L("No server listener is active in this app.")
             statusDot.layer?.backgroundColor = NSColor.systemGray.cgColor
-            setServerPrimaryButtonTitle(startStopButton, L("Start Server"))
             portValue.stringValue = "—"
         }
         statusDetail.toolTip = statusDetail.stringValue
@@ -2020,7 +1946,6 @@ final class CarrachoServerWindowController: NSWindowController, NSTextFieldDeleg
         legacyFileRootButton.isEnabled = !status.isRunning && service?.legacyFilesURL != nil
         clientsValue.stringValue = String(status.connectedClients)
         transfersValue.stringValue = String(status.activeFileTransfers)
-        startStopButton.isEnabled = serverOperationState == .idle
         applyServerOperationPresentationIfNeeded()
         updateApplyButtonStates()
     }
@@ -2032,14 +1957,11 @@ final class CarrachoServerWindowController: NSWindowController, NSTextFieldDeleg
             statusTitle.stringValue = L("Starting…")
             statusDetail.stringValue = L("Opening the configured listeners.")
             statusDot.layer?.backgroundColor = NSColor.systemOrange.cgColor
-            setServerPrimaryButtonTitle(startStopButton, L("Starting…"))
         case .stopping:
             statusTitle.stringValue = L("Stopping…")
             statusDetail.stringValue = L("Closing active listeners and sessions.")
             statusDot.layer?.backgroundColor = NSColor.systemOrange.cgColor
-            setServerPrimaryButtonTitle(startStopButton, L("Stopping…"))
         }
-        startStopButton.isEnabled = false
     }
 
     @objc private func httpAdminControlChanged(_ sender: Any?) {
@@ -2203,18 +2125,14 @@ final class CarrachoServerWindowController: NSWindowController, NSTextFieldDeleg
         if status.isRunning {
             trackerStatusDot.layer?.backgroundColor = NSColor.systemGreen.cgColor
             trackerStatusLabel.stringValue = LF("Running in this app · TCP %@", status.port.map(String.init) ?? "?")
-            setServerPrimaryButtonTitle(trackerStartStopButton, L("Stop Tracker"))
         } else if service.trackerConfiguration.enabled {
             trackerStatusDot.layer?.backgroundColor = NSColor.systemRed.cgColor
             trackerStatusLabel.stringValue = L("Configured to run, but not running")
-            setServerPrimaryButtonTitle(trackerStartStopButton, L("Start Tracker"))
         } else {
             trackerStatusDot.layer?.backgroundColor = NSColor.systemGray.cgColor
             trackerStatusLabel.stringValue = L("Stopped")
-            setServerPrimaryButtonTitle(trackerStartStopButton, L("Start Tracker"))
         }
         trackerPortField.isEnabled = !status.isRunning && !trackerOperationInProgress
-        trackerStartStopButton.isEnabled = !trackerOperationInProgress
         updateApplyButtonStates()
     }
 
@@ -2359,7 +2277,6 @@ final class CarrachoServerWindowController: NSWindowController, NSTextFieldDeleg
         }
 
         trackerOperationInProgress = true
-        trackerStartStopButton.isEnabled = false
         defer {
             trackerOperationInProgress = false
             refreshRuntimeStatus()
