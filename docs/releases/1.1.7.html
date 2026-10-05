@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Carracho release 1.1.7</title>
+  <link rel="stylesheet" href="../styles.css">
+  <style>
+    .release-page { width:min(calc(100% - 40px), 900px); margin:0 auto; padding:72px 0 110px; }
+    .release-page h1 { font-size:clamp(2.8rem,7vw,5rem); margin-bottom:28px; }
+    .release-page h2 { margin-top:54px; font-size:2rem; }
+    .release-page h3 { margin-top:34px; }
+    .release-page p, .release-page li { color:var(--muted-strong); }
+    .release-page code { padding:.12em .38em; border-radius:6px; background:rgba(255,255,255,.07); }
+    .release-page pre { margin:22px 0; border:1px solid var(--line); border-radius:16px; background:#070b12; }
+    .release-back { display:inline-flex; margin-bottom:34px; color:var(--orange-2); text-decoration:none; font-weight:700; }
+  </style>
+</head>
+<body>
+  <main class="release-page">
+    <a class="release-back" href="../">← Carracho</a>
+<h1>Carracho 1.1.7</h1>
+<p>Carracho 1.1.7 is a focused <strong>macOS Client reliability release</strong> for bookmark reconnection after sleep/wake and transient connection loss. The Client advances to <strong>1.1.7 (build 18)</strong>, while Carracho Server remains at <strong>1.1.6 (build 17)</strong> because this release contains no Server changes.</p>
+<h2>Highlights</h2>
+<ul>
+<li>Fixed a multi-bookmark reconnect bug that could leave one bookmark selected while its underlying client reconnected with another bookmark&#x27;s host and login, causing data such as the Files view to come from the wrong server.</li>
+<li>Auto-reconnect state is now isolated per saved bookmark instead of sharing one global retry identity.</li>
+<li>Connected background bookmarks with auto-reconnect enabled now retry independently after an unexpected disconnect.</li>
+<li>Preserved each bookmark&#x27;s last valid session snapshot across connection loss so switching bookmarks during a reconnect cannot replace one server&#x27;s UI state with another server&#x27;s state.</li>
+<li>Hardened background reconnect handling for server agreements and boot-scoped Message Center history.</li>
+<li>Updated the macOS Client to <strong>1.1.7 / build 18</strong>; Carracho Server remains <strong>1.1.6 / build 17</strong>.</li>
+</ul>
+<h2>Carracho Client 1.1.7</h2>
+<h3>Multi-bookmark reconnect isolation</h3>
+<p>Reconnect ownership is now tied to the bookmark and LegacyControlClient that actually lost its connection. A stale reconnect marker from a previously selected bookmark can no longer win over the active connection and reconnect that client using another bookmark&#x27;s host, login or password.</p>
+<p>This fixes the failure mode where the sidebar could still show one bookmark as connected while workspaces such as <strong>Files</strong> were actually displaying data from a different server after sleep/wake or another transient disconnect.</p>
+<h3>Independent background auto-reconnect</h3>
+<p>Each saved bookmark now maintains its own reconnect timer and retry backoff. If several bookmarks are connected and one of the background connections drops, that bookmark can reconnect independently when <strong>Auto-Reconnect</strong> is enabled instead of relying on the single foreground retry state.</p>
+<p>When a foreground reconnect is already pending and the user switches to another bookmark, the pending retry is transferred to that bookmark&#x27;s background context without losing its retry state. Merely selecting a bookmark that was never connected does not cause it to start connecting in the background.</p>
+<h3>Session snapshot safety during reconnects</h3>
+<p>An unexpected disconnect now preserves the bookmark&#x27;s last valid session snapshot before the shared presentation is reset. Switching away while a reconnect is pending therefore keeps Files, News, users, channels and related per-server presentation state associated with the correct bookmark.</p>
+<p>Once a background reconnect succeeds, server information, the root directory, channels and News groups are refreshed against that bookmark&#x27;s own client before its snapshot is reused.</p>
+<h3>Safe background reconnect bootstrap</h3>
+<p>Server agreements are never accepted automatically during a hidden background reconnect. If a reconnect requires an agreement, the connection is deferred until that bookmark is brought to the foreground so the user can make the decision explicitly.</p>
+<p>Message Center handling also revalidates the server boot namespace after a background reconnect. Stable account-UUID conversations can survive the reconnect, while numeric routing-ID history is only restored or persisted again after the current server boot has been confirmed from server uptime.</p>
+<h2>Carracho Server 1.1.6</h2>
+<h3>Dedicated Server and Tracker system services</h3>
+<p>The macOS Server and Tracker can now run as two independent launchd system services. Both jobs use the same compact carracho-serverd helper embedded in the Server app, while Server and Tracker retain separate launchd jobs and separate running/automatic-start state.</p>
+<p>Installing a service copies only the headless daemon binary and the service definitions required to run it. The daemon directory no longer needs a second complete copy of <strong>Carracho Server.app</strong>, avoiding duplicated application bundles under /Applications and the service installation.</p>
+<p>The helper is built as a Universal 2 binary and contains the headless Server/Tracker runtime rather than the AppKit administration UI or Sparkle updater.</p>
+<h3>System Service is the single control surface</h3>
+<p>Server and Tracker runtime control is now consolidated under the always-visible <strong>System Service</strong> section for each component. The old duplicate Start/Stop controls in the page header, application menu and status menu have been removed.</p>
+<p>Each service can be installed or uninstalled independently, started or stopped independently, and configured independently for automatic startup with macOS. Current running state and startup-at-boot state are separate: disabling automatic startup does not stop a service that is already running.</p>
+<p>The <strong>System Service</strong> section is permanently expanded and no longer has a disclosure arrow, so installation and runtime controls remain visible without another layer of navigation.</p>
+<h3>Daemon update reminder after an app update</h3>
+<p>The Server app now compares the daemon helper embedded in the current app with the binary installed for the system services. The comparison is byte-for-byte, so rebuilt hotfixes are detected even if their marketing version happens to be unchanged.</p>
+<p>When an installed daemon differs from the helper in the updated app, <strong>Reinstall</strong> changes to <strong>Update Now</strong>. On every normal launch of the Server app, a warning explains that the application was updated and the system service must also be refreshed. The warning continues to appear until the installed daemon matches the current app.</p>
+<p>Choosing <strong>Update Now</strong> performs the same privileged service refresh used by the System Service controls while preserving the installed sibling service&#x27;s running and automatic-start state. Because Server and Tracker share the daemon binary, updating either installed service refreshes the common executable.</p>
+<h2>Compatibility notes</h2>
+<ul>
+<li>Classic/Legacy protocol packet layouts are unchanged in Client 1.1.7.</li>
+<li>This release changes Client bookmark/reconnect state management only; Carracho Server remains <strong>1.1.6 / build 17</strong>.</li>
+<li>Auto-reconnect continues to apply to saved bookmarks that have the option enabled; merely selecting an unconnected bookmark does not implicitly start a background connection.</li>
+<li>Background reconnects do not bypass server agreement prompts.</li>
+<li>Message Center conversations with stable account UUIDs remain durable across reconnects; numeric session identities remain protected by the server-boot namespace.</li>
+<li>The macOS Client is <strong>1.1.7 / build 18</strong>. macOS Server and native Linux Server remain <strong>1.1.6 / build 17</strong>.</li>
+</ul>
+  </main>
+</body>
+</html>
