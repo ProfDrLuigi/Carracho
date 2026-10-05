@@ -29,6 +29,7 @@
 <li>Connected background bookmarks with auto-reconnect enabled now retry independently after an unexpected disconnect.</li>
 <li>Preserved each bookmark&#x27;s last valid session snapshot across connection loss so switching bookmarks during a reconnect cannot replace one server&#x27;s UI state with another server&#x27;s state.</li>
 <li>Hardened background reconnect handling for server agreements and boot-scoped Message Center history.</li>
+<li>Kept the server header at a fixed height across bookmarks so the center workspace no longer jumps vertically when optional banner or server-detail rows appear or disappear.</li>
 <li>Updated the macOS Client to <strong>1.1.7 / build 18</strong>; Carracho Server remains <strong>1.1.6 / build 17</strong>.</li>
 </ul>
 <h2>Carracho Client 1.1.7</h2>
@@ -41,6 +42,8 @@
 <h3>Session snapshot safety during reconnects</h3>
 <p>An unexpected disconnect now preserves the bookmark&#x27;s last valid session snapshot before the shared presentation is reset. Switching away while a reconnect is pending therefore keeps Files, News, users, channels and related per-server presentation state associated with the correct bookmark.</p>
 <p>Once a background reconnect succeeds, server information, the root directory, channels and News groups are refreshed against that bookmark&#x27;s own client before its snapshot is reused.</p>
+<h3>Stable server header height</h3>
+<p>The server header now keeps a fixed 72-point height regardless of whether a server provides a banner, description or Legacy-mode status line. Switching between bookmarks therefore keeps the top edge of the center workspace in the same position instead of moving Files, Overview and the other workspaces up or down as optional header content changes.</p>
 <h3>Safe background reconnect bootstrap</h3>
 <p>Server agreements are never accepted automatically during a hidden background reconnect. If a reconnect requires an agreement, the connection is deferred until that bookmark is brought to the foreground so the user can make the decision explicitly.</p>
 <p>Message Center handling also revalidates the server boot namespace after a background reconnect. Stable account-UUID conversations can survive the reconnect, while numeric routing-ID history is only restored or persisted again after the current server boot has been confirmed from server uptime.</p>

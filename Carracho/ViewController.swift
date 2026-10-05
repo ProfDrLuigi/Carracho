@@ -2798,6 +2798,11 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
     func makeServerHeader() -> NSView {
         let container = CarrachoBackgroundView()
         container.fillColor = CarrachoTheme.sideColumnBackground
+        // Keep the workspace origin stable across servers. The header used to derive its height
+        // from whichever arranged subviews were visible, so hiding the banner, description or
+        // Legacy line moved the entire center workspace vertically when switching bookmarks.
+        // 58 pt is the banner row height and the existing 7 pt top/bottom insets make 72 pt.
+        container.heightAnchor.constraint(equalToConstant: 72).isActive = true
 
         let bannerHost = CarrachoBackgroundView()
         bannerHost.fillColor = .clear

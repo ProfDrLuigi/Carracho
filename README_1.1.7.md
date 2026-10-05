@@ -9,6 +9,7 @@ Carracho 1.1.7 is a focused **macOS Client reliability release** for bookmark re
 - Connected background bookmarks with auto-reconnect enabled now retry independently after an unexpected disconnect.
 - Preserved each bookmark's last valid session snapshot across connection loss so switching bookmarks during a reconnect cannot replace one server's UI state with another server's state.
 - Hardened background reconnect handling for server agreements and boot-scoped Message Center history.
+- Kept the server header at a fixed height across bookmarks so the center workspace no longer jumps vertically when optional banner or server-detail rows appear or disappear.
 - Updated the macOS Client to **1.1.7 / build 18**; Carracho Server remains **1.1.6 / build 17**.
 
 ## Carracho Client 1.1.7
@@ -30,6 +31,10 @@ When a foreground reconnect is already pending and the user switches to another 
 An unexpected disconnect now preserves the bookmark's last valid session snapshot before the shared presentation is reset. Switching away while a reconnect is pending therefore keeps Files, News, users, channels and related per-server presentation state associated with the correct bookmark.
 
 Once a background reconnect succeeds, server information, the root directory, channels and News groups are refreshed against that bookmark's own client before its snapshot is reused.
+
+### Stable server header height
+
+The server header now keeps a fixed 72-point height regardless of whether a server provides a banner, description or Legacy-mode status line. Switching between bookmarks therefore keeps the top edge of the center workspace in the same position instead of moving Files, Overview and the other workspaces up or down as optional header content changes.
 
 ### Safe background reconnect bootstrap
 
