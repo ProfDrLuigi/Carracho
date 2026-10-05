@@ -630,6 +630,11 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         var backgroundNewsSupported = true
         var backgroundNewsKnownGroups: Set<Data> = []
         var backgroundNewsTotals: [Data: [UInt32: UInt32]] = [:]
+        var autoReconnectWorkItem: DispatchWorkItem?
+        var autoReconnectAttempt = 0
+        var reconnectLoginResult: LegacyLoginResult?
+        var needsForegroundBootstrap = false
+        var reconnectRequiresForegroundAgreement = false
 
         var notificationCount: Int {
             min(999, eventNotificationCount + newsNotificationCount)
@@ -1416,6 +1421,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         transferProgressUIRefreshWorkItem?.cancel()
         advancedSearchIndexStatusTimer?.invalidate()
         autoReconnectWorkItem?.cancel()
+        bookmarkConnections.values.forEach { $0.autoReconnectWorkItem?.cancel() }
         transferMonitorRefreshTimer?.invalidate()
         newsBadgeRefreshTimer?.invalidate()
         channelCatalogRefreshTimer?.invalidate()
@@ -4602,7 +4608,20 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
     func parkActiveBookmarkConnection() {
         guard let id = activeBookmarkConnectionID,
               let context = bookmarkConnections[id], context.client === client else { return }
-        context.snapshot = captureActiveBookmarkSession()
+
+        let shouldCapture: Bool
+        switch client.state {
+        case .connected, .connecting, .handshaking, .authenticating:
+            shouldCapture = true
+        default:
+            // An unexpected disconnect already saved the pre-failure snapshot. Do not overwrite
+            // it with the reset/empty shared presentation while the reconnect is pending.
+            shouldCapture = context.snapshot == nil
+        }
+        if shouldCapture {
+            context.snapshot = captureActiveBookmarkSession()
+        }
+
         if let snapshot = context.snapshot {
             persistTransferMonitorSession(bookmarkID: id, items: snapshot.transferMonitorItems,
                                           order: snapshot.transferMonitorOrder,
@@ -4650,8 +4669,14 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         }
 
         pendingBookmarkActivationID = nil
+        let previousBookmarkID = activeBookmarkConnectionID
+        let previousHadForegroundReconnect = autoReconnectWorkItem != nil
+        let previousForegroundReconnectAttempt = autoReconnectAttempt
         if activeBookmarkConnectionID != nil {
-            if autoReconnectWorkItem != nil { cancelAutoReconnect() }
+            // The foreground retry belongs only to the currently active bookmark. Clear it
+            // unconditionally before swapping clients; otherwise a healthy old bookmark can
+            // leave its reconnect identity behind and reconnect the new bookmark to the wrong host.
+            cancelAutoReconnect()
             switch client.state {
             case .connecting, .handshaking, .authenticating:
                 showBookmarkError(LegacyControlClientError.invalidInput(L("Wait for the current connection attempt to finish before switching bookmarks.")))
@@ -4678,18 +4703,30 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         case .connecting, .handshaking, .authenticating: connectingBookmarkID = bookmark.id
         default: connectingBookmarkID = nil
         }
+        autoReconnectBookmarkID = bookmark.autoReconnect && (client.isConnected || connectingBookmarkID == bookmark.id)
+            ? bookmark.id
+            : nil
+        autoReconnectAttempt = 0
         configureClientCallbacks(for: client, bookmarkID: bookmark.id)
         saveServerBookmarks()
         apply(bookmark: bookmark)
 
-        if client.isConnected, let snapshot = context.snapshot {
+        let connectionIsInFlight: Bool
+        switch client.state {
+        case .connecting, .handshaking, .authenticating: connectionIsInFlight = true
+        default: connectionIsInFlight = false
+        }
+
+        if (client.isConnected || connectionIsInFlight), let snapshot = context.snapshot {
             restoreBookmarkSession(snapshot)
             let queued = context.pendingEvents
             context.pendingEvents.removeAll()
             for event in queued { handle(event) }
         } else {
-            context.snapshot = nil
-            context.pendingEvents.removeAll()
+            if !connectionIsInFlight {
+                context.snapshot = nil
+                context.pendingEvents.removeAll()
+            }
             restorePersistedTransferMonitorSession(for: bookmark.id)
             configureMessageCenterPersistence(host: bookmark.host, port: bookmark.port, login: bookmark.login,
                                               includeLatestBootHistory: true)
@@ -4697,7 +4734,37 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
             selectWorkspace(.overview)
             refreshShellChrome()
         }
+
+        // If this bookmark was retrying in the background, ownership of that retry moves to
+        // the foreground now. A connection already in flight is allowed to finish in place.
+        if context.autoReconnectWorkItem != nil {
+            let inheritedAttempt = context.autoReconnectAttempt
+            cancelBackgroundAutoReconnect(for: context, resetAttempt: false)
+            if bookmark.autoReconnect, !client.isConnected, !connectionIsInFlight {
+                autoReconnectAttempt = inheritedAttempt
+                scheduleAutoReconnect(for: bookmark.id)
+            }
+        }
+
+        if client.isConnected {
+            completeForegroundBootstrapAfterBackgroundReconnectIfNeeded(bookmark: bookmark, context: context)
+        } else if context.reconnectRequiresForegroundAgreement {
+            context.reconnectRequiresForegroundAgreement = false
+            DispatchQueue.main.async { [weak self] in
+                self?.connect(to: bookmark)
+            }
+        }
         reloadBookmarkStack()
+
+        if previousHadForegroundReconnect,
+           let previousBookmarkID, previousBookmarkID != bookmark.id,
+           let previousContext = bookmarkConnections[previousBookmarkID] {
+            previousContext.autoReconnectAttempt = max(
+                previousContext.autoReconnectAttempt,
+                previousForegroundReconnectAttempt
+            )
+            scheduleBackgroundAutoReconnect(for: previousBookmarkID)
+        }
     }
 
     func activatePendingBookmarkIfPossible() {
@@ -4727,6 +4794,340 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         if clearBookmark { autoReconnectBookmarkID = nil }
     }
 
+    func cancelBackgroundAutoReconnect(for context: BookmarkConnectionContext, resetAttempt: Bool = true) {
+        context.autoReconnectWorkItem?.cancel()
+        context.autoReconnectWorkItem = nil
+        if resetAttempt { context.autoReconnectAttempt = 0 }
+    }
+
+    func scheduleBackgroundAutoReconnect(for bookmarkID: UUID) {
+        guard activeBookmarkConnectionID != bookmarkID,
+              !temporaryServerBookmarkIDs.contains(bookmarkID),
+              let bookmark = serverBookmarks.first(where: { $0.id == bookmarkID }),
+              bookmark.autoReconnect,
+              let context = bookmarkConnections[bookmarkID],
+              !context.client.isConnected,
+              !context.reconnectRequiresForegroundAgreement else { return }
+
+        switch context.client.state {
+        case .connecting, .handshaking, .authenticating:
+            return
+        default:
+            break
+        }
+
+        context.autoReconnectWorkItem?.cancel()
+        let delays: [TimeInterval] = [2, 5, 10, 20, 30]
+        let delay = delays[min(context.autoReconnectAttempt, delays.count - 1)]
+        context.autoReconnectAttempt += 1
+
+        let item = DispatchWorkItem { [weak self, weak context] in
+            guard let self, let context,
+                  self.bookmarkConnections[bookmarkID] === context,
+                  let current = self.serverBookmarks.first(where: { $0.id == bookmarkID }),
+                  current.autoReconnect else { return }
+            context.autoReconnectWorkItem = nil
+
+            if self.activeBookmarkConnectionID == bookmarkID {
+                self.autoReconnectAttempt = context.autoReconnectAttempt
+                context.autoReconnectAttempt = 0
+                self.scheduleAutoReconnect(for: bookmarkID)
+                return
+            }
+            self.reconnectBackgroundBookmark(current, context: context)
+        }
+        context.autoReconnectWorkItem = item
+        reloadBookmarkStack()
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: item)
+    }
+
+    func reconnectBackgroundBookmark(_ bookmark: ServerBookmark, context: BookmarkConnectionContext) {
+        guard activeBookmarkConnectionID != bookmark.id,
+              bookmarkConnections[bookmark.id] === context,
+              bookmark.autoReconnect,
+              !context.client.isConnected else { return }
+
+        switch context.client.state {
+        case .idle, .failed:
+            break
+        default:
+            return
+        }
+
+        let password: String
+        do {
+            password = try serverBookmarkKeychain.password(for: bookmark.id) ?? ""
+        } catch {
+            scheduleBackgroundAutoReconnect(for: bookmark.id)
+            return
+        }
+
+        let target = context.client
+        context.needsForegroundBootstrap = true
+        target.connect(host: bookmark.host,
+                       port: bookmark.port,
+                       login: bookmark.login,
+                       password: password,
+                       nickname: effectiveNickname(for: bookmark)) { [weak self, weak context, weak target] result in
+            guard let self, let context, let target,
+                  self.bookmarkConnections[bookmark.id] === context,
+                  context.client === target else { return }
+
+            switch result {
+            case .failure:
+                // Transport failures emit .failed before this completion, and that state callback
+                // already schedules the next retry. Direct validation/keychain failures do not.
+                if !target.isConnected, context.autoReconnectWorkItem == nil {
+                    self.scheduleBackgroundAutoReconnect(for: bookmark.id)
+                }
+            case let .success(login):
+                context.autoReconnectAttempt = 0
+                context.reconnectLoginResult = login
+
+                // Agreements require an explicit foreground decision. Never silently accept one
+                // merely because this bookmark happened to reconnect while hidden.
+                if login.agreement != nil {
+                    context.reconnectRequiresForegroundAgreement = true
+                    context.needsForegroundBootstrap = false
+                    context.reconnectLoginResult = nil
+                    target.disconnect()
+                    self.reloadBookmarkStack()
+                    return
+                }
+
+                self.prepareBackgroundReconnectSnapshot(bookmark: bookmark, context: context, login: login)
+                self.refreshBackgroundReconnectSnapshot(bookmark: bookmark, context: context)
+
+                target.setOfflineMessagePreference(enabled: bookmark.acceptsOfflineMessages) { _ in }
+                let status = bookmark.statusMessage.trimmingCharacters(in: .whitespacesAndNewlines)
+                if let data = status.data(using: .macOSRoman), data.count <= 255 {
+                    target.updateStatusMessage(data) { _ in }
+                }
+
+                if self.activeBookmarkConnectionID == bookmark.id, self.client === target {
+                    self.connectedBookmarkID = bookmark.id
+                    self.connectingBookmarkID = nil
+                    self.autoReconnectBookmarkID = bookmark.autoReconnect ? bookmark.id : nil
+                    self.completeForegroundBootstrapAfterBackgroundReconnectIfNeeded(bookmark: bookmark, context: context)
+                } else {
+                    self.startBackgroundNewsPolling(for: context)
+                }
+                self.reloadBookmarkStack()
+                self.updateDockPrivateMessageBadge()
+            }
+        }
+    }
+
+    func prepareBackgroundReconnectSnapshot(bookmark: ServerBookmark,
+                                            context: BookmarkConnectionContext,
+                                            login: LegacyLoginResult) {
+        guard var snapshot = context.snapshot else { return }
+
+        snapshot.lastLoginResult = login
+        snapshot.lastServerInfo = nil
+        snapshot.remoteServerUptimeSeconds = nil
+        snapshot.remoteServerUptimeObservedAt = nil
+        snapshot.lastDirectory = nil
+        snapshot.fileTransferClient = nil
+        snapshot.fileSearchClient = nil
+        snapshot.bannerClient = nil
+        snapshot.currentBanner = nil
+        snapshot.fileSearchResults = nil
+        snapshot.fileSearchQuery = ""
+        snapshot.fileNavigationHistory = []
+        snapshot.fileNavigationIndex = -1
+        snapshot.expandedFilePaths = []
+        snapshot.expandedDirectoryListings = [:]
+        snapshot.selectedFilePaths = []
+        snapshot.clientTransferTasks = [:]
+        snapshot.selectedRemoteTransferID = nil
+        snapshot.remoteTransferSnapshot = []
+        snapshot.remoteManagedTransferSnapshot = []
+        snapshot.remoteTransferUploadLimitBytesPerSecond = nil
+        snapshot.remoteDownloadTrafficBytesPerSecond = nil
+        snapshot.lastChannels = []
+        snapshot.lastNewsgroups = []
+        snapshot.newsClient = nil
+        snapshot.mediaClient = nil
+        snapshot.mediaCache = nil
+        snapshot.currentNewsIndex = nil
+        snapshot.currentArticle = nil
+        snapshot.currentNewsCategory = nil
+        snapshot.currentNewsThreads = []
+        snapshot.currentNewsThreadID = nil
+        snapshot.currentNewsThreadPosts = []
+        snapshot.currentNewsThreadArticles = []
+        snapshot.currentNewsReactions = [:]
+        snapshot.currentNewsPostCapabilities = [:]
+        snapshot.newsThreadsByCategory = [:]
+        snapshot.activeChannel = nil
+        snapshot.channelMembers = [:]
+        snapshot.joinedChannels = [:]
+        // Stable account conversations survive reconnects. Numeric routing IDs do not: they
+        // are reintroduced only after the current server boot has been confirmed from uptime.
+        snapshot.privateMessageConversations = snapshot.privateMessageConversations.filter {
+            $0.value.accountID != nil
+        }
+        if let selected = snapshot.selectedPrivateConversationID,
+           snapshot.privateMessageConversations[selected] == nil {
+            snapshot.selectedPrivateConversationID = nil
+        }
+        snapshot.messageCenterServerBootID = nil
+        snapshot.liveUsers = Dictionary(uniqueKeysWithValues: login.users.map { ($0.userID, $0) })
+        snapshot.selectedUserID = nil
+        snapshot.sleepingUsers = Set(login.users.lazy.filter { ($0.flags & 0x0100) != 0 }.map(\.userID))
+        snapshot.userStatusMessages = [:]
+        snapshot.userGroupColors = [:]
+        snapshot.remoteAccountSummaries = []
+        snapshot.remoteAccountGroups = []
+        snapshot.remoteAccountGroupByLogin = [:]
+        snapshot.activeAvatarIdentity = LocalAvatarIdentity(host: bookmark.host, port: bookmark.port, login: bookmark.login)
+        snapshot.detailsText = ""
+        snapshot.deferredInteractiveEvents = []
+        context.snapshot = snapshot
+    }
+
+    func refreshBackgroundReconnectSnapshot(bookmark: ServerBookmark, context: BookmarkConnectionContext) {
+        let target = context.client
+        let bookmarkID = bookmark.id
+
+        target.requestServerInfo { [weak self, weak context, weak target] result in
+            guard let self, let context, let target,
+                  self.bookmarkConnections[bookmarkID] === context,
+                  context.client === target, target.isConnected,
+                  self.activeBookmarkConnectionID != bookmarkID else { return }
+            guard case let .success(info) = result else { return }
+            context.snapshot?.lastServerInfo = info
+            if let ticks = info.uptimeTicks {
+                context.snapshot?.remoteServerUptimeSeconds = Double(ticks) / 60.0
+                context.snapshot?.remoteServerUptimeObservedAt = Date()
+                self.resolveBackgroundMessageCenterBoot(for: context, uptimeTicks: ticks)
+            }
+        }
+
+        target.requestDirectory { [weak self, weak context, weak target] result in
+            guard let self, let context, let target,
+                  self.bookmarkConnections[bookmarkID] === context,
+                  context.client === target, target.isConnected,
+                  self.activeBookmarkConnectionID != bookmarkID else { return }
+            guard case let .success(listing) = result else { return }
+            context.snapshot?.lastDirectory = listing
+            context.snapshot?.fileNavigationHistory = [listing.currentPath]
+            context.snapshot?.fileNavigationIndex = 0
+        }
+
+        target.requestChannels { [weak self, weak context, weak target] result in
+            guard let self, let context, let target,
+                  self.bookmarkConnections[bookmarkID] === context,
+                  context.client === target, target.isConnected,
+                  self.activeBookmarkConnectionID != bookmarkID else { return }
+            if case let .success(channels) = result {
+                context.snapshot?.lastChannels = channels
+            }
+        }
+
+        target.requestNewsgroups { [weak self, weak context, weak target] result in
+            guard let self, let context, let target,
+                  self.bookmarkConnections[bookmarkID] === context,
+                  context.client === target, target.isConnected,
+                  self.activeBookmarkConnectionID != bookmarkID else { return }
+            if case let .success(groups) = result {
+                context.snapshot?.lastNewsgroups = groups
+                self.startBackgroundNewsPolling(for: context)
+            }
+        }
+    }
+
+    func resolveBackgroundMessageCenterBoot(for context: BookmarkConnectionContext,
+                                            uptimeTicks: UInt32) {
+        guard var snapshot = context.snapshot,
+              snapshot.messageCenterServerBootID == nil,
+              let scope = snapshot.messageCenterPersistenceScope else { return }
+
+        do {
+            let bootID = try messageCenterStore.resolveServerBoot(scope: scope, uptimeTicks: uptimeTicks)
+            let stored = try messageCenterStore.loadBootConversations(scope: scope, bootID: bootID)
+            snapshot.messageCenterServerBootID = bootID
+
+            var restoredUserIDs = Set<UInt32>()
+            for item in stored {
+                restoredUserIDs.insert(item.userID)
+                let disk = restoredBootConversation(item)
+                if let existingID = snapshot.privateMessageConversations.first(where: {
+                    $0.value.accountID == nil && $0.value.userID == item.userID
+                })?.key, var current = snapshot.privateMessageConversations[existingID] {
+                    var knownIDs = Set(disk.entries.map(\.id))
+                    var entries = disk.entries
+                    for entry in current.entries where knownIDs.insert(entry.id).inserted {
+                        entries.append(entry)
+                    }
+                    entries.sort {
+                        if $0.timestamp != $1.timestamp { return $0.timestamp < $1.timestamp }
+                        return $0.id.uuidString < $1.id.uuidString
+                    }
+                    if entries.count > 500 { entries.removeFirst(entries.count - 500) }
+                    current.entries = entries
+                    current.unreadCount = min(999, item.unreadCount + current.unreadCount)
+                    if current.draftText.isEmpty { current.draftText = item.draftText }
+                    current.lastActivity = max(current.lastActivity, item.lastActivity)
+                    if current.nickname.isEmpty { current.nickname = item.nickname }
+                    if current.picture.isEmpty { current.picture = item.picture }
+                    current.isLegacyTransport = current.isLegacyTransport || item.isLegacyTransport
+                    snapshot.privateMessageConversations[existingID] = current
+                    if let storedCurrent = storedBootConversation(current) {
+                        try messageCenterStore.saveBootConversationHistory(
+                            storedCurrent, scope: scope, bootID: bootID
+                        )
+                    }
+                } else {
+                    snapshot.privateMessageConversations[disk.id] = disk
+                }
+            }
+
+            // A message can arrive after login but before the uptime reply. Once this boot is
+            // proven, persist those new numeric-ID conversations in the correct namespace.
+            for conversation in snapshot.privateMessageConversations.values
+                where conversation.accountID == nil &&
+                      conversation.userID != nil &&
+                      !restoredUserIDs.contains(conversation.userID!) {
+                if let storedCurrent = storedBootConversation(conversation) {
+                    try messageCenterStore.saveBootConversationHistory(
+                        storedCurrent, scope: scope, bootID: bootID
+                    )
+                }
+            }
+            context.snapshot = snapshot
+        } catch {
+            NSLog("Carracho background Message Center boot storage error: %@",
+                  Self.displayMessage(for: error))
+        }
+    }
+
+    func completeForegroundBootstrapAfterBackgroundReconnectIfNeeded(bookmark: ServerBookmark,
+                                                                     context: BookmarkConnectionContext) {
+        guard activeBookmarkConnectionID == bookmark.id,
+              client === context.client,
+              client.isConnected,
+              context.needsForegroundBootstrap,
+              let login = context.reconnectLoginResult else { return }
+
+        context.needsForegroundBootstrap = false
+        context.reconnectLoginResult = nil
+        context.reconnectRequiresForegroundAgreement = false
+
+        lastLoginResult = login
+        liveUsers = Dictionary(uniqueKeysWithValues: login.users.map { ($0.userID, $0) })
+        sleepingUsers = Set(login.users.lazy.filter { ($0.flags & 0x0100) != 0 }.map(\.userID))
+        userStatusMessages = [:]
+        userGroupColors = [:]
+        messageCenterServerBootID = nil
+        if messageCenterPersistenceScope == nil {
+            configureMessageCenterPersistence(host: bookmark.host, port: bookmark.port, login: bookmark.login)
+        }
+        connectionSetupBookmarkID = bookmark.id
+        completeConnectedSessionSetup(login: login, host: bookmark.host, port: bookmark.port, loginName: bookmark.login)
+    }
+
     func discardTemporaryServerBookmarkAfterDisconnect(_ bookmarkID: UUID) {
         guard temporaryServerBookmarkIDs.remove(bookmarkID) != nil else { return }
 
@@ -4734,6 +5135,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         catch { appendLine("\n" + LF("Bookmark Keychain: %@", Self.displayMessage(for: error))) }
         serverBookmarks.removeAll { $0.id == bookmarkID }
         if let context = bookmarkConnections.removeValue(forKey: bookmarkID) {
+            cancelBackgroundAutoReconnect(for: context)
             stopBackgroundNewsPolling(for: context)
             context.snapshot = nil
             context.pendingEvents.removeAll()
@@ -4809,8 +5211,11 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
     }
 
     func scheduleAutoReconnect(for bookmarkID: UUID) {
-        guard let bookmark = serverBookmarks.first(where: { $0.id == bookmarkID }), bookmark.autoReconnect else {
-            cancelAutoReconnect()
+        guard activeBookmarkConnectionID == bookmarkID,
+              let context = bookmarkConnections[bookmarkID], context.client === client,
+              let bookmark = serverBookmarks.first(where: { $0.id == bookmarkID }),
+              bookmark.autoReconnect else {
+            if autoReconnectBookmarkID == bookmarkID { cancelAutoReconnect() }
             return
         }
         autoReconnectWorkItem?.cancel()
@@ -4829,7 +5234,10 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
 
         let item = DispatchWorkItem { [weak self] in
             guard let self,
+                  self.activeBookmarkConnectionID == bookmarkID,
                   self.autoReconnectBookmarkID == bookmarkID,
+                  let context = self.bookmarkConnections[bookmarkID],
+                  context.client === self.client,
                   let current = self.serverBookmarks.first(where: { $0.id == bookmarkID }),
                   current.autoReconnect else { return }
             self.autoReconnectWorkItem = nil
@@ -5019,6 +5427,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
                         var removedActiveConnection = false
                         for id in removedConnectionIDs {
                             if let removed = self.bookmarkConnections.removeValue(forKey: id) {
+                                self.cancelBackgroundAutoReconnect(for: removed)
                                 self.stopBackgroundNewsPolling(for: removed)
                                 removed.client.disconnect()
                             }
@@ -5119,6 +5528,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
     func bookmarkConnectionState(for bookmarkID: UUID) -> String {
         if let context = bookmarkConnections[bookmarkID] {
             if context.client.isConnected { return "connected" }
+            if context.autoReconnectWorkItem != nil { return "connecting" }
             switch context.client.state {
             case .connecting, .handshaking, .authenticating: return "connecting"
             case .idle: return "disconnected"
@@ -5493,6 +5903,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
                 try self.serverBookmarkKeychain.removePassword(for: bookmark.id)
                 self.serverBookmarks.removeAll { $0.id == bookmark.id }
                 if let context = self.bookmarkConnections.removeValue(forKey: bookmark.id) {
+                    self.cancelBackgroundAutoReconnect(for: context)
                     self.stopBackgroundNewsPolling(for: context)
                     context.client.disconnect()
                 }
@@ -5586,7 +5997,12 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         } else {
             serverBookmarks.append(updated)
         }
-        if !updated.autoReconnect, autoReconnectBookmarkID == updated.id { cancelAutoReconnect() }
+        if !updated.autoReconnect {
+            if autoReconnectBookmarkID == updated.id { cancelAutoReconnect() }
+            if let context = bookmarkConnections[updated.id] {
+                cancelBackgroundAutoReconnect(for: context)
+            }
+        }
         selectedBookmarkID = updated.id
         saveServerBookmarks()
         apply(bookmark: updated)
@@ -5778,7 +6194,17 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
             if target === self.client && self.activeBookmarkConnectionID == bookmarkID {
                 if let bookmarkID, let context = self.bookmarkConnections[bookmarkID] {
                     switch state {
-                    case .idle, .failed:
+                    case .failed:
+                        // Preserve this bookmark's last real presentation before apply(.failed)
+                        // clears the shared views. If the user switches bookmarks while retrying,
+                        // that saved state must not be replaced by another server's UI.
+                        if self.lastLoginResult != nil {
+                            context.snapshot = self.captureActiveBookmarkSession()
+                        }
+                        self.stopBackgroundNewsPolling(for: context)
+                        context.pendingUploadApprovalCount = 0
+                        context.pendingEvents.removeAll()
+                    case .idle:
                         self.stopBackgroundNewsPolling(for: context)
                         self.clearBookmarkNotifications(for: context)
                         context.pendingUploadApprovalCount = 0
@@ -5791,16 +6217,21 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
                 self.apply(state: state)
                 return
             }
-            // Background bookmark connections keep running, but must never repaint the
-            // currently selected server's UI. Their lamp alone is updated here.
+            // Background bookmark connections keep their own retry state and must never repaint
+            // the selected server's UI. Preserve the last snapshot across an unexpected loss so a
+            // reconnect cannot borrow another bookmark's presentation state.
             if let bookmarkID, let context = self.bookmarkConnections[bookmarkID] {
                 switch state {
-                case .idle, .failed:
+                case .connected:
+                    self.cancelBackgroundAutoReconnect(for: context)
+                case .failed:
                     self.stopBackgroundNewsPolling(for: context)
-                    self.clearBookmarkNotifications(for: context)
                     context.pendingUploadApprovalCount = 0
-                    context.snapshot = nil
-                    context.pendingEvents.removeAll()
+                    context.needsForegroundBootstrap = true
+                    self.scheduleBackgroundAutoReconnect(for: bookmarkID)
+                case .idle:
+                    self.stopBackgroundNewsPolling(for: context)
+                    context.pendingUploadApprovalCount = 0
                 default:
                     break
                 }

@@ -2338,7 +2338,9 @@ extension ViewController {
                 temporaryServerBookmarkIDs.contains(id) ? id : nil
             }
             connectionSetupBookmarkID = nil
-            let reconnectID = autoReconnectBookmarkID ?? connectedBookmarkID ?? connectingBookmarkID
+            // Reconnect only the bookmark that actually owns the active client. A global
+            // reconnect marker may belong to a previously selected background bookmark.
+            let reconnectID = connectedBookmarkID ?? connectingBookmarkID ?? activeBookmarkConnectionID
             connectingBookmarkID = nil
             connectedBookmarkID = nil
             resetSessionViews()
