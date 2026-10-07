@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
-  <title>Carracho Client 1.1.7</title>
+  <title>Carracho Client 1.1.8</title>
   <link rel="stylesheet" href="../styles.css">
   <style>
     .release-page { width:min(calc(100% - 40px), 900px); margin:0 auto; padding:72px 0 110px; }
@@ -20,7 +20,7 @@
 <body>
   <main class="release-page">
     <a class="release-back" href="../">← Carracho</a>
-<h2>Carracho Client 1.1.7</h2>
+<h2>Carracho Client 1.1.8</h2>
 <h3>Multi-bookmark reconnect isolation</h3>
 <p>Reconnect ownership is now tied to the bookmark and LegacyControlClient that actually lost its connection. A stale reconnect marker from a previously selected bookmark can no longer win over the active connection and reconnect that client using another bookmark&#x27;s host, login or password.</p>
 <p>This fixes the failure mode where the sidebar could still show one bookmark as connected while workspaces such as <strong>Files</strong> were actually displaying data from a different server after sleep/wake or another transient disconnect.</p>

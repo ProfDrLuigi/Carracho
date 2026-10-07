@@ -1,6 +1,6 @@
-# Carracho 1.1.7
+# Carracho 1.1.8
 
-Carracho 1.1.7 is a focused **macOS Client reliability release** for bookmark reconnection after sleep/wake and transient connection loss. The Client advances to **1.1.7 (build 18)**, while Carracho Server remains at **1.1.6 (build 17)** because this release contains no Server changes.
+Carracho 1.1.8 is a focused **macOS Client reliability release** for bookmark reconnection after sleep/wake and transient connection loss. The Client advances to **1.1.8 (build 19)**, while Carracho Server remains at **1.1.6 (build 17)** because this release contains no Server changes.
 
 ## Highlights
 
@@ -11,9 +11,9 @@ Carracho 1.1.7 is a focused **macOS Client reliability release** for bookmark re
 - Hardened background reconnect handling for server agreements and boot-scoped Message Center history.
 - Kept the server header at a fixed height across bookmarks so the center workspace no longer jumps vertically when optional banner or server-detail rows appear or disappear.
 - News threads and Message Center conversations are now marked read automatically when their content is actually opened or becomes visible again, including already-selected items that received new content while another workspace was active.
-- Updated the macOS Client to **1.1.7 / build 18**; Carracho Server remains **1.1.6 / build 17**.
+- Updated the macOS Client to **1.1.8 / build 19**; Carracho Server remains **1.1.6 / build 17**.
 
-## Carracho Client 1.1.7
+## Carracho Client 1.1.8
 
 ### Multi-bookmark reconnect isolation
 
@@ -79,9 +79,9 @@ Choosing **Update Now** performs the same privileged service refresh used by the
 
 ## Compatibility notes
 
-- Classic/Legacy protocol packet layouts are unchanged in Client 1.1.7.
+- Classic/Legacy protocol packet layouts are unchanged in Client 1.1.8.
 - This release changes Client bookmark/reconnect state management only; Carracho Server remains **1.1.6 / build 17**.
 - Auto-reconnect continues to apply to saved bookmarks that have the option enabled; merely selecting an unconnected bookmark does not implicitly start a background connection.
 - Background reconnects do not bypass server agreement prompts.
 - Message Center conversations with stable account UUIDs remain durable across reconnects; numeric session identities remain protected by the server-boot namespace.
-- The macOS Client is **1.1.7 / build 18**. macOS Server and native Linux Server remain **1.1.6 / build 17**.
+- The macOS Client is **1.1.8 / build 19**. macOS Server and native Linux Server remain **1.1.6 / build 17**.

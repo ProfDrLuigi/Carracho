@@ -18,14 +18,14 @@ The modern transport protects far more than login traffic: chat/control packets,
 
 See the collapsible **Security and modern encryption** section below for the protocol details.
 
-### Current release: 1.1.7
+### Current release: 1.1.8
 
-Carracho 1.1.7 is a focused macOS Client reliability release for bookmark reconnection after sleep/wake and transient connection loss. The Client advances to 1.1.7 (build 18), while Carracho Server remains at 1.1.6 (build 17) because this release contains no Server changes.
+Carracho 1.1.8 is a focused macOS Client reliability release for bookmark reconnection after sleep/wake and transient connection loss. The Client advances to 1.1.8 (build 19), while Carracho Server remains at 1.1.6 (build 17) because this release contains no Server changes.
 
-- Client: **1.1.7 (build 18)**
+- Client: **1.1.8 (build 19)**
 - Server: **1.1.6 (build 17)**
 
-The full release notes are available in [`README_1.1.7.md`](README_1.1.7.md).
+The full release notes are available in [`README_1.1.8.md`](README_1.1.8.md).
 
 ## At a glance
 

@@ -23,10 +23,10 @@
     </style>
 </head>
     <body>
-        <p><span class="header" lang="en">New in 1.1.7</span></p>
+        <p><span class="header" lang="en">New in 1.1.8</span></p>
         <ul>
             <span class="newstext">
-                <li>Updated the macOS client to version 1.1.7 (build 18).</li>
+                <li>Updated the macOS client to version 1.1.8 (build 19).</li>
                 <li><strong>Multi-bookmark reconnect isolation</strong> — Reconnect ownership is now tied to the bookmark and LegacyControlClient that actually lost its connection. A stale reconnect marker from a previously selected bookmark can no longer win over the active connection and reconnect that client using another bookmark&#x27;s host, login or password.</li>
                 <li><strong>Independent background auto-reconnect</strong> — Each saved bookmark now maintains its own reconnect timer and retry backoff. If several bookmarks are connected and one of the background connections drops, that bookmark can reconnect independently when Auto-Reconnect is enabled instead of relying on the single foreground retry state.</li>
                 <li><strong>Session snapshot safety during reconnects</strong> — An unexpected disconnect now preserves the bookmark&#x27;s last valid session snapshot before the shared presentation is reset. Switching away while a reconnect is pending therefore keeps Files, News, users, channels and related per-server presentation state associated with the correct bookmark.</li>
