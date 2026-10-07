@@ -820,6 +820,38 @@ extension ViewController {
         reloadNewsTablesPreservingSelection(threadID: threadID)
     }
 
+    func markVisibleNewsThreadReadIfNeeded() {
+        guard NSApp.isActive,
+              view.window?.isKeyWindow == true,
+              currentWorkspace == .news,
+              let group = currentNewsCategory,
+              let threadID = currentNewsThreadID,
+              let thread = currentNewsThreads.first(where: { $0.threadID == threadID }),
+              newsUnreadCount(group: group, thread: thread) > 0,
+              !currentNewsThreadArticles.isEmpty else { return }
+
+        let (totalPosts, overflow) = thread.replyCount.addingReportingOverflow(1)
+        let total = overflow ? UInt32.max : totalPosts
+        if currentNewsThreadPosts.count < Int(total) {
+            // New replies arrived while this thread was selected but hidden. Reload it so marking
+            // it read corresponds to content the user can actually see.
+            loadNewsThread(group: group, threadID: threadID)
+        } else {
+            markNewsThreadRead(group: group, threadID: threadID, totalPosts: total)
+        }
+    }
+
+    @objc func newsThreadClicked(_ sender: NSTableView) {
+        let row = sender.clickedRow >= 0 ? sender.clickedRow : sender.selectedRow
+        guard row >= 0, row < displayedNewsThreads.count,
+              let group = currentNewsCategory else { return }
+        let thread = displayedNewsThreads[row]
+        guard currentNewsThreadID == thread.threadID,
+              !currentNewsThreadArticles.isEmpty,
+              newsUnreadCount(group: group, thread: thread) > 0 else { return }
+        markVisibleNewsThreadReadIfNeeded()
+    }
+
     func startNewsBadgePolling() {
         newsBadgeRefreshTimer?.invalidate()
         newsBadgeRefreshTimer = nil

@@ -2107,6 +2107,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         newsTable.target = self
         newsTable.doubleAction = #selector(loadSelectedNewsgroup(_:))
         newsArticleTable.target = self
+        newsArticleTable.action = #selector(newsThreadClicked(_:))
         newsArticleTable.doubleAction = #selector(openSelectedNewsThread(_:))
         newsLoadButton.target = self
         newsLoadButton.action = #selector(loadSelectedNewsgroup(_:))
@@ -3727,8 +3728,10 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
             view.window?.makeFirstResponder(trackerBrowserTable)
             reloadTrackerBrowser()
         case .news:
+            markVisibleNewsThreadReadIfNeeded()
             view.window?.makeFirstResponder(newsTable)
         case .messageCenter:
+            markVisibleMessageCenterSelectionReadIfNeeded()
             refreshPrivateMessageCenter(scrollToBottom: false)
             if selectedPrivateConversationID != nil { view.window?.makeFirstResponder(privateMessageComposer) }
             else { view.window?.makeFirstResponder(privateMessageConversationTable) }
@@ -8471,6 +8474,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
             if let group = currentNewsCategory, currentNewsThreadID != threadID {
                 loadNewsThread(group: group, threadID: threadID)
             } else {
+                markVisibleNewsThreadReadIfNeeded()
                 reloadNewsView()
             }
         }

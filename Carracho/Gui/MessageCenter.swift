@@ -73,6 +73,8 @@ extension ViewController {
         privateMessageConversationTable.usesAlternatingRowBackgroundColors = false
         privateMessageConversationTable.allowsMultipleSelection = false
         privateMessageConversationTable.allowsEmptySelection = true
+        privateMessageConversationTable.target = self
+        privateMessageConversationTable.action = #selector(privateMessageConversationClicked(_:))
         privateMessageConversationTable.columnAutoresizingStyle = .firstColumnOnlyAutoresizingStyle
         if let column = privateMessageConversationTable.tableColumn(withIdentifier: NSUserInterfaceItemIdentifier("conversation")) {
             column.minWidth = 190
@@ -1336,6 +1338,44 @@ extension ViewController {
             }
         } catch {
             showError(LF("Message could not be edited: %@", Self.displayMessage(for: error)))
+        }
+    }
+
+    func markVisibleMessageCenterSelectionReadIfNeeded() {
+        guard NSApp.isActive,
+              view.window?.isKeyWindow == true,
+              currentWorkspace == .messageCenter else { return }
+
+        if selectedOfflineMessages {
+            guard offlineMessageCenterUnreadCount > 0 || !offlineMessageCenterUnreadIDs.isEmpty else { return }
+            offlineMessageCenterUnreadIDs.removeAll()
+            offlineMessageCenterUnreadCount = 0
+            markOfflineMessagesReadInStore()
+            return
+        }
+
+        guard let conversationID = selectedPrivateConversationID,
+              var conversation = privateMessageConversations[conversationID],
+              conversation.unreadCount > 0 else { return }
+        conversation.unreadCount = 0
+        privateMessageConversations[conversationID] = conversation
+        persistPrivateConversation(conversationID)
+    }
+
+    @objc func privateMessageConversationClicked(_ sender: NSTableView) {
+        let row = sender.clickedRow >= 0 ? sender.clickedRow : sender.selectedRow
+        let rows = displayedMessageCenterRows
+        guard row >= 0, row < rows.count else { return }
+
+        switch rows[row] {
+        case .offlineMessages:
+            guard selectedOfflineMessages,
+                  offlineMessageCenterUnreadCount > 0 || !offlineMessageCenterUnreadIDs.isEmpty else { return }
+            selectOfflineMessageCategory()
+        case let .conversation(conversation):
+            guard selectedPrivateConversationID == conversation.id,
+                  conversation.unreadCount > 0 else { return }
+            selectPrivateConversation(conversation.id, focusComposer: false)
         }
     }
 

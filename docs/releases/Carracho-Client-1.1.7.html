@@ -30,6 +30,10 @@
 <h3>Session snapshot safety during reconnects</h3>
 <p>An unexpected disconnect now preserves the bookmark&#x27;s last valid session snapshot before the shared presentation is reset. Switching away while a reconnect is pending therefore keeps Files, News, users, channels and related per-server presentation state associated with the correct bookmark.</p>
 <p>Once a background reconnect succeeds, server information, the root directory, channels and News groups are refreshed against that bookmark&#x27;s own client before its snapshot is reused.</p>
+<h3>Automatic read state when content is opened</h3>
+<p>News and Message Center now treat actually viewing content as the read action, including the awkward case where the same thread or conversation was already selected before new content arrived.</p>
+<p>Returning to <strong>News</strong> with an already-selected thread refreshes that thread when new replies are waiting, then marks the visible posts read. Re-clicking the selected topic does the same instead of relying on AppKit to emit a new selection-change notification.</p>
+<p>Returning to <strong>Message Center</strong> clears unread state for the already-selected conversation or Offline Messages once the content is visible in the active key window. Re-clicking an already-selected unread conversation also marks it read immediately. Persisted Message Center state, the sidebar badge and the optional Dock badge are updated together.</p>
 <h3>Stable server header height</h3>
 <p>The server header now keeps a fixed 72-point height regardless of whether a server provides a banner, description or Legacy-mode status line. Switching between bookmarks therefore keeps the top edge of the center workspace in the same position instead of moving Files, Overview and the other workspaces up or down as optional header content changes.</p>
 <h3>Safe background reconnect bootstrap</h3>

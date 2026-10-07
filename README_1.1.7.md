@@ -10,6 +10,7 @@ Carracho 1.1.7 is a focused **macOS Client reliability release** for bookmark re
 - Preserved each bookmark's last valid session snapshot across connection loss so switching bookmarks during a reconnect cannot replace one server's UI state with another server's state.
 - Hardened background reconnect handling for server agreements and boot-scoped Message Center history.
 - Kept the server header at a fixed height across bookmarks so the center workspace no longer jumps vertically when optional banner or server-detail rows appear or disappear.
+- News threads and Message Center conversations are now marked read automatically when their content is actually opened or becomes visible again, including already-selected items that received new content while another workspace was active.
 - Updated the macOS Client to **1.1.7 / build 18**; Carracho Server remains **1.1.6 / build 17**.
 
 ## Carracho Client 1.1.7
@@ -31,6 +32,14 @@ When a foreground reconnect is already pending and the user switches to another 
 An unexpected disconnect now preserves the bookmark's last valid session snapshot before the shared presentation is reset. Switching away while a reconnect is pending therefore keeps Files, News, users, channels and related per-server presentation state associated with the correct bookmark.
 
 Once a background reconnect succeeds, server information, the root directory, channels and News groups are refreshed against that bookmark's own client before its snapshot is reused.
+
+### Automatic read state when content is opened
+
+News and Message Center now treat actually viewing content as the read action, including the awkward case where the same thread or conversation was already selected before new content arrived.
+
+Returning to **News** with an already-selected thread refreshes that thread when new replies are waiting, then marks the visible posts read. Re-clicking the selected topic does the same instead of relying on AppKit to emit a new selection-change notification.
+
+Returning to **Message Center** clears unread state for the already-selected conversation or Offline Messages once the content is visible in the active key window. Re-clicking an already-selected unread conversation also marks it read immediately. Persisted Message Center state, the sidebar badge and the optional Dock badge are updated together.
 
 ### Stable server header height
 
