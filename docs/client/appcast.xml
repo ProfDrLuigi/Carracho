@@ -4,13 +4,13 @@
         <title>Carracho</title>
         <item>
             <title>1.1.9</title>
-            <pubDate>Thu, 08 Oct 2026 22:07:48 +0200</pubDate>
+            <pubDate>Thu, 08 Oct 2026 23:12:54 +0200</pubDate>
             <link>https://profdrLuigi.github.io/Carracho/</link>
             <sparkle:version>20</sparkle:version>
             <sparkle:shortVersionString>1.1.9</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>10.15</sparkle:minimumSystemVersion>
             <sparkle:releaseNotesLink>https://profdrLuigi.github.io/Carracho/releases/Carracho-Client-1.1.9.html</sparkle:releaseNotesLink>
-            <enclosure url="https://github.com/ProfDrLuigi/Carracho/releases/download/Carracho1.1.9/Carracho-Client-1.1.9.zip" length="13783628" type="application/octet-stream" sparkle:edSignature="tivnPe/DHuPzb+pS6/j4oxTmIXvLJV0RkC1SxbTtaTF5hNp1KN0+RGi4u8bkXvimRpKiB9ddkt6LJRYlIs4HBg=="/>
+            <enclosure url="https://github.com/ProfDrLuigi/Carracho/releases/download/Carracho1.1.9/Carracho-Client-1.1.9.zip" length="13788793" type="application/octet-stream" sparkle:edSignature="2gW0Lo67AJnfOzL/y0O4LQgLCHJQf/2nteZj95beunDiYIjLYJSL+lveOb8In6jJcz/78Ofw7+ticpFw37P1Bg=="/>
         </item>
         <item>
             <title>1.1.8</title>
