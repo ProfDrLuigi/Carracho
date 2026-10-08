@@ -6,6 +6,10 @@ import html
 import re
 from pathlib import Path
 
+CLIENT_RELEASES_URL = "https://github.com/ProfDrLuigi/Carracho/releases"
+SERVER_RELEASES_URL = "https://github.com/ProfDrLuigi/Carracho-Server/releases"
+SERVER_REPO_URL = "https://github.com/ProfDrLuigi/Carracho-Server"
+
 
 def inline(text: str) -> str:
     placeholders: list[str] = []
@@ -97,8 +101,24 @@ def markdown_to_body(markdown: str) -> str:
     return "\n".join(out)
 
 
-def standalone_html(title: str, markdown: str) -> str:
+def standalone_html(
+    title: str,
+    markdown: str,
+    download_links: tuple[tuple[str, str], ...] = (),
+) -> str:
     body = markdown_to_body(markdown)
+    # Notes originate in the repository root, but rendered HTML lives under
+    # docs/releases/. Link older notes to their generated release page instead
+    # of a nonexistent README_*.md file in that directory.
+    body = re.sub(r'href="README_(\d+\.\d+\.\d+)\.md"', r'href="\1.html"', body)
+    downloads = ""
+    if download_links:
+        links = " ".join(
+            f'<a class="button button-secondary" href="{html.escape(url, quote=True)}" '
+            f'rel="noreferrer">{html.escape(label)}</a>'
+            for label, url in download_links
+        )
+        downloads = f'<nav class="release-downloads" aria-label="Downloads">{links}</nav>'
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -116,11 +136,13 @@ def standalone_html(title: str, markdown: str) -> str:
     .release-page code {{ padding:.12em .38em; border-radius:6px; background:rgba(255,255,255,.07); }}
     .release-page pre {{ margin:22px 0; border:1px solid var(--line); border-radius:16px; background:#070b12; }}
     .release-back {{ display:inline-flex; margin-bottom:34px; color:var(--orange-2); text-decoration:none; font-weight:700; }}
+    .release-downloads {{ display:flex; flex-wrap:wrap; gap:12px; margin:0 0 36px; }}
   </style>
 </head>
 <body>
   <main class="release-page">
     <a class="release-back" href="../">← Carracho</a>
+    {downloads}
 {body}
   </main>
 </body>
@@ -339,7 +361,7 @@ def update_homepage(
     content = content[:start] + "\n" + rendered_highlights + "\n          " + content[end:]
 
     release_match = re.search(
-        r'(<section id="release".*?<h2>)Carracho\s+[^<]+(</h2>\s*<p>)(.*?)(</p>)(.*?<a class="button button-primary"[^>]*>)Get\s+[^<]+(</a>)(.*?<a class="text-link" href=")[^"]+(")',
+        r'(<section id="release".*?<h2>)Carracho\s+[^<]+(</h2>\s*<p>)(.*?)(</p>)(.*?<a class="button button-primary"[^>]*>)(?:Get|Download)\s+[^<]+(</a>)(.*?<a class="text-link" href=")[^"]+(")',
         content,
         re.S,
     )
@@ -362,14 +384,77 @@ def update_homepage(
         + "\n          "
         + release_match.group(4)
         + release_match.group(5)
-        + f"Get release {release_version}"
+        + f"Download Client {client_version}"
         + release_match.group(6)
         + release_match.group(7)
         + f"releases/{release_version}.html"
         + release_match.group(8)
     )
     content = content[: release_match.start()] + replacement + content[release_match.end() :]
+    # Keep the Server version visible even when the independent Server release
+    # number no longer matches the Client/documentation release number.
+    server_button_pattern = (
+        rf'(<a class="button button-secondary" href="{re.escape(SERVER_RELEASES_URL)}"'
+        rf' rel="noreferrer">)Download Server [^<]+(</a>)'
+    )
+    if re.search(server_button_pattern, content):
+        content = re.sub(server_button_pattern,
+                         lambda m: m.group(1) + f"Download Server {server_version}" + m.group(2),
+                         content, count=1)
     path.write_text(content)
+
+
+def update_server_landing(path: Path, version: str, build: str) -> None:
+    """Keep legacy Sparkle feed in Carracho but explain independent Server downloads."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0a101d">
+  <meta name="description" content="Carracho Server downloads and release notes for macOS and Linux.">
+  <title>Carracho Server | Downloads</title>
+  <link rel="icon" href="../assets/carracho-server-icon.png" type="image/png">
+  <link rel="stylesheet" href="../styles.css">
+  <style>
+    .server-downloads {{ max-width:850px; margin:0 auto; padding:84px 22px 100px; }}
+    .server-downloads h1 {{ font-size:clamp(2.5rem,6vw,4rem); margin:24px 0; }}
+    .server-downloads p {{ color:var(--muted-strong); line-height:1.7; }}
+    .server-downloads .links {{ display:flex; flex-wrap:wrap; gap:12px; margin:28px 0; }}
+    .server-downloads h2 {{ margin-top:54px; }}
+    .server-downloads a:not(.button) {{ color:var(--orange-2); }}
+  </style>
+</head>
+<body>
+  <main class="server-downloads">
+    <a href="../">← Carracho home</a>
+    <h1>Carracho Server</h1>
+    <p>Download Server releases separately from the macOS Client. The Server
+       application and background service share a version number, but their source
+       code still lives in the main Carracho project.</p>
+    <p><strong>Latest prepared Server version: {html.escape(version)} (build {html.escape(build)})</strong></p>
+    <div class="links">
+      <a class="button button-primary" href="{SERVER_RELEASES_URL}" rel="noreferrer">Server downloads on GitHub</a>
+      <a class="button button-secondary" href="../releases/Carracho-Server-{html.escape(version,quote=True)}.html">Server {html.escape(version)} release notes</a>
+    </div>
+    <h2>Separate repositories</h2>
+    <p><a href="{SERVER_REPO_URL}" rel="noreferrer">Carracho-Server</a> holds the Server release ZIP files and
+       Server-only changelog. The <a href="https://github.com/ProfDrLuigi/Carracho" rel="noreferrer">Carracho source repository</a>
+       contains the shared Xcode project, Server source code and Client downloads.</p>
+    <h2>Automatic updates</h2>
+    <p>Already installed Carracho Servers continue to use the existing
+       <a href="appcast.xml">Sparkle update feed</a>. New Server ZIPs are published
+       in the separate Carracho-Server repository while this feed address stays in place.
+       Historical signed archive URLs are preserved.</p>
+    <p>Before updating, back up the Server database. After updating the macOS
+       Server application, also update the installed daemon using
+       <strong>System Service → Update Now</strong>.</p>
+    <p><a href="../">Back to Carracho home</a></p>
+  </main>
+</body>
+</html>
+""")
 
 
 def update_root_readme(
@@ -442,14 +527,22 @@ def main() -> None:
 
     args.docs_releases.mkdir(parents=True, exist_ok=True)
     (args.docs_releases / f"{args.release_version}.html").write_text(
-        standalone_html(f"Carracho release {args.release_version}", markdown)
+        standalone_html(
+            f"Carracho release {args.release_version}", markdown,
+            (("Client downloads", CLIENT_RELEASES_URL), ("Server downloads", SERVER_RELEASES_URL)),
+        )
     )
     (args.docs_releases / f"Carracho-Client-{args.client_version}.html").write_text(
-        standalone_html(f"Carracho Client {args.client_version}", client_md)
+        standalone_html(f"Carracho Client {args.client_version}", client_md,
+                        (("Client downloads", CLIENT_RELEASES_URL),))
     )
     (args.docs_releases / f"Carracho-Server-{args.server_version}.html").write_text(
-        standalone_html(f"Carracho Server {args.server_version}", server_md)
+        standalone_html(f"Carracho Server {args.server_version}", server_md,
+                        (("Server downloads", SERVER_RELEASES_URL),))
     )
+
+    update_server_landing(args.docs_index.parent / "server" / "index.html",
+                          args.server_version, args.server_build)
 
     summary = intro_summary(markdown)
     update_homepage(

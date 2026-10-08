@@ -15,11 +15,13 @@
     .release-page code { padding:.12em .38em; border-radius:6px; background:rgba(255,255,255,.07); }
     .release-page pre { margin:22px 0; border:1px solid var(--line); border-radius:16px; background:#070b12; }
     .release-back { display:inline-flex; margin-bottom:34px; color:var(--orange-2); text-decoration:none; font-weight:700; }
+    .release-downloads { display:flex; flex-wrap:wrap; gap:12px; margin:0 0 36px; }
   </style>
 </head>
 <body>
   <main class="release-page">
     <a class="release-back" href="../">← Carracho</a>
+    <nav class="release-downloads" aria-label="Downloads"><a class="button button-secondary" href="https://github.com/ProfDrLuigi/Carracho/releases" rel="noreferrer">Client downloads</a> <a class="button button-secondary" href="https://github.com/ProfDrLuigi/Carracho-Server/releases" rel="noreferrer">Server downloads</a></nav>
 <h1>Carracho 1.1.9</h1>
 <p>Carracho <strong>Client 1.1.9 (build 20)</strong> improves the Message Center for returning Guest users and safeguards private-message recipient selection. It also fixes Guest nicknames in chatroom departure notices. <strong>Carracho Server 1.1.7 (build 18)</strong> fixes a critical database-safety bug: changing the administrator password in the macOS Server GUI could erase accounts created by the running daemon. Both the macOS Server app and its installed system-service daemon must be updated; no wire-protocol change is required.</p>
 <h2>Highlights</h2>
@@ -74,7 +76,7 @@
 <li>No previously misattributed historical messages are automatically rewritten or reassigned.</li>
 <li>Interactive testing of Guest disconnect/reconnect, simultaneous Guest nicknames and chatroom presence events is still recommended before public distribution.</li>
 </ul>
-<p>Previous release notes: <a href="README_1.1.8.md">`README_1.1.8.md`</a>.</p>
+<p>Previous release notes: <a href="1.1.8.html">`README_1.1.8.md`</a>.</p>
   </main>
 </body>
 </html>

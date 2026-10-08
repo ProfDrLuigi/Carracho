@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0a101d">
+  <meta name="description" content="Carracho Server downloads and release notes for macOS and Linux.">
+  <title>Carracho Server | Downloads</title>
+  <link rel="icon" href="../assets/carracho-server-icon.png" type="image/png">
+  <link rel="stylesheet" href="../styles.css">
+  <style>
+    .server-downloads { max-width:850px; margin:0 auto; padding:84px 22px 100px; }
+    .server-downloads h1 { font-size:clamp(2.5rem,6vw,4rem); margin:24px 0; }
+    .server-downloads p { color:var(--muted-strong); line-height:1.7; }
+    .server-downloads .links { display:flex; flex-wrap:wrap; gap:12px; margin:28px 0; }
+    .server-downloads h2 { margin-top:54px; }
+    .server-downloads a:not(.button) { color:var(--orange-2); }
+  </style>
+</head>
+<body>
+  <main class="server-downloads">
+    <a href="../">← Carracho home</a>
+    <h1>Carracho Server</h1>
+    <p>Download Server releases separately from the macOS Client. The Server
+       application and background service share a version number, but their source
+       code still lives in the main Carracho project.</p>
+    <p><strong>Latest prepared Server version: 1.1.7 (build 18)</strong></p>
+    <div class="links">
+      <a class="button button-primary" href="https://github.com/ProfDrLuigi/Carracho-Server/releases" rel="noreferrer">Server downloads on GitHub</a>
+      <a class="button button-secondary" href="../releases/Carracho-Server-1.1.7.html">Server 1.1.7 release notes</a>
+    </div>
+    <h2>Separate repositories</h2>
+    <p><a href="https://github.com/ProfDrLuigi/Carracho-Server" rel="noreferrer">Carracho-Server</a> holds the Server release ZIP files and
+       Server-only changelog. The <a href="https://github.com/ProfDrLuigi/Carracho" rel="noreferrer">Carracho source repository</a>
+       contains the shared Xcode project, Server source code and Client downloads.</p>
+    <h2>Automatic updates</h2>
+    <p>Already installed Carracho Servers continue to use the existing
+       <a href="appcast.xml">Sparkle update feed</a>. New Server ZIPs are published
+       in the separate Carracho-Server repository while this feed address stays in place.
+       Historical signed archive URLs are preserved.</p>
+    <p>Before updating, back up the Server database. After updating the macOS
+       Server application, also update the installed daemon using
+       <strong>System Service → Update Now</strong>.</p>
+    <p><a href="../">Back to Carracho home</a></p>
+  </main>
+</body>
+</html>

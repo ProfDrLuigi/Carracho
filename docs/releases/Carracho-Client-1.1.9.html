@@ -15,11 +15,13 @@
     .release-page code { padding:.12em .38em; border-radius:6px; background:rgba(255,255,255,.07); }
     .release-page pre { margin:22px 0; border:1px solid var(--line); border-radius:16px; background:#070b12; }
     .release-back { display:inline-flex; margin-bottom:34px; color:var(--orange-2); text-decoration:none; font-weight:700; }
+    .release-downloads { display:flex; flex-wrap:wrap; gap:12px; margin:0 0 36px; }
   </style>
 </head>
 <body>
   <main class="release-page">
     <a class="release-back" href="../">← Carracho</a>
+    <nav class="release-downloads" aria-label="Downloads"><a class="button button-secondary" href="https://github.com/ProfDrLuigi/Carracho/releases" rel="noreferrer">Client downloads</a></nav>
 <h2>Carracho Client 1.1.9</h2>
 <h3>Refresh Guest chat Online status on reconnect</h3>
 <p>The grouped Message Center conversation now switches from <strong>Offline</strong> to <strong>Online</strong> as soon as a returning Guest appears in the current server user list, without waiting for the first new outgoing message. If the user was viewing the previous Guest archive, the selection and reply composer automatically move to a newly created live routing session while the earlier messages remain visible as separately labeled, unverified history.</p>

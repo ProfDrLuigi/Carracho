@@ -15,11 +15,13 @@
     .release-page code { padding:.12em .38em; border-radius:6px; background:rgba(255,255,255,.07); }
     .release-page pre { margin:22px 0; border:1px solid var(--line); border-radius:16px; background:#070b12; }
     .release-back { display:inline-flex; margin-bottom:34px; color:var(--orange-2); text-decoration:none; font-weight:700; }
+    .release-downloads { display:flex; flex-wrap:wrap; gap:12px; margin:0 0 36px; }
   </style>
 </head>
 <body>
   <main class="release-page">
     <a class="release-back" href="../">← Carracho</a>
+    <nav class="release-downloads" aria-label="Downloads"><a class="button button-secondary" href="https://github.com/ProfDrLuigi/Carracho-Server/releases" rel="noreferrer">Server downloads</a></nav>
 <h2>Carracho Server 1.1.7</h2>
 <h3>Critical: prevent account loss when changing the administrator password</h3>
 <p>Fixed a data-loss defect in the macOS Server administration GUI. When the Server GUI and the background <code>carracho-serverd</code> service had independently loaded the same <code>server.db</code>, the GUI could retain an outdated account snapshot. Changing the administrator password then saved that stale *entire* server state, replacing the current accounts table and removing accounts created or changed by the daemon since the GUI opened. The updated code applies the password change against the latest database state, preserving all other accounts, credentials, newsgroups and server settings.</p>

@@ -28,6 +28,7 @@ class ReleaseNotes119RegressionTests(unittest.TestCase):
             "carrachoserver.html",
             "README.md",
             "docs/index.html",
+            "docs/server/index.html",
             "docs/releases/1.1.9.html",
             "docs/releases/Carracho-Client-1.1.9.html",
             "docs/releases/Carracho-Server-1.1.7.html",
@@ -63,6 +64,26 @@ class ReleaseNotes119RegressionTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         after = {name: (self.base / name).read_bytes() for name in self.files}
         self.assertEqual(before, after, "Regenerating the release should be idempotent")
+        homepage = (self.base / "docs/index.html").read_text()
+        server_landing = (self.base / "docs/server/index.html").read_text()
+        shared_notes = (self.base / "docs/releases/1.1.9.html").read_text()
+        server_notes = (self.base / "docs/releases/Carracho-Server-1.1.7.html").read_text()
+        client_notes = (self.base / "docs/releases/Carracho-Client-1.1.9.html").read_text()
+        separate_server = "https://github.com/ProfDrLuigi/Carracho-Server/releases"
+        original_client = "https://github.com/ProfDrLuigi/Carracho/releases"
+        for rendered in (homepage, server_landing, shared_notes, server_notes):
+            self.assertIn(separate_server, rendered)
+        self.assertIn(original_client, homepage)
+        self.assertIn(original_client, shared_notes)
+        self.assertIn(original_client, client_notes)
+        self.assertNotIn(separate_server, client_notes)
+        self.assertIn("Download Client 1.1.9", homepage)
+        self.assertIn("Download Server 1.1.7", homepage)
+        self.assertIn('href="1.1.8.html"', shared_notes)
+        self.assertIn('href="server/"', homepage)
+        self.assertIn('href="appcast.xml"', server_landing)
+        self.assertIn('Server 1.1.7 release notes', server_landing)
+        self.assertIn('Latest prepared Server version: 1.1.7 (build 18)', server_landing)
         content = (self.base / "carrachoclient.html").read_text()
         current = content.split("New in 1.1.9", 1)[1].split("New in 1.1.8", 1)[0]
         self.assertEqual(len(re.findall(r"<li>", current)), 5)  # build + 4 changes
