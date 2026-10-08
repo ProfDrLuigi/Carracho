@@ -93,6 +93,7 @@ load_github_token() {
 
 verify_github_release_permission() {
     python3 - "$GITHUB_REPO" <<'PYTHON'
+import json
 import os
 import sys
 import urllib.error
@@ -100,6 +101,35 @@ import urllib.request
 
 repo = sys.argv[1]
 token = os.environ.get("GITHUB_TOKEN", "")
+
+# First inspect the permissions granted to THIS token for THIS repository.
+# GitHub sometimes returns HTTP 422 for a deliberately incomplete Release POST
+# even when the token lacks the required repository permission. That is not
+# evidence of permission to publish anything.
+repository_request = urllib.request.Request(f"https://api.github.com/repos/{repo}")
+repository_request.add_header("Accept", "application/vnd.github+json")
+repository_request.add_header("Authorization", f"Bearer {token}")
+repository_request.add_header("X-GitHub-Api-Version", "2022-11-28")
+
+try:
+    with urllib.request.urlopen(repository_request) as response:
+        metadata = json.load(response)
+except urllib.error.HTTPError as exc:
+    print(f"Cannot access {repo} with current GitHub token (HTTP {exc.code}).", file=sys.stderr)
+    print("Fine-grained token: enable Repository access to Carracho-Server and Contents: Read and write.", file=sys.stderr)
+    raise SystemExit(1)
+except urllib.error.URLError as exc:
+    print(f"GitHub repository permission check failed: {exc}", file=sys.stderr)
+    raise SystemExit(1)
+
+permissions = metadata.get("permissions", {})
+if permissions.get("push") is not True:
+    print(f"GitHub token has no repository push permission for {repo}.", file=sys.stderr)
+    print("GitHub Settings → Developer settings → Personal access tokens → Fine-grained tokens:", file=sys.stderr)
+    print("include BOTH Carracho and Carracho-Server under Repository access;", file=sys.stderr)
+    print("set Repository permissions → Contents → Read and write.", file=sys.stderr)
+    raise SystemExit(1)
+
 url = f"https://api.github.com/repos/{repo}/releases"
 
 request = urllib.request.Request(url, data=b"{}", method="POST")

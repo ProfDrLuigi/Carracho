@@ -50,22 +50,47 @@ class ServerReleaseSeparationTests(unittest.TestCase):
                         script.index('cp "$FEED_DIR/appcast.xml" "$DOCS_SERVER/appcast.xml"'))
         self.assertIn('https://github.com/$GITHUB_REPO/releases/download/$TAG/', script)
 
-    def test_signed_existing_server_zips_are_migration_ready(self):
+    def test_migration_checks_published_zip_before_reusing_it(self):
+        # An aborted republish can overwrite the local ZIP with different bytes.
+        # Tests must use a disposable fixture, not assume the live build directory
+        # still contains the originally published EdDSA-signed archive.
         from importlib.util import spec_from_file_location, module_from_spec
+        from unittest.mock import patch
+        import sys
+        repo_scripts = str(ROOT/'scripts/release')
         spec = spec_from_file_location('migrate_server_releases',
                                        ROOT/'scripts/release/migrate_server_releases.py')
-        # The script imports a sibling module; add its directory only during loading.
-        import sys
-        sys.path.insert(0, str(ROOT/'scripts/release'))
+        sys.path.insert(0, repo_scripts)
         try:
             module = module_from_spec(spec)
             spec.loader.exec_module(module)
-            archives = module.artifacts(ROOT)
         finally:
-            sys.path.remove(str(ROOT/'scripts/release'))
-        self.assertEqual([item[0] for item in archives],
-                         ['1.1.3','1.1.4','1.1.5','1.1.6','1.1.7'])
-        self.assertTrue(all(item[2].stat().st_size > 10_000_000 for item in archives))
+            sys.path.remove(repo_scripts)
+
+        with tempfile.TemporaryDirectory(prefix='carracho-server-signed-zip-') as scratch:
+            source = Path(scratch)
+            package = source/'.build/publish-server/1.1.7/Carracho-Server-1.1.7.zip'
+            package.parent.mkdir(parents=True)
+            package.write_bytes(b'test-archive')
+            feed = source/'docs/server/appcast.xml'
+            feed.parent.mkdir(parents=True)
+            feed.write_text('''<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+                <channel><item><title>1.1.7</title><sparkle:version>18</sparkle:version>
+                <enclosure length="12" sparkle:edSignature="base64-signature" /></item></channel>
+                </rss>''' )
+            with patch.object(module, 'versions_and_notes', return_value=[('1.1.7','fix notes','18')]):
+                entries = module.artifacts(source)
+                self.assertEqual([entry[0] for entry in entries], ['1.1.7'])
+                package.write_bytes(b'different-length')
+                with self.assertRaisesRegex(ValueError, 'local archive size differs'):
+                    module.artifacts(source)
+
+    def test_token_preflight_rejects_missing_repository_push_permission(self):
+        script = (ROOT/'scripts/release/publish_server.sh').read_text()
+        self.assertIn('permissions.get("push") is not True', script)
+        self.assertIn('include BOTH Carracho and Carracho-Server', script)
+        self.assertLess(script.index('metadata = json.load(response)'),
+                        script.index('with urllib.request.urlopen(request):'))
 
     def test_client_publisher_unchanged(self):
         script=(ROOT/'scripts/release/publish_client.sh').read_text()

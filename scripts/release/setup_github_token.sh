@@ -4,8 +4,9 @@ set -euo pipefail
 SERVICE="Carracho-GitHub-Publish"
 ACCOUNT="ProfDrLuigi"
 
-echo "GitHub fine-grained token for ProfDrLuigi/Carracho"
-echo "Required repository permissions: Contents read/write."
+echo "GitHub fine-grained token for ProfDrLuigi/Carracho AND ProfDrLuigi/Carracho-Server"
+echo "Required: both repositories selected, Contents: Read and write."
+echo "Existing tokens can be edited on GitHub; no replacement is needed."
 echo
 read -r -s -p "Token: " TOKEN
 echo
