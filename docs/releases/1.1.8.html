@@ -31,6 +31,7 @@
 <li>Hardened background reconnect handling for server agreements and boot-scoped Message Center history.</li>
 <li>Kept the server header at a fixed height across bookmarks so the center workspace no longer jumps vertically when optional banner or server-detail rows appear or disappear.</li>
 <li>News threads and Message Center conversations are now marked read automatically when their content is actually opened or becomes visible again, including already-selected items that received new content while another workspace was active.</li>
+<li>Saved server bookmarks can now be reordered directly in the sidebar by dragging their server icon; the custom order is persisted across launches without changing bookmark identities or connection state.</li>
 <li>Updated the macOS Client to <strong>1.1.8 / build 19</strong>; Carracho Server remains <strong>1.1.6 / build 17</strong>.</li>
 </ul>
 <h2>Carracho Client 1.1.8</h2>
@@ -43,6 +44,9 @@
 <h3>Session snapshot safety during reconnects</h3>
 <p>An unexpected disconnect now preserves the bookmark&#x27;s last valid session snapshot before the shared presentation is reset. Switching away while a reconnect is pending therefore keeps Files, News, users, channels and related per-server presentation state associated with the correct bookmark.</p>
 <p>Once a background reconnect succeeds, server information, the root directory, channels and News groups are refreshed against that bookmark&#x27;s own client before its snapshot is reused.</p>
+<h3>Reorder saved bookmarks</h3>
+<p>Saved server bookmarks in the <strong>Bookmarks</strong> sidebar section can now be reordered by dragging the server icon on the left side of a bookmark row.</p>
+<p>The new order is stored through the existing bookmark persistence layer and restored on the next launch. Reordering only changes presentation order: bookmark UUIDs, Keychain passwords, selected bookmark identity, live connection contexts, unread state and reconnect state remain attached to the same bookmark.</p>
 <h3>Automatic read state when content is opened</h3>
 <p>News and Message Center now treat actually viewing content as the read action, including the awkward case where the same thread or conversation was already selected before new content arrived.</p>
 <p>Returning to <strong>News</strong> with an already-selected thread refreshes that thread when new replies are waiting, then marks the visible posts read. Re-clicking the selected topic does the same instead of relying on AppKit to emit a new selection-change notification.</p>

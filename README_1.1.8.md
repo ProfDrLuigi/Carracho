@@ -11,6 +11,7 @@ Carracho 1.1.8 is a focused **macOS Client reliability release** for bookmark re
 - Hardened background reconnect handling for server agreements and boot-scoped Message Center history.
 - Kept the server header at a fixed height across bookmarks so the center workspace no longer jumps vertically when optional banner or server-detail rows appear or disappear.
 - News threads and Message Center conversations are now marked read automatically when their content is actually opened or becomes visible again, including already-selected items that received new content while another workspace was active.
+- Saved server bookmarks can now be reordered directly in the sidebar by dragging their server icon; the custom order is persisted across launches without changing bookmark identities or connection state.
 - Updated the macOS Client to **1.1.8 / build 19**; Carracho Server remains **1.1.6 / build 17**.
 
 ## Carracho Client 1.1.8
@@ -32,6 +33,12 @@ When a foreground reconnect is already pending and the user switches to another 
 An unexpected disconnect now preserves the bookmark's last valid session snapshot before the shared presentation is reset. Switching away while a reconnect is pending therefore keeps Files, News, users, channels and related per-server presentation state associated with the correct bookmark.
 
 Once a background reconnect succeeds, server information, the root directory, channels and News groups are refreshed against that bookmark's own client before its snapshot is reused.
+
+### Reorder saved bookmarks
+
+Saved server bookmarks in the **Bookmarks** sidebar section can now be reordered by dragging the server icon on the left side of a bookmark row.
+
+The new order is stored through the existing bookmark persistence layer and restored on the next launch. Reordering only changes presentation order: bookmark UUIDs, Keychain passwords, selected bookmark identity, live connection contexts, unread state and reconnect state remain attached to the same bookmark.
 
 ### Automatic read state when content is opened
 

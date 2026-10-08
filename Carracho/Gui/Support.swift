@@ -85,6 +85,178 @@ final class ViewportWidthTableScrollView: NSScrollView {
     }
 }
 
+let bookmarkReorderPasteboardType = NSPasteboard.PasteboardType("com.carracho.server-bookmark")
+let bookmarkRowViewIdentifierPrefix = "carracho.server.bookmark."
+
+/// The existing server icon doubles as a compact drag handle. Keeping the handle separate from
+/// the row button prevents a reorder gesture from accidentally activating or connecting a server.
+final class BookmarkRowDragHandle: NSView, NSDraggingSource {
+    let bookmarkID: UUID
+    weak var draggedView: NSView?
+    var onClick: (() -> Void)?
+    private let imageView = NSImageView()
+    private var draggingStarted = false
+    private var draggedDuringGesture = false
+
+    init(bookmarkID: UUID) {
+        self.bookmarkID = bookmarkID
+        super.init(frame: .zero)
+        toolTip = L("Drag to reorder bookmark")
+        translatesAutoresizingMaskIntoConstraints = false
+        widthAnchor.constraint(equalToConstant: 22).isActive = true
+        heightAnchor.constraint(equalToConstant: 26).isActive = true
+
+        imageView.image = Bundle.main.image(forResource: NSImage.Name("Tracker"))
+            ?? NSImage(named: NSImage.Name("Tracker"))
+        imageView.imageScaling = .scaleProportionallyUpOrDown
+        imageView.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(imageView)
+        NSLayoutConstraint.activate([
+            imageView.centerXAnchor.constraint(equalTo: centerXAnchor),
+            imageView.centerYAnchor.constraint(equalTo: centerYAnchor),
+            imageView.widthAnchor.constraint(equalToConstant: 17),
+            imageView.heightAnchor.constraint(equalToConstant: 17),
+        ])
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: draggingStarted ? .closedHand : .openHand)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        draggingStarted = false
+        draggedDuringGesture = false
+        window?.invalidateCursorRects(for: self)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        if !draggedDuringGesture { onClick?() }
+        draggingStarted = false
+        window?.invalidateCursorRects(for: self)
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard !draggingStarted, let draggedView else { return }
+        draggingStarted = true
+        draggedDuringGesture = true
+        window?.invalidateCursorRects(for: self)
+
+        let item = NSPasteboardItem()
+        item.setString(bookmarkID.uuidString, forType: bookmarkReorderPasteboardType)
+        let draggingItem = NSDraggingItem(pasteboardWriter: item)
+
+        let bounds = draggedView.bounds
+        var snapshot: NSImage?
+        if bounds.width > 0, bounds.height > 0,
+           let rep = draggedView.bitmapImageRepForCachingDisplay(in: bounds) {
+            draggedView.cacheDisplay(in: bounds, to: rep)
+            let image = NSImage(size: bounds.size)
+            image.addRepresentation(rep)
+            snapshot = image
+        }
+        let point = convert(event.locationInWindow, from: nil)
+        draggingItem.setDraggingFrame(
+            NSRect(x: point.x - 11,
+                   y: point.y - max(13, bounds.height / 2),
+                   width: max(1, bounds.width),
+                   height: max(1, bounds.height)),
+            contents: snapshot
+        )
+        let session = beginDraggingSession(with: [draggingItem], event: event, source: self)
+        session.animatesToStartingPositionsOnCancelOrFail = true
+    }
+
+    func draggingSession(_ session: NSDraggingSession,
+                         sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
+        context == .withinApplication ? .move : []
+    }
+
+    func draggingSession(_ session: NSDraggingSession,
+                         endedAt screenPoint: NSPoint,
+                         operation: NSDragOperation) {
+        draggingStarted = false
+        window?.invalidateCursorRects(for: self)
+    }
+
+    func prepareForAcceptedDrop() {
+        draggingStarted = false
+        window?.invalidateCursorRects(for: self)
+    }
+}
+
+/// Flat destination stack for saved-server rows. The destination reports the insertion index
+/// after removing the dragged row, which maps directly to Array.remove/insert semantics.
+final class BookmarkReorderStackView: NSStackView {
+    var onMoveBookmark: ((UUID, Int) -> Void)?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        registerForDraggedTypes([bookmarkReorderPasteboardType])
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        registerForDraggedTypes([bookmarkReorderPasteboardType])
+    }
+
+    private func rowBookmarkID(_ view: NSView) -> UUID? {
+        guard let raw = view.identifier?.rawValue,
+              raw.hasPrefix(bookmarkRowViewIdentifierPrefix) else { return nil }
+        return UUID(uuidString: String(raw.dropFirst(bookmarkRowViewIdentifierPrefix.count)))
+    }
+
+    private func validSource(_ sender: NSDraggingInfo) -> (UUID, NSView, BookmarkRowDragHandle)? {
+        guard let raw = sender.draggingPasteboard.string(forType: bookmarkReorderPasteboardType),
+              let id = UUID(uuidString: raw),
+              let handle = sender.draggingSource as? BookmarkRowDragHandle,
+              handle.bookmarkID == id,
+              let row = handle.draggedView,
+              row.superview === self,
+              arrangedSubviews.contains(where: { $0 === row }),
+              rowBookmarkID(row) == id else { return nil }
+        return (id, row, handle)
+    }
+
+    private func insertionIndex(excluding draggedView: NSView, at point: NSPoint) -> Int? {
+        guard bounds.insetBy(dx: -4, dy: -4).contains(point) else { return nil }
+        let rows = arrangedSubviews.filter { $0 !== draggedView && !$0.isHidden && $0.frame.height > 1 }
+        guard !rows.isEmpty else { return 0 }
+
+        for (index, row) in rows.enumerated() {
+            if isFlipped {
+                if point.y < row.frame.midY { return index }
+            } else if point.y > row.frame.midY {
+                return index
+            }
+        }
+        return rows.count
+    }
+
+    private func validDrop(_ sender: NSDraggingInfo) -> (UUID, Int, BookmarkRowDragHandle)? {
+        guard let (id, row, handle) = validSource(sender) else { return nil }
+        let point = convert(sender.draggingLocation, from: nil)
+        guard let index = insertionIndex(excluding: row, at: point) else { return nil }
+        return (id, index, handle)
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        validDrop(sender) == nil ? [] : .move
+    }
+
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        validDrop(sender) == nil ? [] : .move
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        guard let (id, index, handle) = validDrop(sender) else { return false }
+        handle.prepareForAcceptedDrop()
+        onMoveBookmark?(id, index)
+        return true
+    }
+}
+
 let sidebarBlockPasteboardType = NSPasteboard.PasteboardType("com.carracho.sidebar-block")
 let sidebarBlockViewIdentifierPrefix = "carracho.sidebar.block."
 

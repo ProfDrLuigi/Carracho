@@ -767,7 +767,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
     var autoReconnectAttempt = 0
     var startupBookmarkConnectionQueue: [UUID] = []
     var startupBookmarkConnectionInProgress: UUID?
-    let bookmarkStack = NSStackView()
+    let bookmarkStack = BookmarkReorderStackView()
     let serverBookmarkStore = ServerBookmarkStore()
     let trackerBookmarkStore = TrackerBookmarkStore()
     var trackerBookmarks: [TrackerBookmark] = []
@@ -2505,6 +2505,9 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         bookmarkStack.alignment = .leading
         bookmarkStack.spacing = 2
         bookmarkStack.translatesAutoresizingMaskIntoConstraints = false
+        bookmarkStack.onMoveBookmark = { [weak self] id, index in
+            self?.moveServerBookmark(id: id, to: index)
+        }
         reloadBookmarkStack()
 
         trackerStack.orientation = .vertical
@@ -4783,16 +4786,23 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         DispatchQueue.main.async { [weak self] in self?.activate(bookmark: bookmark) }
     }
 
-    @objc func bookmarkPressed(_ sender: NSButton) {
-        guard serverBookmarks.indices.contains(sender.tag) else { return }
-        let bookmark = serverBookmarks[sender.tag]
+    func activateBookmarkFromSidebar(id: UUID, clickCount: Int) {
+        guard let bookmark = serverBookmarks.first(where: { $0.id == id }) else { return }
         activate(bookmark: bookmark)
 
         // A single click only activates/switches the bookmark. Double-click keeps the
         // convenient connect shortcut for a disconnected bookmark.
-        guard NSApp.currentEvent?.clickCount ?? 1 >= 2, activeBookmarkConnectionID == bookmark.id,
+        guard clickCount >= 2, activeBookmarkConnectionID == bookmark.id,
               !client.isConnected else { return }
         connect(to: bookmark)
+    }
+
+    @objc func bookmarkPressed(_ sender: NSButton) {
+        guard serverBookmarks.indices.contains(sender.tag) else { return }
+        activateBookmarkFromSidebar(
+            id: serverBookmarks[sender.tag].id,
+            clickCount: NSApp.currentEvent?.clickCount ?? 1
+        )
     }
 
     func cancelAutoReconnect(clearBookmark: Bool = true) {
@@ -5645,6 +5655,15 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         }
     }
 
+    func moveServerBookmark(id: UUID, to destinationIndex: Int) {
+        guard let sourceIndex = serverBookmarks.firstIndex(where: { $0.id == id }) else { return }
+        let bookmark = serverBookmarks.remove(at: sourceIndex)
+        let target = min(max(0, destinationIndex), serverBookmarks.count)
+        serverBookmarks.insert(bookmark, at: target)
+        saveServerBookmarks()
+        reloadBookmarkStack()
+    }
+
     func reloadBookmarkStack() {
         defer { updateDockPrivateMessageBadge() }
         for view in bookmarkStack.arrangedSubviews {
@@ -5663,11 +5682,12 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
 
         for (index, bookmark) in serverBookmarks.enumerated() {
             let row = CarrachoBackgroundView()
+            row.identifier = NSUserInterfaceItemIdentifier(bookmarkRowViewIdentifierPrefix + bookmark.id.uuidString)
             row.fillColor = bookmark.id == selectedBookmarkID ? CarrachoTheme.selectionSoft : .clear
             row.translatesAutoresizingMaskIntoConstraints = false
             row.heightAnchor.constraint(equalToConstant: 32).isActive = true
 
-            // Keep saved-server cards deliberately compact: icon, server name, status and edit.
+            // Keep saved-server cards deliberately compact: draggable server icon, name, status and edit.
             // Endpoint/login details belong in the bookmark editor, not in a second card line.
             let open = BookmarkActionButton(title: "", target: self, action: #selector(bookmarkPressed(_:)))
             open.tag = index
@@ -5675,22 +5695,21 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
             open.toolTip = LF("Click to activate; double-click to connect to %@:%@", bookmark.host, String(bookmark.port))
             open.translatesAutoresizingMaskIntoConstraints = false
 
-            let icon = NSImageView()
-            icon.image = Bundle.main.image(forResource: NSImage.Name("Tracker"))
-                ?? NSImage(named: NSImage.Name("Tracker"))
-            icon.imageScaling = .scaleProportionallyUpOrDown
-            icon.translatesAutoresizingMaskIntoConstraints = false
-            NSLayoutConstraint.activate([
-                icon.widthAnchor.constraint(equalToConstant: 17),
-                icon.heightAnchor.constraint(equalToConstant: 17),
-            ])
+            let dragHandle = BookmarkRowDragHandle(bookmarkID: bookmark.id)
+            dragHandle.draggedView = row
+            dragHandle.onClick = { [weak self] in
+                self?.activateBookmarkFromSidebar(
+                    id: bookmark.id,
+                    clickCount: NSApp.currentEvent?.clickCount ?? 1
+                )
+            }
             let name = NSTextField(labelWithString: bookmark.name)
             name.font = .systemFont(ofSize: 11.5, weight: .medium)
             name.lineBreakMode = .byTruncatingTail
             name.toolTip = bookmark.name
             name.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
             let statusDot = bookmarkStatusDot(for: bookmark.id)
-            var bookmarkViews: [NSView] = [icon, statusDot, name]
+            var bookmarkViews: [NSView] = [statusDot, name]
             let context = bookmarkConnections[bookmark.id]
             let pendingApprovalCount = context?.pendingUploadApprovalCount ?? 0
             if pendingApprovalCount > 0 {
@@ -5726,15 +5745,18 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
             // the edit button is added later and therefore remains an independent hit target.
             row.addSubview(open)
             row.addSubview(openContent)
+            row.addSubview(dragHandle)
             row.addSubview(edit)
             NSLayoutConstraint.activate([
                 open.leadingAnchor.constraint(equalTo: row.leadingAnchor),
                 open.trailingAnchor.constraint(equalTo: row.trailingAnchor),
                 open.topAnchor.constraint(equalTo: row.topAnchor),
                 open.bottomAnchor.constraint(equalTo: row.bottomAnchor),
+                dragHandle.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 2),
+                dragHandle.centerYAnchor.constraint(equalTo: row.centerYAnchor),
                 edit.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -4),
                 edit.centerYAnchor.constraint(equalTo: row.centerYAnchor),
-                openContent.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 6),
+                openContent.leadingAnchor.constraint(equalTo: dragHandle.trailingAnchor, constant: 1),
                 openContent.trailingAnchor.constraint(equalTo: edit.leadingAnchor, constant: -4),
                 openContent.topAnchor.constraint(equalTo: row.topAnchor, constant: 3),
                 openContent.bottomAnchor.constraint(equalTo: row.bottomAnchor, constant: -3),

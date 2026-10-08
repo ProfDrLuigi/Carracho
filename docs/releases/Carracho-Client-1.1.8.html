@@ -30,6 +30,9 @@
 <h3>Session snapshot safety during reconnects</h3>
 <p>An unexpected disconnect now preserves the bookmark&#x27;s last valid session snapshot before the shared presentation is reset. Switching away while a reconnect is pending therefore keeps Files, News, users, channels and related per-server presentation state associated with the correct bookmark.</p>
 <p>Once a background reconnect succeeds, server information, the root directory, channels and News groups are refreshed against that bookmark&#x27;s own client before its snapshot is reused.</p>
+<h3>Reorder saved bookmarks</h3>
+<p>Saved server bookmarks in the <strong>Bookmarks</strong> sidebar section can now be reordered by dragging the server icon on the left side of a bookmark row.</p>
+<p>The new order is stored through the existing bookmark persistence layer and restored on the next launch. Reordering only changes presentation order: bookmark UUIDs, Keychain passwords, selected bookmark identity, live connection contexts, unread state and reconnect state remain attached to the same bookmark.</p>
 <h3>Automatic read state when content is opened</h3>
 <p>News and Message Center now treat actually viewing content as the read action, including the awkward case where the same thread or conversation was already selected before new content arrived.</p>
 <p>Returning to <strong>News</strong> with an already-selected thread refreshes that thread when new replies are waiting, then marks the visible posts read. Re-clicking the selected topic does the same instead of relying on AppKit to emit a new selection-change notification.</p>
