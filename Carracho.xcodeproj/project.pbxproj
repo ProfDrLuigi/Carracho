@@ -53,7 +53,6 @@
 		2A3840A8305961C500D5C253 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 2A3840A7305961C500D5C253 /* Sparkle */; };
 /* End PBXBuildFile section */
 
-
 /* Begin PBXContainerItemProxy section */
 		2A9D10093080000100DA0009 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -69,13 +68,13 @@
 		2A13EC59305AA7FD002A3039 /* carrachoserver.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; path = carrachoserver.html; sourceTree = "<group>"; };
 		2A3840A9305961DB00D5C253 /* Carracho-Server-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = "Carracho-Server-Info.plist"; sourceTree = "<group>"; };
 		2A8153BA3061161A007CA770 /* build-debs.sh */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; path = "build-debs.sh"; sourceTree = "<group>"; };
+		2A9D10013080000100DA0001 /* carracho-serverd */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = "carracho-serverd"; sourceTree = BUILT_PRODUCTS_DIR; };
 		2A9F00023071111100A10002 /* Version-Client.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = "Version-Client.xcconfig"; sourceTree = "<group>"; };
 		2A9F00033071111100A10003 /* Version-Server.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = "Version-Server.xcconfig"; sourceTree = "<group>"; };
 		2A9F00043071111100A10004 /* Release.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Release.xcconfig; sourceTree = "<group>"; };
 		2AD52C523052E26B00CD47B6 /* Carracho.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Carracho.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		2AD53F4B3054732E00CD47B6 /* Carracho Server.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Carracho Server.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		2AD542343055691A00CD47B6 /* compile.sh */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; path = compile.sh; sourceTree = "<group>"; };
-		2A9D10013080000100DA0001 /* carracho-serverd */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = carracho-serverd; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -102,6 +101,57 @@
 				Webinterface/web/index.html,
 			);
 			target = 2AD52C513052E26B00CD47B6 /* Carracho */;
+		};
+		2A9D10023080000100DA0002 /* Exceptions for "Carracho" folder in "Carracho Server Daemon" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				AppDelegate.swift,
+				CarrachoTheme.swift,
+				Client/AvatarImageProcessor.swift,
+				Client/ClientSoundPreferences.swift,
+				Client/HTMLTextRenderer.swift,
+				Client/LocalAvatarStore.swift,
+				Client/MediaAttachmentSupport.swift,
+				Client/MessageCenterStore.swift,
+				Client/NewsReadStateStore.swift,
+				Client/ServerBookmarkKeychain.swift,
+				Client/ServerBookmarkStore.swift,
+				Gui/Accounts.swift,
+				Gui/Administration.swift,
+				Gui/Advanced.swift,
+				Gui/Agreement.swift,
+				Gui/BotFileWatcherAdministration.swift,
+				Gui/BotRSSAdministration.swift,
+				Gui/Conferences.swift,
+				Gui/Events.swift,
+				Gui/Files.swift,
+				Gui/InputDelegates.swift,
+				Gui/Localization.swift,
+				Gui/MessageCenter.swift,
+				Gui/News.swift,
+				Gui/NewsAdmin.swift,
+				Gui/ServerInfo.swift,
+				Gui/ServerLog.swift,
+				Gui/Settings.swift,
+				Gui/Statistics.swift,
+				Gui/Support.swift,
+				Gui/Tracker.swift,
+				Gui/Transfers.swift,
+				Gui/Users.swift,
+				Networking/AuthenticatedTransferStream.swift,
+				Networking/LegacyBannerClient.swift,
+				Networking/LegacyControlClient.swift,
+				Networking/LegacyFileSearchClient.swift,
+				Networking/LegacyFileTransferClient.swift,
+				Networking/LegacyMediaClient.swift,
+				Networking/LegacyNewsClient.swift,
+				Networking/LegacyTrackerClient.swift,
+				ServerApp/CarrachoDaemonSupport.swift,
+				ServerApp/CarrachoServerApp.swift,
+				ViewController.swift,
+				Webinterface/macos/CarrachoWebAdminService.swift,
+			);
+			target = 2A9D10053080000100DA0005 /* Carracho Server Daemon */;
 		};
 		2AD53F4C3054732F00CD47B6 /* Exceptions for "Carracho" folder in "Carracho Server" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
@@ -168,75 +218,6 @@
 			);
 			target = 2AD53F443054732E00CD47B6 /* Carracho Server */;
 		};
-		2A9D10023080000100DA0002 /* Exceptions for "Carracho" folder in "Carracho Server Daemon" target */ = {
-			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
-			membershipExceptions = (
-				Gui/BotRSSAdministration.swift,
-				Gui/BotFileWatcherAdministration.swift,
-				"/Localized: Main.storyboard",
-				AppDelegate.swift,
-				CarrachoTheme.swift,
-				Client/AvatarImageProcessor.swift,
-				Client/ClientSoundPreferences.swift,
-				Client/HTMLTextRenderer.swift,
-				Client/LocalAvatarStore.swift,
-				Client/MediaAttachmentSupport.swift,
-				Client/MessageCenterStore.swift,
-				Client/NewsReadStateStore.swift,
-				Client/ServerBookmarkKeychain.swift,
-				Client/ServerBookmarkStore.swift,
-				Gui/Accounts.swift,
-				Gui/Administration.swift,
-				Gui/Advanced.swift,
-				Gui/Agreement.swift,
-				Gui/Conferences.swift,
-				Gui/Events.swift,
-				Gui/Files.swift,
-				Gui/InputDelegates.swift,
-				Gui/Localization.swift,
-				Gui/MessageCenter.swift,
-				Gui/News.swift,
-				Gui/NewsAdmin.swift,
-				Gui/ServerInfo.swift,
-				Gui/ServerLog.swift,
-				Gui/Settings.swift,
-				Gui/Statistics.swift,
-				Gui/Support.swift,
-				Gui/Tracker.swift,
-				Gui/Transfers.swift,
-				Gui/Users.swift,
-				Info.plist,
-				Networking/AuthenticatedTransferStream.swift,
-				Networking/LegacyBannerClient.swift,
-				Networking/LegacyControlClient.swift,
-				Networking/LegacyFileSearchClient.swift,
-				Networking/LegacyFileTransferClient.swift,
-				Networking/LegacyMediaClient.swift,
-				Networking/LegacyNewsClient.swift,
-				Networking/LegacyTrackerClient.swift,
-				ServerApp/CarrachoDaemonSupport.swift,
-				ServerApp/CarrachoServerApp.swift,
-				ViewController.swift,
-				Webinterface/docs/BACKEND_INTEGRATION.md,
-				Webinterface/docs/CODESIGN_ONEFILE_V8.md,
-				Webinterface/docs/COPY_BUNDLE_RESOURCES_CLEANUP.md,
-				Webinterface/docs/XCODE_BUILD_PHASE.md,
-				Webinterface/docs/XCODE_BUILD_PHASE_V6.md,
-				Webinterface/docs/XCODE_INTEGRATION.md,
-				Webinterface/helper/web_admin.py,
-				Webinterface/macos/CarrachoWebAdminService.swift,
-				Webinterface/README.md,
-				"Webinterface/scripts/build-helper.sh",
-				"Webinterface/scripts/cleanup-old-build-artifacts.sh",
-				"Webinterface/scripts/embed-into-app.sh",
-				"Webinterface/scripts/verify-bundle.sh",
-				"Webinterface/scripts/xcode-build-and-embed-helper.sh",
-				"Webinterface/scripts/xcode-build-phase.sh",
-				"Webinterface/scripts/xcode-copy-helper.sh",
-				Webinterface/web/index.html,
-			);
-			target = 2A9D10053080000100DA0005 /* Carracho Server Daemon */;
-		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -273,6 +254,13 @@
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		2A9D10033080000100DA0003 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		2AD52C4F3052E26B00CD47B6 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -286,13 +274,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				2A3840A8305961C500D5C253 /* Sparkle in Frameworks */,
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		2A9D10033080000100DA0003 /* Frameworks */ = {
-			isa = PBXFrameworksBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -340,6 +321,27 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		2A9D10053080000100DA0005 /* Carracho Server Daemon */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 2A9D10083080000100DA0008 /* Build configuration list for PBXNativeTarget "Carracho Server Daemon" */;
+			buildPhases = (
+				2A9D10043080000100DA0004 /* Sources */,
+				2A9D10033080000100DA0003 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				2AD52C543052E26B00CD47B6 /* Carracho */,
+			);
+			name = "Carracho Server Daemon";
+			packageProductDependencies = (
+			);
+			productName = "carracho-serverd";
+			productReference = 2A9D10013080000100DA0001 /* carracho-serverd */;
+			productType = "com.apple.product-type.tool";
+		};
 		2AD52C513052E26B00CD47B6 /* Carracho */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 2AD52C603052E26C00CD47B6 /* Build configuration list for PBXNativeTarget "Carracho" */;
@@ -389,27 +391,6 @@
 			productReference = 2AD53F4B3054732E00CD47B6 /* Carracho Server.app */;
 			productType = "com.apple.product-type.application";
 		};
-		2A9D10053080000100DA0005 /* Carracho Server Daemon */ = {
-			isa = PBXNativeTarget;
-			buildConfigurationList = 2A9D10083080000100DA0008 /* Build configuration list for PBXNativeTarget "Carracho Server Daemon" */;
-			buildPhases = (
-				2A9D10043080000100DA0004 /* Sources */,
-				2A9D10033080000100DA0003 /* Frameworks */,
-			);
-			buildRules = (
-			);
-			dependencies = (
-			);
-			fileSystemSynchronizedGroups = (
-				2AD52C543052E26B00CD47B6 /* Carracho */,
-			);
-			name = "Carracho Server Daemon";
-			packageProductDependencies = (
-			);
-			productName = carracho-serverd;
-			productReference = 2A9D10013080000100DA0001 /* carracho-serverd */;
-			productType = "com.apple.product-type.tool";
-		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -423,13 +404,13 @@
 					2A80A9BF305D5B9600ECFBC3 = {
 						CreatedOnToolsVersion = 26.6;
 					};
+					2A9D10053080000100DA0005 = {
+						CreatedOnToolsVersion = 26.6;
+					};
 					2AD52C513052E26B00CD47B6 = {
 						CreatedOnToolsVersion = 26.6;
 					};
 					2AD5497D30556A4100CD47B6 = {
-						CreatedOnToolsVersion = 26.6;
-					};
-					2A9D10053080000100DA0005 = {
 						CreatedOnToolsVersion = 26.6;
 					};
 				};
@@ -534,24 +515,6 @@
 			shellPath = /bin/sh;
 			shellScript = "\"${SRCROOT}/Carracho/Webinterface/scripts/xcode-build-phase.sh\"\n";
 		};
-		2AD5498230556A4900CD47B6 /* Sync Server */ = {
-			isa = PBXShellScriptBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			inputFileListPaths = (
-			);
-			inputPaths = (
-			);
-			name = "Sync Server";
-			outputFileListPaths = (
-			);
-			outputPaths = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-			shellPath = /bin/sh;
-			shellScript = "#!/bin/bash\n\nset -euo pipefail\n\nTARGET=\"pi@wired.istation.pw:/opt/carracho/sources/\"\nRSYNC_SHELL=\"/usr/bin/ssh -p 7022 -o BatchMode=yes\"\n\nsync_dir() {\n    local source_dir=\"$1\"\n    if [ ! -d \"$source_dir\" ]; then\n        echo \"error: source directory missing: $source_dir\" >&2\n        exit 1\n    fi\n    /usr/bin/rsync -avh --delete -e \"$RSYNC_SHELL\" \"$source_dir\" \"$TARGET\"\n}\n\nsync_file() {\n    local source_file=\"$1\"\n    if [ ! -f \"$source_file\" ]; then\n        echo \"error: source file missing: $source_file\" >&2\n        exit 1\n    fi\n    /usr/bin/rsync -avh -e \"$RSYNC_SHELL\" \"$source_file\" \"$TARGET\"\n}\n\nsync_dir \"${SRCROOT}/ServerLinux\"\nsync_dir \"${SRCROOT}/TrackerLinux\"\nsync_dir \"${SRCROOT}/scripts\"\n\n# Native Linux builds read these metadata files from the synced source root.\nsync_file \"${SRCROOT}/Version-Server.xcconfig\"\nsync_file \"${SRCROOT}/Release.xcconfig\"\nsync_file \"${SRCROOT}/compile.sh\"\n";
-		};
 		2A9D100B3080000100DA000B /* Embed Server Daemon */ = {
 			isa = PBXShellScriptBuildPhase;
 			buildActionMask = 2147483647;
@@ -572,9 +535,34 @@
 			shellPath = /bin/sh;
 			shellScript = "set -eu\nSOURCE=\"$BUILT_PRODUCTS_DIR/carracho-serverd\"\nDEST=\"$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Helpers/carracho-serverd\"\nif [ ! -x \"$SOURCE\" ]; then\n    echo \"error: daemon executable missing: $SOURCE\" >&2\n    exit 1\nfi\n/bin/mkdir -p \"$(dirname \"$DEST\")\"\n/usr/bin/ditto \"$SOURCE\" \"$DEST\"\n/bin/chmod 755 \"$DEST\"\n";
 		};
+		2AD5498230556A4900CD47B6 /* Sync Server */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Sync Server";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "#!/bin/bash\n\nset -euo pipefail\n\nTARGET=\"pi@wired.istation.pw:/opt/carracho/sources/\"\nRSYNC_SHELL=\"/usr/bin/ssh -p 7022 -o BatchMode=yes\"\n\nsync_dir() {\n    local source_dir=\"$1\"\n    if [ ! -d \"$source_dir\" ]; then\n        echo \"error: source directory missing: $source_dir\" >&2\n        exit 1\n    fi\n    /usr/bin/rsync -avh --delete -e \"$RSYNC_SHELL\" \"$source_dir\" \"$TARGET\"\n}\n\nsync_file() {\n    local source_file=\"$1\"\n    if [ ! -f \"$source_file\" ]; then\n        echo \"error: source file missing: $source_file\" >&2\n        exit 1\n    fi\n    /usr/bin/rsync -avh -e \"$RSYNC_SHELL\" \"$source_file\" \"$TARGET\"\n}\n\nsync_dir \"${SRCROOT}/ServerLinux\"\nsync_dir \"${SRCROOT}/TrackerLinux\"\nsync_dir \"${SRCROOT}/scripts\"\n\n# Native Linux builds read these metadata files from the synced source root.\nsync_file \"${SRCROOT}/Version-Server.xcconfig\"\nsync_file \"${SRCROOT}/Release.xcconfig\"\nsync_file \"${SRCROOT}/compile.sh\"\n";
+		};
 /* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		2A9D10043080000100DA0004 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		2AD52C4E3052E26B00CD47B6 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -589,15 +577,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		2A9D10043080000100DA0004 /* Sources */ = {
-			isa = PBXSourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
 /* End PBXSourcesBuildPhase section */
-
 
 /* Begin PBXTargetDependency section */
 		2A9D100A3080000100DA000A /* PBXTargetDependency */ = {
@@ -645,6 +625,56 @@
 				CODE_SIGN_STYLE = Automatic;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+			};
+			name = Release;
+		};
+		2A9D10063080000100DA0006 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 2A9F00033071111100A10003 /* Version-Server.xcconfig */;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CREATE_INFOPLIST_SECTION_IN_BINARY = YES;
+				ENABLE_APP_SANDBOX = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleIdentifier = luigi.com.carracho.server.daemon;
+				INFOPLIST_KEY_CFBundleName = "carracho-serverd";
+				INFOPLIST_KEY_CFBundleShortVersionString = "$(MARKETING_VERSION)";
+				INFOPLIST_KEY_CFBundleVersion = "$(CURRENT_PROJECT_VERSION)";
+				MACOSX_DEPLOYMENT_TARGET = 10.15;
+				PRODUCT_BUNDLE_IDENTIFIER = luigi.com.carracho.server.daemon;
+				PRODUCT_NAME = "carracho-serverd";
+				SKIP_INSTALL = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) CARRACHO_SERVER CARRACHO_SERVER_DAEMON";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		2A9D10073080000100DA0007 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 2A9F00033071111100A10003 /* Version-Server.xcconfig */;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CREATE_INFOPLIST_SECTION_IN_BINARY = YES;
+				ENABLE_APP_SANDBOX = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleIdentifier = luigi.com.carracho.server.daemon;
+				INFOPLIST_KEY_CFBundleName = "carracho-serverd";
+				INFOPLIST_KEY_CFBundleShortVersionString = "$(MARKETING_VERSION)";
+				INFOPLIST_KEY_CFBundleVersion = "$(CURRENT_PROJECT_VERSION)";
+				MACOSX_DEPLOYMENT_TARGET = 10.15;
+				PRODUCT_BUNDLE_IDENTIFIER = luigi.com.carracho.server.daemon;
+				PRODUCT_NAME = "carracho-serverd";
+				SKIP_INSTALL = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) CARRACHO_SERVER CARRACHO_SERVER_DAEMON";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
 			};
 			name = Release;
 		};
@@ -932,56 +962,6 @@
 			};
 			name = Release;
 		};
-		2A9D10063080000100DA0006 /* Debug */ = {
-			isa = XCBuildConfiguration;
-			baseConfigurationReference = 2A9F00033071111100A10003 /* Version-Server.xcconfig */;
-			buildSettings = {
-				CODE_SIGN_STYLE = Automatic;
-				CREATE_INFOPLIST_SECTION_IN_BINARY = YES;
-				ENABLE_APP_SANDBOX = NO;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleIdentifier = luigi.com.carracho.server.daemon;
-				INFOPLIST_KEY_CFBundleName = carracho-serverd;
-				INFOPLIST_KEY_CFBundleShortVersionString = "$(MARKETING_VERSION)";
-				INFOPLIST_KEY_CFBundleVersion = "$(CURRENT_PROJECT_VERSION)";
-				MACOSX_DEPLOYMENT_TARGET = 10.15;
-				PRODUCT_BUNDLE_IDENTIFIER = luigi.com.carracho.server.daemon;
-				PRODUCT_NAME = carracho-serverd;
-				SKIP_INSTALL = YES;
-				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) CARRACHO_SERVER CARRACHO_SERVER_DAEMON";
-				SWIFT_APPROACHABLE_CONCURRENCY = YES;
-				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
-				SWIFT_EMIT_LOC_STRINGS = NO;
-				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
-				SWIFT_VERSION = 5.0;
-			};
-			name = Debug;
-		};
-		2A9D10073080000100DA0007 /* Release */ = {
-			isa = XCBuildConfiguration;
-			baseConfigurationReference = 2A9F00033071111100A10003 /* Version-Server.xcconfig */;
-			buildSettings = {
-				CODE_SIGN_STYLE = Automatic;
-				CREATE_INFOPLIST_SECTION_IN_BINARY = YES;
-				ENABLE_APP_SANDBOX = NO;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleIdentifier = luigi.com.carracho.server.daemon;
-				INFOPLIST_KEY_CFBundleName = carracho-serverd;
-				INFOPLIST_KEY_CFBundleShortVersionString = "$(MARKETING_VERSION)";
-				INFOPLIST_KEY_CFBundleVersion = "$(CURRENT_PROJECT_VERSION)";
-				MACOSX_DEPLOYMENT_TARGET = 10.15;
-				PRODUCT_BUNDLE_IDENTIFIER = luigi.com.carracho.server.daemon;
-				PRODUCT_NAME = carracho-serverd;
-				SKIP_INSTALL = YES;
-				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) CARRACHO_SERVER CARRACHO_SERVER_DAEMON";
-				SWIFT_APPROACHABLE_CONCURRENCY = YES;
-				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
-				SWIFT_EMIT_LOC_STRINGS = NO;
-				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
-				SWIFT_VERSION = 5.0;
-			};
-			name = Release;
-		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -999,6 +979,15 @@
 			buildConfigurations = (
 				2A80A9C7305D5EF400ECFBC3 /* Debug */,
 				2A80A9C8305D5EF400ECFBC3 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		2A9D10083080000100DA0008 /* Build configuration list for PBXNativeTarget "Carracho Server Daemon" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				2A9D10063080000100DA0006 /* Debug */,
+				2A9D10073080000100DA0007 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
@@ -1035,15 +1024,6 @@
 			buildConfigurations = (
 				2AD5497F30556A4100CD47B6 /* Debug */,
 				2AD5498030556A4100CD47B6 /* Release */,
-			);
-			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Release;
-		};
-		2A9D10083080000100DA0008 /* Build configuration list for PBXNativeTarget "Carracho Server Daemon" */ = {
-			isa = XCConfigurationList;
-			buildConfigurations = (
-				2A9D10063080000100DA0006 /* Debug */,
-				2A9D10073080000100DA0007 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

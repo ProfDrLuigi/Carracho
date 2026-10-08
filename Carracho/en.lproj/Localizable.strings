@@ -2150,4 +2150,10 @@
 "%@ unread News posts" = "%@ unread News posts";
 "News, %@ unread post" = "News, %@ unread post";
 "News, %@ unread posts" = "News, %@ unread posts";
-\n"Drag to reorder bookmark" = "Drag to reorder bookmark";\n
+
+"Drag to reorder bookmark" = "Drag to reorder bookmark";
+
+"Ignore User" = "Ignore User";
+"Stop Ignoring" = "Stop Ignoring";
+"Edit User Account…" = "Edit User Account…";
+"This user has no editable login account, or the server does not expose their login." = "This user has no editable login account, or the server does not expose their login.";

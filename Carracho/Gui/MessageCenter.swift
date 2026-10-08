@@ -1181,6 +1181,7 @@ extension ViewController {
 
     func appendPrivateMessage(userID: UInt32, message: Data, outgoing: Bool, timestamp: Date = Date(),
                               id: UUID = UUID(), editable: Bool = false, reactable: Bool = false) {
+        guard outgoing || !isIgnoredUser(userID) else { return }
         var conversation = ensurePrivateConversation(userID: userID)
         let conversationID = conversation.id
         let entry = PrivateMessageEntry(id: id, timestamp: timestamp, outgoing: outgoing, message: message,
@@ -1380,7 +1381,8 @@ extension ViewController {
     }
 
     func selectPrivateConversation(_ conversationID: UUID, focusComposer: Bool) {
-        guard privateMessageConversations[conversationID] != nil else { return }
+        guard let conversation = privateMessageConversations[conversationID],
+              !isIgnoredConversation(conversation) else { return }
         selectedOfflineMessages = false
         if let previousID = selectedPrivateConversationID, previousID != conversationID,
            var previous = privateMessageConversations[previousID] {
@@ -1576,7 +1578,8 @@ extension ViewController {
                 }
             }
         } else if let conversationID = selectedPrivateConversationID,
-                  let conversation = privateMessageConversations[conversationID] {
+                  let conversation = privateMessageConversations[conversationID],
+                  !isIgnoredConversation(conversation) {
             if conversation.entries.isEmpty {
                 privateMessageEmptyLabel.stringValue = conversation.isLegacyTransport
                     ? L("This user is on a Classic client. Every message you send is delivered as a normal individual Private Message.")
@@ -1675,7 +1678,8 @@ extension ViewController {
         }
 
         guard let conversationID = selectedPrivateConversationID,
-              let conversation = privateMessageConversations[conversationID] else {
+              let conversation = privateMessageConversations[conversationID],
+              !isIgnoredConversation(conversation) else {
             privateMessageClearChatButton.isHidden = true
             privateMessageDeleteChatButton.isHidden = true
             privateMessageHeaderAvatar.image = nil
@@ -1716,6 +1720,7 @@ extension ViewController {
     }
 
     func openPrivateConversation(with user: LegacyUserListEntry, focusComposer: Bool = true) {
+        guard !isIgnoredUser(user.userID) else { return }
         let conversation = ensurePrivateConversation(userID: user.userID)
         selectWorkspace(.messageCenter)
         selectPrivateConversation(conversation.id, focusComposer: focusComposer)

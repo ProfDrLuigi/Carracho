@@ -1,9 +1,16 @@
-# Carracho 1.1.8
+# Carracho 1.1.7
 
-Carracho 1.1.8 is a focused **macOS Client reliability release** for bookmark reconnection after sleep/wake and transient connection loss. The Client advances to **1.1.8 (build 19)**, while Carracho Server remains at **1.1.6 (build 17)** because this release contains no Server changes.
+Carracho **Client 1.1.7 (build 18)** brings improved user context menus, personal Ignore controls, bookmark organization, more reliable reconnection and accurate read status. It also consolidates the existing multi-bookmark stability improvements into this release. **Carracho Server remains 1.1.6 (build 17)**; Classic/Legacy packet layouts are unchanged.
 
 ## Highlights
 
+- Edit a connected user's account directly from the user-list context menu as an authorized administrator, without visiting **Accounts** first.
+- Use the same context menu in the conference participant list, with actions bound to the actual clicked user.
+- Ignore or unignore users without administrator privileges; hide their private messages and conference messages, and suppress new-message notifications and unread counts.
+- See ignored users with a strikethrough nickname in the regular and conference user lists.
+- Switch immediately from a stalled/offline server bookmark to another connected server without leaving the previous server's empty workspace on screen.
+- Restore the correct status and control state when selecting an existing server connection, and prevent late callbacks from one server affecting another.
+- Correct the German/English localization of the new context-menu actions.
 - Fixed a multi-bookmark reconnect bug that could leave one bookmark selected while its underlying client reconnected with another bookmark's host and login, causing data such as the Files view to come from the wrong server.
 - Auto-reconnect state is now isolated per saved bookmark instead of sharing one global retry identity.
 - Connected background bookmarks with auto-reconnect enabled now retry independently after an unexpected disconnect.
@@ -12,9 +19,47 @@ Carracho 1.1.8 is a focused **macOS Client reliability release** for bookmark re
 - Kept the server header at a fixed height across bookmarks so the center workspace no longer jumps vertically when optional banner or server-detail rows appear or disappear.
 - News threads and Message Center conversations are now marked read automatically when their content is actually opened or becomes visible again, including already-selected items that received new content while another workspace was active.
 - Saved server bookmarks can now be reordered directly in the sidebar by dragging their server icon; the custom order is persisted across launches without changing bookmark identities or connection state.
-- Updated the macOS Client to **1.1.8 / build 19**; Carracho Server remains **1.1.6 / build 17**.
+- Updated the macOS Client to **1.1.7 / build 18**; Carracho Server remains **1.1.6 / build 17**.
 
-## Carracho Client 1.1.8
+## Carracho Client 1.1.7
+
+## User-list and conference context menus
+Both the main server user list and each conference's participant list now offer the same right-click menu. Depending on connection state and permissions, it provides **Info**, **Message**, **Ignore User / Stop Ignoring**, **Edit User Account…**, **Kick** and **Ban**. The own-user **Sleep** action remains available where applicable.
+
+Conference actions are attached to the exact clicked user ID, rather than relying on a potentially unrelated selection in the main user list. Sorting the participant list therefore does not redirect a menu action to another user.
+
+### Direct administrator account editing
+
+The **Edit User Account…** action is available only to authorized administrators. It resolves the selected live user's login and opens the existing account editor, with the usual server-side permission checks. On modern servers, the client automatically requests account groups and membership if the **Accounts** page has not been opened yet. On Classic servers, the existing Classic account editor is used. The account must expose an editable login.
+
+This fixes the error that previously appeared on the first direct edit attempt until the administrator visited **Accounts** to initialize the groups.
+
+### Personal Ignore action
+
+Any user can choose **Ignore User** on someone else. This is a **local display/notification preference**, not a kick or a server-side ban:
+
+- New private messages and conference chat entries from that user are not shown or saved to the local conversation/transcript during the ignore.
+- Existing private conversations are hidden rather than deleted. They become visible again after **Stop Ignoring**.
+- Ignored conversations no longer contribute new-message notifications or unread badges, including when other connected bookmarks are running in the background.
+- In the normal user list and the conference participant list, the ignored user's **nickname is struck through**, preserving its existing name color. Both lists refresh as soon as the setting changes.
+- Users cannot ignore their own account through this action.
+
+For modern peers with **stable account UUIDs**, an ignore is saved per server endpoint and local login, persists across application restarts and follows that account's identity. On older/Classic peers that provide only reusable numeric session IDs, the ignore applies **only to the current connection** to avoid mistakenly silencing someone else after a reconnect. If a stable identity becomes available during the session, the ignore can be promoted to that identity.
+
+## Bookmark switching and failed connections
+
+Switching away from an offline server while its TCP connection is still pending no longer leaves the previous bookmark's empty workspace visible. The destination bookmark becomes active immediately, including an already-established session on another server.
+
+- The new bookmark's own session snapshot, workspace data, status label and Connect/Disconnect control are restored together.
+- The shared presentation is cleared before loading a different bookmark's state, avoiding stale Files or Overview content.
+- Connection callbacks are tied to the originating client. A timeout or login result that arrives later for the old bookmark cannot replace the selected server's UI.
+- A connecting bookmark can continue its own connection attempt in the background. A server agreement is never accepted on the user's behalf.
+
+This addresses the case where a failed **Zeb's** connection left an empty Files/Overview panel displayed even after selecting the already-connected **Admin** bookmark.
+
+## Localization
+
+The English and German `Localizable.strings` resources now correctly parse the new context-menu entries. In German, the actions are **Benutzerkonto bearbeiten…**, **Ignorieren** and **Ignorieren aufheben**. The issue was a malformed newline sequence in the resource file, not missing translations.
 
 ### Multi-bookmark reconnect isolation
 
@@ -59,7 +104,6 @@ Server agreements are never accepted automatically during a hidden background re
 Message Center handling also revalidates the server boot namespace after a background reconnect. Stable account-UUID conversations can survive the reconnect, while numeric routing-ID history is only restored or persisted again after the current server boot has been confirmed from server uptime.
 
 ## Carracho Server 1.1.6
-
 ### Dedicated Server and Tracker system services
 
 The macOS Server and Tracker can now run as two independent launchd system services. Both jobs use the same compact carracho-serverd helper embedded in the Server app, while Server and Tracker retain separate launchd jobs and separate running/automatic-start state.
@@ -86,9 +130,11 @@ Choosing **Update Now** performs the same privileged service refresh used by the
 
 ## Compatibility notes
 
-- Classic/Legacy protocol packet layouts are unchanged in Client 1.1.8.
-- This release changes Client bookmark/reconnect state management only; Carracho Server remains **1.1.6 / build 17**.
-- Auto-reconnect continues to apply to saved bookmarks that have the option enabled; merely selecting an unconnected bookmark does not implicitly start a background connection.
-- Background reconnects do not bypass server agreement prompts.
-- Message Center conversations with stable account UUIDs remain durable across reconnects; numeric session identities remain protected by the server-boot namespace.
-- The macOS Client is **1.1.8 / build 19**. macOS Server and native Linux Server remain **1.1.6 / build 17**.
+- Classic/Legacy protocol packet layouts are unchanged in Client 1.1.7.
+- Account editing requires server-granted administrator/account-management rights; Ignoring users is a local feature that does not require administrator privileges.
+- Auto-reconnect continues to apply only to saved bookmarks with the option enabled. Selecting a previously unconnected bookmark does not automatically start a background connection.
+- Background reconnects never bypass server agreement prompts.
+- Message Center conversations with stable account UUIDs remain durable across reconnects; numeric routing identities are protected by server-boot scoping.
+- Modern-user Ignore settings can persist using stable account UUIDs; Classic/numeric-only ignores are limited to their current connection to avoid blocking the wrong person.
+- A successful client build does not replace user-to-user integration testing, app signing, notarization or distribution verification.
+- The macOS Client is **1.1.7 / build 18**. macOS Server and native Linux Server remain **1.1.6 / build 17**.

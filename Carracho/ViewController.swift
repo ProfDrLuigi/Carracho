@@ -1199,6 +1199,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
     let fileLoadingIndicator = NSProgressIndicator()
     let fileContextMenu = NSMenu(title: L("File Actions"))
     let userContextMenu = NSMenu(title: L("User Actions"))
+    let channelMemberContextMenu = NSMenu(title: L("User Actions"))
 
     var lastLoginResult: LegacyLoginResult?
     var lastServerInfo: LegacyServerInfo?
@@ -1395,6 +1396,9 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
     var privateMessageSearchQuery = ""
     var isReloadingPrivateMessageTable = false
     var liveUsers: [UInt32: LegacyUserListEntry] = [:]
+    /// Classic routing IDs are valid only in the current session, never across reconnects.
+    var sessionIgnoredUserIDs: [UUID: Set<UInt32>] = [:]
+    var directSessionIgnoredUserIDs: Set<UInt32> = []
     var selectedUserID: UInt32?
     var isReloadingUserTable = false
     var sleepingUsers: Set<UInt32> = []
@@ -1871,6 +1875,8 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         channelMemberTable.intercellSpacing = NSSize(width: 0, height: 2)
         channelMemberTable.target = self
         channelMemberTable.doubleAction = #selector(showSelectedChannelMemberInfo(_:))
+        channelMemberContextMenu.delegate = self
+        channelMemberTable.menu = channelMemberContextMenu
 
         channelJoinButton.target = self
         channelJoinButton.action = #selector(joinSelectedChannel(_:))
@@ -4091,6 +4097,25 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         transferMonitorOrder = []
         clientTransferTasks = [:]
         clientTransferOperations = [:]
+        lastLoginResult = nil
+        lastServerInfo = nil
+        lastDirectory = nil
+        remoteServerUptimeSeconds = nil
+        remoteServerUptimeObservedAt = nil
+        serverUptimeDisplayTimer?.invalidate()
+        serverUptimeDisplayTimer = nil
+        fileTransferClient = nil
+        fileSearchClient = nil
+        bannerClient = nil
+        currentBanner = nil
+        fileSearchResults = nil
+        fileNavigationHistory = []
+        fileNavigationIndex = -1
+        expandedFilePaths = []
+        expandedDirectoryListings = [:]
+        selectedFilePaths = []
+        pendingFileScrollRestoreY = nil
+        fileShouldResetScrollOnNextReload = true
         selectedTransferID = nil
         selectedRemoteTransferID = nil
         remoteTransferSnapshot = []
@@ -4193,6 +4218,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         fileSearchField.stringValue = ""
         fileTransferLabel.stringValue = ""
         currentWorkspace = .overview
+        placeSharedWorkspaceCards(for: .overview)
         tabView.selectTabViewItem(withIdentifier: Workspace.overview.deckIdentifier)
         refreshTransferMonitorUI()
         reloadCatalogViews()
@@ -4328,6 +4354,10 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
 
     func backgroundNotificationIncrement(for event: LegacyControlEvent,
                                                  context: BookmarkConnectionContext) -> Int {
+        if let snapshot = context.snapshot,
+           isIgnoredIncomingMessage(event, users: snapshot.liveUsers,
+                                    scope: snapshot.messageCenterPersistenceScope,
+                                    bookmarkID: context.bookmarkID) { return 0 }
         switch event {
         case .privateMessage, .broadcastMessage, .channelInvitation, .flatNewsPosted:
             return 1
@@ -4346,6 +4376,9 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
                                              context: BookmarkConnectionContext,
                                              client target: LegacyControlClient) -> Bool {
         guard var snapshot = context.snapshot else { return false }
+        if isIgnoredIncomingMessage(event, users: snapshot.liveUsers,
+                                    scope: snapshot.messageCenterPersistenceScope,
+                                    bookmarkID: context.bookmarkID) { return true }
 
         switch event {
         case let .userArrived(user):
@@ -4354,6 +4387,9 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
             return false
 
         case let .userUpdated(userID, nickname, picture, statusMessage, accountID):
+            promoteSessionIgnore(userID: userID, accountID: accountID,
+                                 scope: snapshot.messageCenterPersistenceScope,
+                                 bookmarkID: context.bookmarkID)
             if var user = snapshot.liveUsers[userID] {
                 user.nickname = nickname
                 user.picture = picture
@@ -4422,6 +4458,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
             return false
 
         case let .userDisconnected(userID):
+            sessionIgnoredUserIDs[context.bookmarkID]?.remove(userID)
             if let accountID = snapshot.liveUsers[userID]?.accountID,
                var conversation = snapshot.privateMessageConversations[accountID] {
                 conversation.userID = nil
@@ -4671,7 +4708,11 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
             reloadBookmarkStack()
             return
         }
-        if connectionSetupBookmarkID != nil, connectionSetupBookmarkID == activeBookmarkConnectionID {
+        // Only a completed login still running its post-login bootstrap requires a deferred
+        // switch. A TCP attempt to an offline host may time out for a long time; it must never
+        // lock the user onto that bookmark while another session is already connected.
+        if connectionSetupBookmarkID != nil, connectionSetupBookmarkID == activeBookmarkConnectionID,
+           lastLoginResult != nil {
             pendingBookmarkActivationID = bookmark.id
             selectedBookmarkID = bookmark.id
             saveServerBookmarks()
@@ -4688,14 +4729,12 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
             // unconditionally before swapping clients; otherwise a healthy old bookmark can
             // leave its reconnect identity behind and reconnect the new bookmark to the wrong host.
             cancelAutoReconnect()
-            switch client.state {
-            case .connecting, .handshaking, .authenticating:
-                showBookmarkError(LegacyControlClientError.invalidInput(L("Wait for the current connection attempt to finish before switching bookmarks.")))
-                return
-            default:
-                break
-            }
+            // Keep a still-connecting session running under its own bookmark in the background.
+            // Its completion callback is routed back to that bookmark, not into the new UI.
             parkActiveBookmarkConnection()
+            if connectionSetupBookmarkID == previousBookmarkID {
+                connectionSetupBookmarkID = nil
+            }
         } else if client.isConnected {
             // An ad-hoc connection has no bookmark to park safely.
             client.disconnect()
@@ -4765,6 +4804,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
                 self?.connect(to: bookmark)
             }
         }
+        refreshActiveBookmarkConnectionState()
         reloadBookmarkStack()
 
         if previousHadForegroundReconnect,
@@ -4776,6 +4816,47 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
             )
             scheduleBackgroundAutoReconnect(for: previousBookmarkID)
         }
+    }
+
+    /// Rebind the bottom status bar and Connect button when selecting an existing client.
+    /// Do not call apply(state:): its idle/failed paths would erase a parked session.
+    func refreshActiveBookmarkConnectionState() {
+        let busy: Bool
+        switch client.state {
+        case .idle:
+            statusLabel.stringValue = L("Not connected")
+            statusLabel.textColor = .secondaryLabelColor
+            busy = false
+        case .connecting:
+            statusLabel.stringValue = L("TCP connection…")
+            statusLabel.textColor = .secondaryLabelColor
+            busy = true
+        case .handshaking:
+            statusLabel.stringValue = L("Carracho handshake…")
+            statusLabel.textColor = .secondaryLabelColor
+            busy = true
+        case .authenticating:
+            statusLabel.stringValue = L("Signing in…")
+            statusLabel.textColor = .secondaryLabelColor
+            busy = true
+        case .connected:
+            statusLabel.stringValue = L("Connected")
+            statusLabel.textColor = .systemGreen
+            busy = false
+        case .disconnecting:
+            statusLabel.stringValue = L("Disconnecting…")
+            statusLabel.textColor = .secondaryLabelColor
+            busy = true
+        case .failed:
+            statusLabel.stringValue = L("Error")
+            statusLabel.textColor = .systemRed
+            busy = false
+        }
+        CarrachoTheme.setPrimaryButtonTitle(
+            connectButton, busy ? L("Connecting…") : (client.isConnected ? L("Disconnect") : L("Connect")))
+        connectButton.isEnabled = !busy
+        setInputsEnabled(!busy && !client.isConnected)
+        refreshShellChrome()
     }
 
     func activatePendingBookmarkIfPossible() {
@@ -6253,6 +6334,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
             if let bookmarkID, let context = self.bookmarkConnections[bookmarkID] {
                 switch state {
                 case .connected:
+                    self.sessionIgnoredUserIDs.removeValue(forKey: bookmarkID)
                     self.cancelBackgroundAutoReconnect(for: context)
                 case .failed:
                     self.stopBackgroundNewsPolling(for: context)
@@ -6303,6 +6385,10 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
                     }
                 }
             }
+            if let snapshot = context.snapshot,
+               self.isIgnoredIncomingMessage(event, users: snapshot.liveUsers,
+                                             scope: snapshot.messageCenterPersistenceScope,
+                                             bookmarkID: bookmarkID) { return }
             let messageCenterEventWasApplied = self.persistBackgroundMessageCenterEvent(
                 event, context: context, client: target
             )
@@ -6376,18 +6462,52 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
             cancelAutoReconnect()
         }
 
+        if let bookmarkID = connectingBookmarkID ?? activeBookmarkConnectionID {
+            sessionIgnoredUserIDs.removeValue(forKey: bookmarkID)
+        } else { directSessionIgnoredUserIDs.removeAll() }
         resetSessionViews()
         detailsTextView.string = LF("Connecting to %@:%@…\n", host, String(port))
 
         let connectingLogin = loginField.stringValue
         let setupBookmarkID = activeBookmarkConnectionID
+        let requestClient = client
         connectionSetupBookmarkID = setupBookmarkID
-        client.connect(host: host,
-                       port: port,
-                       login: connectingLogin,
-                       password: passwordField.stringValue,
-                       nickname: nicknameField.stringValue) { [weak self] result in
-            guard let self else { return }
+        requestClient.connect(host: host,
+                              port: port,
+                              login: connectingLogin,
+                              password: passwordField.stringValue,
+                              nickname: nicknameField.stringValue) { [weak self, weak requestClient] result in
+            guard let self, let requestClient else { return }
+            if self.client !== requestClient || self.activeBookmarkConnectionID != setupBookmarkID {
+                self.finishStartupBookmarkConnection(setupBookmarkID)
+                guard let setupBookmarkID,
+                      let context = self.bookmarkConnections[setupBookmarkID],
+                      context.client === requestClient,
+                      let bookmark = self.serverBookmarks.first(where: { $0.id == setupBookmarkID }) else { return }
+                switch result {
+                case .failure:
+                    // Socket failure is handled by this background client's state callback.
+                    if !requestClient.isConnected, context.autoReconnectWorkItem == nil {
+                        self.scheduleBackgroundAutoReconnect(for: setupBookmarkID)
+                    }
+                case let .success(login):
+                    if login.agreement != nil {
+                        context.reconnectRequiresForegroundAgreement = true
+                        context.needsForegroundBootstrap = false
+                        context.reconnectLoginResult = nil
+                        requestClient.disconnect()
+                    } else {
+                        context.reconnectLoginResult = login
+                        context.needsForegroundBootstrap = true
+                        self.prepareBackgroundReconnectSnapshot(bookmark: bookmark, context: context, login: login)
+                        self.refreshBackgroundReconnectSnapshot(bookmark: bookmark, context: context)
+                        requestClient.setOfflineMessagePreference(enabled: bookmark.acceptsOfflineMessages) { _ in }
+                        self.startBackgroundNewsPolling(for: context)
+                    }
+                    self.reloadBookmarkStack()
+                }
+                return
+            }
             switch result {
             case let .failure(error):
                 if self.connectionSetupBookmarkID == setupBookmarkID { self.connectionSetupBookmarkID = nil }
@@ -6403,8 +6523,10 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
                 self.userStatusMessages = [:]
                 self.userGroupColors = [:]
                 self.renderSession()
-                self.presentLoginAgreementIfNeeded(login.agreement, serverName: login.serverName) { [weak self] accepted in
-                    guard let self else { return }
+                self.presentLoginAgreementIfNeeded(login.agreement, serverName: login.serverName) { [weak self, weak requestClient] accepted in
+                    guard let self, let requestClient,
+                          self.client === requestClient,
+                          self.activeBookmarkConnectionID == setupBookmarkID else { return }
                     guard accepted else {
                         if self.connectionSetupBookmarkID == setupBookmarkID { self.connectionSetupBookmarkID = nil }
                         self.deferredInteractiveEvents.removeAll()
@@ -7563,6 +7685,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
     var displayedPrivateMessageConversations: [PrivateMessageConversation] {
         let query = privateMessageSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         let filtered = privateMessageConversations.values.filter { conversation in
+            guard !isIgnoredConversation(conversation) else { return false }
             guard !query.isEmpty else { return true }
             if conversation.nickname.range(of: query, options: [.caseInsensitive, .diacriticInsensitive]) != nil { return true }
             guard let last = conversation.entries.last else { return false }
@@ -7584,15 +7707,22 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
     }
 
     var privateMessageUnreadCount: Int {
-        let conversations = privateMessageConversations.values.reduce(0) { min(999, $0 + $1.unreadCount) }
+        let conversations = privateMessageConversations.values
+            .filter { !isIgnoredConversation($0) }
+            .reduce(0) { min(999, $0 + $1.unreadCount) }
         return min(999, conversations + offlineMessageCenterUnreadCount)
     }
 
     var dockPrivateMessageUnreadCount: Int {
-        var total = privateMessageConversations.values.reduce(0) { min(10_000, $0 + $1.unreadCount) }
+        var total = privateMessageConversations.values
+            .filter { !isIgnoredConversation($0) }
+            .reduce(0) { min(10_000, $0 + $1.unreadCount) }
         for (bookmarkID, context) in bookmarkConnections where bookmarkID != activeBookmarkConnectionID {
             guard let snapshot = context.snapshot else { continue }
             for conversation in snapshot.privateMessageConversations.values {
+                guard !isIgnoredConversation(conversation, users: snapshot.liveUsers,
+                                             scope: snapshot.messageCenterPersistenceScope,
+                                             bookmarkID: bookmarkID) else { continue }
                 total = min(10_000, total + conversation.unreadCount)
             }
         }
@@ -7625,6 +7755,9 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
     }
 
     func handle(_ event: LegacyControlEvent) {
+        if isIgnoredIncomingMessage(event, users: liveUsers,
+                                    scope: messageCenterPersistenceScope,
+                                    bookmarkID: activeBookmarkConnectionID) { return }
         if isAwaitingAgreementAcceptance {
             switch event {
             case .offlineMessagesAvailable, .privateMessage, .channelInvitation, .broadcastMessage:
@@ -7650,6 +7783,8 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
             refreshPrivateMessageCenter(scrollToBottom: false)
             updateUserActionButtons()
         case let .userDisconnected(userID):
+            if let bookmarkID = activeBookmarkConnectionID { sessionIgnoredUserIDs[bookmarkID]?.remove(userID) }
+            else { directSessionIgnoredUserIDs.remove(userID) }
             let departedName = liveUsers[userID].map { Self.macRomanString($0.nickname) } ?? L("Unknown User")
             emitClientEvent(.userSignedOut,
                             notificationTitle: L("User signed out"),
@@ -7692,6 +7827,9 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
                                  id: message.messageID ?? UUID(),
                                  reactable: message.messageID != nil && client.supportsPrivateMessageReactions)
         case let .userUpdated(userID, nickname, picture, statusMessage, accountID):
+            promoteSessionIgnore(userID: userID, accountID: accountID,
+                                 scope: messageCenterPersistenceScope,
+                                 bookmarkID: activeBookmarkConnectionID)
             if var user = liveUsers[userID] {
                 user.nickname = nickname
                 user.picture = picture

@@ -2150,4 +2150,10 @@
 "%@ unread News posts" = "%@ ungelesene News-Beiträge";
 "News, %@ unread post" = "News, %@ ungelesener Beitrag";
 "News, %@ unread posts" = "News, %@ ungelesene Beiträge";
-\n"Drag to reorder bookmark" = "Ziehen, um das Lesezeichen neu anzuordnen";\n
+
+"Drag to reorder bookmark" = "Ziehen, um das Lesezeichen neu anzuordnen";
+
+"Ignore User" = "Ignorieren";
+"Stop Ignoring" = "Ignorieren aufheben";
+"Edit User Account…" = "Benutzerkonto bearbeiten…";
+"This user has no editable login account, or the server does not expose their login." = "Dieser Benutzer hat kein bearbeitbares Login-Konto oder der Server stellt den Login nicht bereit.";

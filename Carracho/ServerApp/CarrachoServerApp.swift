@@ -786,7 +786,7 @@ final class CarrachoServerWindowController: NSWindowController, NSTextFieldDeleg
 
     convenience init() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 920, height: 660),
+            contentRect: NSRect(x: 0, y: 0, width: 920, height: 740),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false

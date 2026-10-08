@@ -1043,45 +1043,49 @@ extension ViewController {
         menu.addItem(refresh)
     }
 
-    func populateUserActionMenu(_ menu: NSMenu) {
+    // Both the global user list and the conference participant list share the same commands.
+    // Every item carries its exact user ID, so sorting or another selection cannot redirect a click.
+    func populateUserActionMenu(_ menu: NSMenu, user: LegacyUserListEntry?) {
         menu.removeAllItems()
-        updateUserActionButtons()
-
-        guard selectedUserEntry != nil else {
+        guard let user else {
             let none = NSMenuItem(title: L("No user selected"), action: nil, keyEquivalent: "")
             none.isEnabled = false
             menu.addItem(none)
             return
         }
 
-        let info = NSMenuItem(title: L("Info"), action: #selector(showSelectedUserInfo(_:)), keyEquivalent: "")
-        info.target = self
-        info.isEnabled = userInfoButton.isEnabled
-        menu.addItem(info)
+        let connected = client.isConnected
+        let ownUser = user.userID == lastLoginResult?.session.userID
+        let ignored = isIgnoredUser(user.userID)
 
-        let message = NSMenuItem(title: L("Message"), action: #selector(messageSelectedUser(_:)), keyEquivalent: "")
-        message.target = self
-        message.isEnabled = userMessageButton.isEnabled
-        menu.addItem(message)
+        func addAction(_ title: String, selector: Selector, enabled: Bool) {
+            let item = NSMenuItem(title: L(title), action: selector, keyEquivalent: "")
+            item.target = self
+            item.representedObject = NSNumber(value: user.userID)
+            item.isEnabled = enabled
+            menu.addItem(item)
+        }
 
-        if !presenceButton.isHidden {
-            let sleep = NSMenuItem(title: presenceButton.title, action: #selector(toggleOwnPresence(_:)), keyEquivalent: "")
-            sleep.target = self
-            sleep.isEnabled = presenceButton.isEnabled
-            menu.addItem(sleep)
+        addAction("Info", selector: #selector(showSelectedUserInfo(_:)), enabled: connected)
+        addAction("Message", selector: #selector(messageSelectedUser(_:)), enabled: connected && !ignored)
+        if !ownUser {
+            addAction(ignored ? "Stop Ignoring" : "Ignore User",
+                      selector: #selector(toggleIgnoreSelectedUser(_:)), enabled: connected)
+        } else if !sleepingUsers.contains(user.userID) {
+            addAction("Sleep", selector: #selector(toggleOwnPresence(_:)), enabled: connected)
         }
 
         menu.addItem(.separator())
 
-        let kick = NSMenuItem(title: L("Kick"), action: #selector(kickSelectedUser(_:)), keyEquivalent: "")
-        kick.target = self
-        kick.isEnabled = userDisconnectButton.isEnabled
-        menu.addItem(kick)
+        if isRemoteAdministrator && canManageRemoteAccounts {
+            addAction("Edit User Account…", selector: #selector(editSelectedUserAccount(_:)), enabled: connected)
+            menu.addItem(.separator())
+        }
 
-        let ban = NSMenuItem(title: L("Ban"), action: #selector(banSelectedUser(_:)), keyEquivalent: "")
-        ban.target = self
-        ban.isEnabled = userBanButton.isEnabled
-        menu.addItem(ban)
+        addAction("Kick", selector: #selector(kickSelectedUser(_:)),
+                  enabled: connected && !ownUser && remotePermissionEnabled(LegacyAccountPermissionBit.disconnectUsers))
+        addAction("Ban", selector: #selector(banSelectedUser(_:)),
+                  enabled: connected && !ownUser && remotePermissionEnabled(LegacyAccountPermissionBit.banUsers))
     }
 
     @objc func fileLabelMenuSelected(_ sender: NSMenuItem) {
@@ -1147,13 +1151,28 @@ extension ViewController {
     func menuNeedsUpdate(_ menu: NSMenu) {
         if menu === userContextMenu {
             let clicked = userTable.clickedRow
-            if clicked >= 0, clicked < visibleUsers.count {
+            if clicked >= 0 && clicked < visibleUsers.count {
                 if userTable.selectedRow != clicked {
                     userTable.selectRowIndexes(IndexSet(integer: clicked), byExtendingSelection: false)
                 }
                 selectedUserID = visibleUsers[clicked].userID
             }
-            populateUserActionMenu(menu)
+            let user = (clicked >= 0 && clicked < visibleUsers.count)
+                ? visibleUsers[clicked] : selectedUserEntry
+            populateUserActionMenu(menu, user: user)
+            return
+        }
+        if menu === channelMemberContextMenu {
+            let clicked = channelMemberTable.clickedRow
+            guard clicked >= 0 && clicked < sortedChannelMembers.count else {
+                populateUserActionMenu(menu, user: nil)
+                return
+            }
+            if channelMemberTable.selectedRow != clicked {
+                channelMemberTable.selectRowIndexes(IndexSet(integer: clicked), byExtendingSelection: false)
+            }
+            let userID = sortedChannelMembers[clicked].userID
+            populateUserActionMenu(menu, user: liveUsers[userID])
             return
         }
 

@@ -187,7 +187,7 @@ extension ViewController {
         let ownUserID = lastLoginResult?.session.userID
         let mayModerateSelection = selectedUser.map { $0.userID != ownUserID } ?? false
         userInfoButton.isEnabled = connected && selected
-        userMessageButton.isEnabled = connected && selected
+        userMessageButton.isEnabled = connected && selected && selectedUser.map { !isIgnoredUser($0.userID) } == true
         let offlineSendingAllowed = canSendOfflineMessages
         userOfflineMessageButton.isHidden = connected && !offlineSendingAllowed
         userOfflineMessageButton.isEnabled = offlineSendingAllowed
@@ -207,8 +207,17 @@ extension ViewController {
         presenceButton.isEnabled = connected && ownSelected && ownUserID.map { !sleepingUsers.contains($0) } == true
     }
 
+    /// Resolve the menu's captured participant, falling back to the ordinary button selection.
+    func userForAction(_ sender: Any?) -> LegacyUserListEntry? {
+        if let item = sender as? NSMenuItem,
+           let identifier = item.representedObject as? NSNumber {
+            return liveUsers[identifier.uint32Value]
+        }
+        return selectedUserEntry
+    }
+
     @objc func showSelectedUserInfo(_ sender: Any?) {
-        guard let user = selectedUserEntry else { return }
+        guard let user = userForAction(sender) else { return }
         userInfoButton.isEnabled = false
         client.requestUserInfo(userID: user.userID) { [weak self] result in
             guard let self else { return }
@@ -504,13 +513,140 @@ extension ViewController {
         alert.beginSheetModal(for: window)
     }
 
+    // A stable account UUID is the only cross-session identity we can trust. Classic routing
+    // IDs may be recycled, so the Classic fallback is scoped to the live connection only.
+    private static var ignoredAccountsDefaultsKey: String { "Carracho.IgnoredAccountIDs.v1" }
+
+    func ignoredAccountIDs(in scope: MessageCenterStoreScope?) -> Set<UUID> {
+        guard let scope else { return [] }
+        let key = "\(scope.host.count):\(scope.host)|\(scope.port)|\(scope.login)"
+        let saved = UserDefaults.standard.dictionary(forKey: Self.ignoredAccountsDefaultsKey) as? [String: [String]] ?? [:]
+        return Set((saved[key] ?? []).compactMap(UUID.init(uuidString:)))
+    }
+
+    func setAccountIgnored(_ accountID: UUID, ignored: Bool, scope: MessageCenterStoreScope) {
+        let key = "\(scope.host.count):\(scope.host)|\(scope.port)|\(scope.login)"
+        var saved = UserDefaults.standard.dictionary(forKey: Self.ignoredAccountsDefaultsKey) as? [String: [String]] ?? [:]
+        var accountIDs = Set((saved[key] ?? []).compactMap(UUID.init(uuidString:)))
+        if ignored { accountIDs.insert(accountID) } else { accountIDs.remove(accountID) }
+        if accountIDs.isEmpty { saved.removeValue(forKey: key) }
+        else { saved[key] = accountIDs.map(\.uuidString).sorted() }
+        UserDefaults.standard.set(saved, forKey: Self.ignoredAccountsDefaultsKey)
+    }
+
+    /// Promote an ignore chosen before the server supplies its stable account identity.
+    func promoteSessionIgnore(userID: UInt32, accountID: UUID?,
+                              scope: MessageCenterStoreScope?, bookmarkID: UUID?) {
+        guard let accountID, let scope else { return }
+        let wasIgnored: Bool
+        if let bookmarkID {
+            wasIgnored = sessionIgnoredUserIDs[bookmarkID]?.remove(userID) != nil
+        } else {
+            wasIgnored = directSessionIgnoredUserIDs.remove(userID) != nil
+        }
+        if wasIgnored { setAccountIgnored(accountID, ignored: true, scope: scope) }
+    }
+
+    func isIgnoredUser(_ userID: UInt32, users: [UInt32: LegacyUserListEntry],
+                       scope: MessageCenterStoreScope?, bookmarkID: UUID?) -> Bool {
+        if let bookmarkID {
+            if sessionIgnoredUserIDs[bookmarkID]?.contains(userID) == true { return true }
+        } else if directSessionIgnoredUserIDs.contains(userID) { return true }
+        guard let accountID = users[userID]?.accountID else { return false }
+        return ignoredAccountIDs(in: scope).contains(accountID)
+    }
+
+    func isIgnoredUser(_ userID: UInt32) -> Bool {
+        isIgnoredUser(userID, users: liveUsers, scope: messageCenterPersistenceScope,
+                      bookmarkID: activeBookmarkConnectionID)
+    }
+
+    func isIgnoredConversation(_ conversation: PrivateMessageConversation,
+                               users: [UInt32: LegacyUserListEntry],
+                               scope: MessageCenterStoreScope?, bookmarkID: UUID?) -> Bool {
+        if let accountID = conversation.accountID,
+           ignoredAccountIDs(in: scope).contains(accountID) { return true }
+        guard let userID = conversation.userID else { return false }
+        return isIgnoredUser(userID, users: users, scope: scope, bookmarkID: bookmarkID)
+    }
+
+    func isIgnoredConversation(_ conversation: PrivateMessageConversation) -> Bool {
+        isIgnoredConversation(conversation, users: liveUsers, scope: messageCenterPersistenceScope,
+                              bookmarkID: activeBookmarkConnectionID)
+    }
+
+    func isIgnoredIncomingMessage(_ event: LegacyControlEvent,
+                                  users: [UInt32: LegacyUserListEntry],
+                                  scope: MessageCenterStoreScope?, bookmarkID: UUID?) -> Bool {
+        switch event {
+        case let .privateMessage(message):
+            return isIgnoredUser(message.senderUserID, users: users, scope: scope, bookmarkID: bookmarkID)
+        case let .channelMessage(message):
+            return isIgnoredUser(message.senderUserID, users: users, scope: scope, bookmarkID: bookmarkID)
+        default:
+            return false
+        }
+    }
+
+    @objc func toggleIgnoreSelectedUser(_ sender: Any?) {
+        guard client.isConnected, let user = userForAction(sender),
+              user.userID != lastLoginResult?.session.userID else { return }
+        let ignored = !isIgnoredUser(user.userID)
+        if let accountID = user.accountID, let scope = messageCenterPersistenceScope {
+            setAccountIgnored(accountID, ignored: ignored, scope: scope)
+        } else if let bookmarkID = activeBookmarkConnectionID {
+            var users = sessionIgnoredUserIDs[bookmarkID] ?? []
+            if ignored { users.insert(user.userID) } else { users.remove(user.userID) }
+            sessionIgnoredUserIDs[bookmarkID] = users
+        } else {
+            if ignored { directSessionIgnoredUserIDs.insert(user.userID) }
+            else { directSessionIgnoredUserIDs.remove(user.userID) }
+        }
+
+        if ignored, let selectedID = selectedPrivateConversationID,
+           let conversation = privateMessageConversations[selectedID],
+           isIgnoredConversation(conversation) {
+            privateMessageAttachments.imageIDs.forEach(deletePendingMedia)
+            privateMessageAttachments.clear()
+            selectedPrivateConversationID = nil
+            privateMessageComposer.string = ""
+        }
+        refreshPrivateMessageCenter(scrollToBottom: false)
+        renderActiveChannelTranscript()
+        reloadJoinedChannelSidebar()
+        reloadUserTablePreservingSelection()
+        channelMemberTable.reloadData()
+        updateUserActionButtons()
+        updateDockPrivateMessageBadge()
+    }
+
+    @objc func editSelectedUserAccount(_ sender: Any?) {
+        guard isRemoteAdministrator, canManageRemoteAccounts,
+              let user = userForAction(sender) else { return }
+        let requestedClient = client
+        client.requestUserInfo(userID: user.userID) { [weak self, weak requestedClient] result in
+            guard let self, let requestedClient, self.client === requestedClient,
+                  self.isRemoteAdministrator, self.canManageRemoteAccounts else { return }
+            switch result {
+            case let .success(info):
+                guard info.userID == user.userID, let login = info.loginName, !login.isEmpty else {
+                    self.showError(L("This user has no editable login account, or the server does not expose their login."))
+                    return
+                }
+                self.openRemoteAccountEditor(login: login)
+            case let .failure(error):
+                self.showError(LF("User Info could not be loaded: %@", Self.displayMessage(for: error)))
+            }
+        }
+    }
+
     @objc func messageSelectedUser(_ sender: Any?) {
-        guard let user = selectedUserEntry else { return }
+        guard let user = userForAction(sender) else { return }
         openPrivateConversation(with: user)
     }
 
     @objc func kickSelectedUser(_ sender: Any?) {
-        guard let user = selectedUserEntry, let window = view.window,
+        guard let user = userForAction(sender), let window = view.window,
               user.userID != lastLoginResult?.session.userID else { return }
         let nickname = Self.macRomanString(user.nickname)
         let alert = NSAlert()
@@ -533,7 +669,7 @@ extension ViewController {
     }
 
     @objc func banSelectedUser(_ sender: Any?) {
-        guard let user = selectedUserEntry, let window = view.window,
+        guard let user = userForAction(sender), let window = view.window,
               user.userID != lastLoginResult?.session.userID else { return }
         let nickname = Self.macRomanString(user.nickname)
         let alert = NSAlert()
@@ -621,7 +757,7 @@ extension ViewController {
 
     @objc func toggleOwnPresence(_ sender: Any?) {
         guard let ownID = lastLoginResult?.session.userID,
-              selectedUserEntry?.userID == ownID,
+              userForAction(sender)?.userID == ownID,
               !sleepingUsers.contains(ownID) else { return }
         presenceButton.isEnabled = false
         client.setPresence(sleeping: true) { [weak self] result in
@@ -637,6 +773,17 @@ extension ViewController {
                 self.appendLine("\n" + LF("Sleep could not be enabled: %@", Self.displayMessage(for: error)))
             }
         }
+    }
+
+    /// Apply a visible ignore marker to the nickname only, preserving its group color.
+    func styleIgnoredNickname(_ field: NSTextField, userID: UInt32) {
+        guard isIgnoredUser(userID) else { return }
+        let text = NSMutableAttributedString(string: field.stringValue)
+        let range = NSRange(location: 0, length: text.length)
+        text.addAttribute(.font, value: field.font ?? NSFont.systemFont(ofSize: 12.5), range: range)
+        text.addAttribute(.foregroundColor, value: field.textColor ?? NSColor.labelColor, range: range)
+        text.addAttribute(.strikethroughStyle, value: NSUnderlineStyle.single.rawValue, range: range)
+        field.attributedStringValue = text
     }
 
     func userListCell(for user: LegacyUserListEntry) -> NSView {
@@ -657,6 +804,7 @@ extension ViewController {
         let name = NSTextField(labelWithString: Self.macRomanString(user.nickname))
         name.font = .systemFont(ofSize: 12.5, weight: .medium)
         if let rgb = userGroupColors[user.userID] { name.textColor = Self.colorFromRGB(rgb) }
+        styleIgnoredNickname(name, userID: user.userID)
         name.lineBreakMode = .byTruncatingTail
         // The nickname must yield space before the sleep marker does. With the old priorities a
         // long nickname compressed zZZ to zero width, making presence look randomly broken.

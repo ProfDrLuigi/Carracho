@@ -1262,7 +1262,8 @@ extension ViewController {
     }
 
     func appendChannelMessage(_ message: LegacyChannelMessage) {
-        guard var session = joinedChannels[message.channelID] else { return }
+        guard !isIgnoredUser(message.senderUserID),
+              var session = joinedChannels[message.channelID] else { return }
         session.transcript.append(ChannelTranscriptEntry(
             timestamp: message.sentAt ?? Date(),
             kind: .message(senderUserID: message.senderUserID, message: message.message, attribute: message.attribute),
@@ -1649,6 +1650,10 @@ extension ViewController {
                     ))
 
                 case let .message(senderUserID, message, attribute):
+                    // Historical entries may retain a different account for a recycled routing ID.
+                    if let stableID = entry.senderSnapshot?.accountID {
+                        if ignoredAccountIDs(in: messageCenterPersistenceScope).contains(stableID) { continue }
+                    } else if isIgnoredUser(senderUserID) { continue }
                     let senderUser = entry.senderSnapshot ?? liveUsers[senderUserID]
                     let sender = senderUser.map { Self.macRomanString($0.nickname) } ?? L("Unknown User")
                     let authorColor: NSColor
@@ -2554,6 +2559,7 @@ extension ViewController {
         name.setContentHuggingPriority(.defaultLow, for: .horizontal)
         name.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         if let rgb = userGroupColors[member.userID] { name.textColor = Self.colorFromRGB(rgb) }
+        styleIgnoredNickname(name, userID: member.userID)
 
         let role: String
         if member.mode & Self.channelOperatorMode != 0 { role = L("Operator") }

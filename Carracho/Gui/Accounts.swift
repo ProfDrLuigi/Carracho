@@ -117,17 +117,7 @@ extension ViewController {
             switch groupResult {
             case let .success(records):
                 do {
-                    self.remoteAccountGroups = try records.map(ServerAccountGroup.init(legacy:))
-                        .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-                    var membership: [String: UUID] = [:]
-                    for record in records {
-                        for login in record.memberLogins {
-                            let key = login.folding(options: [.caseInsensitive, .diacriticInsensitive],
-                                                    locale: Locale(identifier: "en_US_POSIX"))
-                            membership[key] = record.id
-                        }
-                    }
-                    self.remoteAccountGroupByLogin = membership
+                    try self.applyRemoteAccountGroups(records)
                     groupWarning = nil
                 } catch {
                     self.remoteAccountGroups = []
@@ -160,31 +150,84 @@ extension ViewController {
             guard row >= 0, row < displayedRemoteAccounts.count, canManageRemoteAccounts else { return }
             let summary = displayedRemoteAccounts[row]
             adminAccountStatusLabel.stringValue = LF("Loading %@…", Self.macRomanString(summary.login))
-            client.requestAccountDetails(login: summary.login) { [weak self] result in
-                guard let self else { return }
-                switch result {
-                case let .success(details):
-                    do {
-                        var converted = try ServerAccount.fromLegacyRecord(
-                            details.record, allowCarrachoExtensions: !self.usesClassicRemoteAccountAdministration
-                        ).account
-                        converted.colorRGB = details.colorRGB
-                        converted.picture = details.picture
-                        converted.localLoginOnly = details.localLoginOnly ? true : nil
-                        converted.groupID = details.groupID ?? self.remoteAccountGroupByLogin[
-                            Self.macRomanString(summary.login).folding(options: [.caseInsensitive, .diacriticInsensitive],
-                                                                      locale: Locale(identifier: "en_US_POSIX"))
-                        ]
-                        self.presentAccountEditor(existing: converted, remoteRecord: details.record)
-                        self.adminAccountStatusLabel.stringValue = self.remoteAccountSummaries.count == 1 ? LF("%@ account", String(self.remoteAccountSummaries.count)) : LF("%@ accounts", String(self.remoteAccountSummaries.count))
-                    } catch { self.showAdminError(error) }
-                case let .failure(error): self.showAdminError(error)
-                }
-            }
+            openRemoteAccountEditor(login: summary.login)
             return
         }
         guard row >= 0, row < displayedLocalAccounts.count else { return }
         presentAccountEditor(existing: displayedLocalAccounts[row], remoteRecord: nil)
+    }
+
+    /// Keep the same group membership mapping for the Accounts page and the user context menu.
+    func applyRemoteAccountGroups(_ records: [LegacyAccountGroupRecord]) throws {
+        let groups = try records.map(ServerAccountGroup.init(legacy:))
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        var membership: [String: UUID] = [:]
+        for record in records {
+            for login in record.memberLogins {
+                let key = login.folding(options: [.caseInsensitive, .diacriticInsensitive],
+                                        locale: Locale(identifier: "en_US_POSIX"))
+                membership[key] = record.id
+            }
+        }
+        remoteAccountGroups = groups
+        remoteAccountGroupByLogin = membership
+    }
+
+    /// The Accounts page normally loads these groups. A direct user-menu edit must do
+    /// the same on demand, without requiring a previous visit to the Accounts page.
+    func openRemoteAccountEditor(login: Data) {
+        guard canManageRemoteAccounts, !login.isEmpty else { return }
+        let requestClient = client
+
+        let loadAccount: () -> Void = { [weak self, weak requestClient] in
+            guard let self, let requestClient, self.client === requestClient,
+                  self.canManageRemoteAccounts else { return }
+            requestClient.requestAccountDetails(login: login) { [weak self, weak requestClient] result in
+                guard let self, let requestClient, self.client === requestClient,
+                      self.canManageRemoteAccounts else { return }
+                switch result {
+                case let .success(details):
+                    do {
+                        var account = try ServerAccount.fromLegacyRecord(
+                            details.record, allowCarrachoExtensions: !self.usesClassicRemoteAccountAdministration
+                        ).account
+                        account.colorRGB = details.colorRGB
+                        account.picture = details.picture
+                        account.localLoginOnly = details.localLoginOnly ? true : nil
+                        let loginKey = Self.macRomanString(login).folding(
+                            options: [.caseInsensitive, .diacriticInsensitive], locale: Locale(identifier: "en_US_POSIX"))
+                        account.groupID = details.groupID ?? self.remoteAccountGroupByLogin[loginKey]
+                        self.presentAccountEditor(existing: account, remoteRecord: details.record)
+                        self.adminAccountStatusLabel.stringValue = LF("%@ accounts", String(self.remoteAccountSummaries.count))
+                    } catch { self.showAdminError(error) }
+                case let .failure(error): self.showAdminError(error)
+                }
+            }
+        }
+
+        if usesClassicRemoteAccountAdministration || remoteAccountGroups.count == 3 {
+            loadAccount()
+            return
+        }
+
+        // Modern server, but no group data has been fetched yet. Avoid opening a broken editor.
+        requestClient.requestAccountGroups { [weak self, weak requestClient] result in
+            guard let self, let requestClient, self.client === requestClient,
+                  self.canManageRemoteAccounts else { return }
+            switch result {
+            case let .success(records):
+                do {
+                    try self.applyRemoteAccountGroups(records)
+                    guard self.remoteAccountGroups.count == 3 else {
+                        self.showAdminError(ServerStateError.invalidValue(
+                            L("Administrator, Account Holder and Guest must be available before editing accounts.")))
+                        return
+                    }
+                    loadAccount()
+                } catch { self.showAdminError(error) }
+            case let .failure(error): self.showAdminError(error)
+            }
+        }
     }
 
     @objc func deleteSelectedAccount(_ sender: Any?) {

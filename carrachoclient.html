@@ -23,10 +23,19 @@
     </style>
 </head>
     <body>
-        <p><span class="header" lang="en">New in 1.1.8</span></p>
+        <p><span class="header" lang="en">New in 1.1.7</span></p>
         <ul>
             <span class="newstext">
-                <li>Updated the macOS client to version 1.1.8 (build 19).</li>
+                <li>Updated the macOS client to version 1.1.7 (build 18). Carracho Server remains at 1.1.6 (build 17).</li>
+                <li><strong>Admin account editing directly from user lists</strong> — Administrators can open the selected user&#x27;s account editor directly from the right-click menu, without first navigating to Accounts. Modern account groups and membership are fetched on demand when needed, and the existing account editor and permission checks are reused.</li>
+                <li><strong>Same user context menu in conferences</strong> — The conference participant list now has the same right-click actions as the main user list: Info, Message, Ignore/Stop Ignoring, administrator-only account editing, and Kick/Ban where permitted. Actions target the user actually right-clicked, even when the list has been sorted.</li>
+                <li><strong>Ignore users without administrator privileges</strong> — Every user can ignore another user from either user list. Incoming private messages and conference chat messages from ignored users are suppressed locally, including their new-message indicators and unread counts. Existing private conversations are hidden, not deleted, and can be shown again by stopping the ignore.</li>
+                <li><strong>Recognizable ignored users</strong> — Ignored users&#x27; nicknames are struck through in both the main user list and conference participant lists. The indication updates immediately when ignoring or unignoring someone and preserves the nickname&#x27;s existing color.</li>
+                <li><strong>Safe ignore persistence</strong> — When the server exposes a stable account UUID, ignores are saved per server and local login and remain in effect after restarting Carracho. For Classic/older peers without a stable identity, ignores remain limited to the current connection so recycled numeric user IDs cannot accidentally mute a different person. Ignored background-bookmark messages also stay silent.</li>
+                <li><strong>Instant bookmark switching during connection failures</strong> — Switching to a different bookmark now works while another server is still connecting or is unreachable. The destination server&#x27;s Files, Overview and other workspace data are restored without keeping the previous server&#x27;s empty view.</li>
+                <li><strong>Correct session status and asynchronous callbacks</strong> — Returning to an already-connected bookmark refreshes the connection status and controls immediately. Late success/failure callbacks and timeouts from another bookmark cannot overwrite the newly selected server&#x27;s presentation.</li>
+                <li><strong>German and English user actions</strong> — Fixed the client localization resource formatting so Edit User Account, Ignore User and Stop Ignoring are correctly translated in the context menus.</li>
+
                 <li><strong>Multi-bookmark reconnect isolation</strong> — Reconnect ownership is now tied to the bookmark and LegacyControlClient that actually lost its connection. A stale reconnect marker from a previously selected bookmark can no longer win over the active connection and reconnect that client using another bookmark&#x27;s host, login or password.</li>
                 <li><strong>Independent background auto-reconnect</strong> — Each saved bookmark now maintains its own reconnect timer and retry backoff. If several bookmarks are connected and one of the background connections drops, that bookmark can reconnect independently when Auto-Reconnect is enabled instead of relying on the single foreground retry state.</li>
                 <li><strong>Session snapshot safety during reconnects</strong> — An unexpected disconnect now preserves the bookmark&#x27;s last valid session snapshot before the shared presentation is reset. Switching away while a reconnect is pending therefore keeps Files, News, users, channels and related per-server presentation state associated with the correct bookmark.</li>
