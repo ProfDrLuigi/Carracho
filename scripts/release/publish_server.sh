@@ -7,7 +7,9 @@ cd "$ROOT"
 PROJECT="$ROOT/Carracho.xcodeproj"
 SERVER_SCHEME="Carracho Server"
 
-GITHUB_REPO="ProfDrLuigi/Carracho"
+# ZIPs, changelog and tags live in a Server-only GitHub repository.
+# Source code, the Xcode project, the legacy Sparkle feed and website remain in Carracho.
+GITHUB_REPO="ProfDrLuigi/Carracho-Server"
 GITHUB_ACCOUNT="ProfDrLuigi"
 GITHUB_KEYCHAIN_SERVICE="Carracho-GitHub-Publish"
 
@@ -263,11 +265,12 @@ SERVER_BUILD="$CARRACHO_BUILD"
 VERSION="$SERVER_VERSION"
 BUILD_NUMBER="$SERVER_BUILD"
 
-TAG="Carracho${RELEASE_VERSION}"
+TAG="v${SERVER_VERSION}"
 ASSET_NAME="Carracho-Server-${VERSION}.zip"
-RELEASE_NOTES="$ROOT/README_${RELEASE_VERSION}.md"
-
+SOURCE_RELEASE_NOTES="$ROOT/README_${RELEASE_VERSION}.md"
 WORK_ROOT="$ROOT/.build/publish-server/${VERSION}"
+RELEASE_REPO_CONTENT="$WORK_ROOT/server-release-repo-content"
+RELEASE_NOTES="$RELEASE_REPO_CONTENT/RELEASE_NOTES_${VERSION}.md"
 DERIVED_DATA="$WORK_ROOT/DerivedData"
 FINAL_APP="$DERIVED_DATA/Build/Products/Release/Carracho Server.app"
 FINAL_ZIP="$WORK_ROOT/$ASSET_NAME"
@@ -277,18 +280,18 @@ FEED_DIR="$WORK_ROOT/feed"
 DOCS_RELEASES="$ROOT/docs/releases"
 DOCS_SERVER="$ROOT/docs/server"
 
-say "Preparing Carracho Server $VERSION (build $BUILD_NUMBER) for shared release $RELEASE_VERSION"
+say "Preparing Carracho Server $VERSION (build $BUILD_NUMBER) for independent repository $GITHUB_REPO"
 echo "Apple signing mode: $SIGNING_MODE"
 
-[ -f "$RELEASE_NOTES" ] || die "Missing $RELEASE_NOTES"
-grep -Fq "# Carracho $RELEASE_VERSION" "$RELEASE_NOTES" \
-    || die "$RELEASE_NOTES has the wrong release title"
-grep -Fq "## Highlights" "$RELEASE_NOTES" \
-    || die "$RELEASE_NOTES has no Highlights section"
-grep -Fq "## Carracho Client $CLIENT_VERSION" "$RELEASE_NOTES" \
-    || die "$RELEASE_NOTES has no client release section"
-grep -Fq "## Carracho Server $SERVER_VERSION" "$RELEASE_NOTES" \
-    || die "$RELEASE_NOTES has no server release section"
+[ -f "$SOURCE_RELEASE_NOTES" ] || die "Missing $SOURCE_RELEASE_NOTES"
+grep -Fq "# Carracho $RELEASE_VERSION" "$SOURCE_RELEASE_NOTES" \
+    || die "$SOURCE_RELEASE_NOTES has the wrong release title"
+grep -Fq "## Highlights" "$SOURCE_RELEASE_NOTES" \
+    || die "$SOURCE_RELEASE_NOTES has no Highlights section"
+grep -Fq "## Carracho Client $CLIENT_VERSION" "$SOURCE_RELEASE_NOTES" \
+    || die "$SOURCE_RELEASE_NOTES has no client release section"
+grep -Fq "## Carracho Server $SERVER_VERSION" "$SOURCE_RELEASE_NOTES" \
+    || die "$SOURCE_RELEASE_NOTES has no server release section"
 
 [ "$(git_safe branch --show-current)" = "$BRANCH" ] \
     || die "Releases must be published from branch '$BRANCH'"
@@ -324,7 +327,7 @@ python3 "$ROOT/scripts/release/render_release.py" \
     --client-build "$CLIENT_BUILD" \
     --server-version "$SERVER_VERSION" \
     --server-build "$SERVER_BUILD" \
-    --notes "$RELEASE_NOTES" \
+    --notes "$SOURCE_RELEASE_NOTES" \
     --root-readme "$ROOT/README.md" \
     --client-changelog "$ROOT/carrachoclient.html" \
     --server-changelog "$ROOT/carrachoserver.html" \
@@ -332,6 +335,13 @@ python3 "$ROOT/scripts/release/render_release.py" \
     --docs-releases "$DOCS_RELEASES"
 
 git_safe diff --check
+
+say "Rendering Server-only release notes and changelog for $GITHUB_REPO"
+python3 "$ROOT/scripts/release/server_release_notes.py" \
+    --source "$ROOT" \
+    --output "$RELEASE_REPO_CONTENT" \
+    --version "$VERSION" \
+    --build "$BUILD_NUMBER"
 
 if [ -n "$(
     git_safe status --porcelain -- \
@@ -536,113 +546,55 @@ python3 "$ROOT/scripts/release/appcast_republish.py" \
     "$FEED_DIR/appcast.xml" \
     "$BUILD_NUMBER"
 
-cp "$FEED_DIR/appcast.xml" "$DOCS_SERVER/appcast.xml"
-
+# The legacy appcast is intentionally kept unchanged in the source working tree
+# until the new Server ZIP has been uploaded successfully.
 git_safe diff --check
 
-if [ -n "$(git_safe status --porcelain -- docs/server/appcast.xml)" ]; then
-    git_safe add docs/server/appcast.xml
-    git_safe commit -m "Publish Carracho Server $VERSION appcast"
-fi
-
-say "Creating/verifying shared release tag $TAG"
-HEAD_COMMIT="$(git_safe rev-parse HEAD)"
-TAG_NEEDS_FORCE_PUSH=0
-TAG_EXPECTED_REMOTE_OBJECT=""
-TAG_SKIP_PUSH=0
-TAG_MOVE_ALLOWED=0
-SHARED_RELEASE_EXISTS=0
-
-REMOTE_TAG_LINES="$(
-    git_safe ls-remote --tags origin \
-        "refs/tags/$TAG" \
-        "refs/tags/$TAG^{}"
-)"
-REMOTE_TAG_OBJECT="$(
-    printf '%s\n' "$REMOTE_TAG_LINES" \
-    | awk 'index($2, "^{}") == 0 { print $1; exit }'
-)"
-REMOTE_TAG_COMMIT="$(
-    printf '%s\n' "$REMOTE_TAG_LINES" \
-    | awk 'index($2, "^{}") != 0 { print $1; exit }'
-)"
-
-if [ -n "$REMOTE_TAG_OBJECT" ] && [ -z "$REMOTE_TAG_COMMIT" ]; then
-    REMOTE_TAG_COMMIT="$REMOTE_TAG_OBJECT"
-fi
-
-if [ -n "$REMOTE_TAG_COMMIT" ] && [ "$REMOTE_TAG_COMMIT" != "$HEAD_COMMIT" ]; then
-    git_safe merge-base --is-ancestor "$REMOTE_TAG_COMMIT" "$HEAD_COMMIT" \
-        || die "Remote tag $TAG does not point to an ancestor of HEAD"
-
-    if github_release_exists "$GITHUB_REPO" "$TAG"; then
-        SHARED_RELEASE_EXISTS=1
-        say "Shared GitHub Release $TAG already exists; preserving its tag"
-    else
-        RELEASE_CHECK_RC=$?
-        [ "$RELEASE_CHECK_RC" = "1" ] \
-            || die "Could not verify whether GitHub Release $TAG already exists"
-        TAG_MOVE_ALLOWED=1
-    fi
-fi
-
-if [ "$SHARED_RELEASE_EXISTS" = "0" ]; then
-    if git_safe rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
-        LOCAL_TAG_COMMIT="$(git_safe rev-list -n1 "$TAG")"
-
-        if [ "$LOCAL_TAG_COMMIT" != "$HEAD_COMMIT" ]; then
-            git_safe merge-base --is-ancestor "$LOCAL_TAG_COMMIT" "$HEAD_COMMIT" \
-                || die "Local tag $TAG does not point to an ancestor of HEAD"
-
-            RETRY_COMMITS="$(git_safe log --oneline "$LOCAL_TAG_COMMIT..$HEAD_COMMIT")"
-            if [ -n "$RETRY_COMMITS" ]; then
-                say "Commits since the existing local $TAG tag"
-                printf '%s\n' "$RETRY_COMMITS"
-            fi
-
-            say "Moving local $TAG tag to current HEAD"
-            git_safe tag -f -a "$TAG" -m "Carracho $RELEASE_VERSION" "$HEAD_COMMIT"
-        fi
-    else
-        git_safe tag -a "$TAG" -m "Carracho $RELEASE_VERSION" "$HEAD_COMMIT"
-    fi
-fi
-
-if [ -z "$REMOTE_TAG_OBJECT" ]; then
-    [ "$SHARED_RELEASE_EXISTS" = "0" ] \
-        || die "GitHub Release $TAG exists without a matching remote tag"
-elif [ "$REMOTE_TAG_COMMIT" = "$HEAD_COMMIT" ]; then
-    say "Remote tag $TAG already targets current HEAD"
-    TAG_SKIP_PUSH=1
-elif [ "$SHARED_RELEASE_EXISTS" = "1" ]; then
-    TAG_SKIP_PUSH=1
-elif [ "$TAG_MOVE_ALLOWED" = "1" ]; then
-    say "Recovering unfinished $TAG publish by moving the remote tag to current HEAD"
-    TAG_NEEDS_FORCE_PUSH=1
-    TAG_EXPECTED_REMOTE_OBJECT="$REMOTE_TAG_OBJECT"
-else
-    die "Remote tag $TAG differs from current HEAD and cannot be moved safely"
-fi
-
-say "Pushing shared release tag to GitHub"
-if [ "$TAG_SKIP_PUSH" = "1" ]; then
-    echo "Shared release tag stays at remote commit ${REMOTE_TAG_COMMIT:-unknown}; nothing to push."
-elif [ "$TAG_NEEDS_FORCE_PUSH" = "1" ]; then
-    git_push_with_token push \
-        --force-with-lease="refs/tags/$TAG:$TAG_EXPECTED_REMOTE_OBJECT" \
-        origin "refs/tags/$TAG"
-else
-    git_push_with_token push origin "refs/tags/$TAG"
-fi
-
+# Upload first. Documentation must not advertise a ZIP that GitHub has rejected.
+# github_release.py creates or updates the independent tag v<server-version>
+# within the NEW repository. Never tag/publish a Server ZIP in Carracho again.
 say "Creating/updating GitHub Release and uploading $ASSET_NAME"
 python3 "$ROOT/scripts/release/github_release.py" \
     --repo "$GITHUB_REPO" \
     --tag "$TAG" \
-    --title "Carracho $RELEASE_VERSION" \
+    --title "Carracho Server $VERSION" \
     --notes "$RELEASE_NOTES" \
     --asset "$FINAL_ZIP" \
-    --target "$BRANCH"
+    --target main
+
+
+# Source code stays in Carracho. Only the Server README/CHANGELOG are Git-tracked
+# in Carracho-Server. ZIP binaries live exclusively as GitHub Release assets.
+say "Syncing Server-only README and CHANGELOG to $GITHUB_REPO"
+SERVER_REPO_WORKDIR="$WORK_ROOT/server-releases-git"
+if [ -d "$SERVER_REPO_WORKDIR/.git" ]; then
+    git -C "$SERVER_REPO_WORKDIR" fetch origin main
+    git -C "$SERVER_REPO_WORKDIR" checkout main
+    git -C "$SERVER_REPO_WORKDIR" merge --ff-only origin/main
+else
+    git clone "https://github.com/$GITHUB_REPO.git" "$SERVER_REPO_WORKDIR"
+fi
+cp "$RELEASE_REPO_CONTENT/README.md" "$SERVER_REPO_WORKDIR/README.md"
+cp "$RELEASE_REPO_CONTENT/CHANGELOG.md" "$SERVER_REPO_WORKDIR/CHANGELOG.md"
+git -C "$SERVER_REPO_WORKDIR" add README.md CHANGELOG.md
+if ! git -C "$SERVER_REPO_WORKDIR" diff --cached --quiet; then
+    git -C "$SERVER_REPO_WORKDIR" \
+        -c user.name="Carracho Release" \
+        -c user.email="releases@users.noreply.github.com" \
+        commit -m "Update Server release notes for $VERSION"
+    git_push_with_token -C "$SERVER_REPO_WORKDIR" push origin main
+fi
+
+# Publish the legacy Sparkle feed ONLY after the ZIP exists in Carracho-Server.
+# Otherwise a failed GitHub upload would strand old installed Server versions
+# with a signed appcast pointing at a 404 archive. The source checkout stays clean
+# if the remote release upload fails.
+cp "$FEED_DIR/appcast.xml" "$DOCS_SERVER/appcast.xml"
+git_safe diff --check
+if [ -n "$(git_safe status --porcelain -- docs/server/appcast.xml)" ]; then
+    git_safe add docs/server/appcast.xml
+    git_safe commit -m "Publish Carracho Server $VERSION appcast"
+fi
 
 say "Publishing website and Sparkle appcast on $BRANCH"
 git_push_with_token push origin "$BRANCH"

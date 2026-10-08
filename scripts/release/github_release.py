@@ -29,7 +29,10 @@ def request(token: str, method: str, url: str, data: bytes | None = None, conten
             return response.status, json.loads(payload) if payload else None
     except urllib.error.HTTPError as exc:
         payload = exc.read().decode("utf-8", "replace")
-        if exc.code == 404:
+        # A missing release is expected only during the initial tag lookup. A 404
+        # when creating a release or uploading its ZIP must STOP publication, or
+        # Sparkle would advertise an asset that doesn't exist on GitHub.
+        if exc.code == 404 and method == "GET" and "/releases/tags/" in url:
             return 404, None
 
         accepted = exc.headers.get("X-Accepted-GitHub-Permissions", "")
@@ -85,7 +88,9 @@ def main() -> None:
     upload_url += "?name=" + urllib.parse.quote(args.asset.name)
     content_type = mimetypes.guess_type(args.asset.name)[0] or "application/octet-stream"
     data = args.asset.read_bytes()
-    request(token, "POST", upload_url, data, content_type)
+    uploaded_status, uploaded_asset = request(token, "POST", upload_url, data, content_type)
+    if uploaded_status != 201 or not uploaded_asset or uploaded_asset.get("name") != args.asset.name:
+        raise SystemExit(f"GitHub did not confirm ZIP asset upload: HTTP {uploaded_status}")
     print(release["html_url"])
 
 

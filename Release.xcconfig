@@ -1,3 +1,3 @@
-// Shared GitHub release train. Client and Server may have different product versions
-// while their ZIP assets still live in this one release/tag.
+// Shared source documentation release train and Client GitHub release tag.
+// Server ZIP assets and version tags are published independently to Carracho-Server.
 CARRACHO_RELEASE_VERSION = 1.1.9

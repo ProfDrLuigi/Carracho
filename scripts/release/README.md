@@ -1,16 +1,20 @@
 # Carracho release automation
 
-The Xcode aggregate targets **Publish Carracho** and **Publish Carracho Server** publish the macOS Client and Server through the same GitHub/Sparkle release flow.
-
-Both products use the same version tag and the same GitHub Release:
+The Xcode aggregate targets **Publish Carracho** and **Publish Carracho Server** build from the **same source repository and Xcode project**, but publish to **independent GitHub Releases**:
 
 ```text
-Carracho<version>
-├── Carracho-Client-<version>.zip
-└── Carracho-Server-<version>.zip
+ProfDrLuigi/Carracho                  source code + Client Releases
+  tag Carracho1.1.9                   Carracho-Client-1.1.9.zip
+
+ProfDrLuigi/Carracho-Server           Server downloads + changelog ONLY
+  tag v1.1.7                          Carracho-Server-1.1.7.zip
+  README.md                           downloads and source link
+  CHANGELOG.md                        independent Server history
 ```
 
-Whichever product is published first creates the shared tag/release. Publishing the other product for the same version preserves the existing tag and adds or replaces only its own ZIP asset.
+Server archives are GitHub Release assets, **not files committed to Git**. The Server release notes are extracted from the `## Carracho Server <version>` section in the shared source notes. The source project is not duplicated into the Server-only repository.
+
+Existing Server installations keep polling `https://profdrLuigi.github.io/Carracho/server/appcast.xml` in the original source repository; new Server releases update that legacy feed with **ZIP download links pointing to Carracho-Server**. Do not remove or redirect this feed until all old installations have migrated. Historical appcast items retain their original URLs and signatures.
 
 ## One-time setup
 
@@ -22,7 +26,7 @@ Run:
 scripts/release/setup_github_token.sh
 ```
 
-Use a fine-grained GitHub token for `ProfDrLuigi/Carracho` with **Contents: Read and write** permission. The dedicated token is stored in the macOS Keychain service `Carracho-GitHub-Publish` and is preferred by both publishers.
+The fine-grained GitHub token must authorize **both** `ProfDrLuigi/Carracho` and `ProfDrLuigi/Carracho-Server` with **Contents: Read and write**. The existing credential is stored in the macOS login Keychain service `Carracho-GitHub-Publish` and is used by both publishers. When creating the new repository, edit the token's **Repository access** to include it; creating a repo does not automatically extend an existing selected-repository token. Never copy the token into source files, release notes or chat messages.
 
 ### Apple signing / notarization
 
@@ -65,14 +69,14 @@ Version-Server.xcconfig
 
 The macOS Client target inherits `Version-Client.xcconfig`. The macOS Server, native Linux Server and Debian packages use `Version-Server.xcconfig`. Swift reads each app's generated bundle values through `CarrachoBuildInfo`.
 
-The shared GitHub release/tag is a separate value:
+`Release.xcconfig` determines the **shared release documentation title and Client GitHub tag**:
 
 ```text
 Release.xcconfig
-  CARRACHO_RELEASE_VERSION = <release version>
+  CARRACHO_RELEASE_VERSION = <client documentation release version>
 ```
 
-This lets one GitHub Release contain different product versions, for example Client 1.1.5 and Server 1.1.4. Both ZIP assets still use their own product version in the filename and Sparkle feed.
+The **Server** independently tags releases as `v<Version-Server.xcconfig MARKETING_VERSION>` in `ProfDrLuigi/Carracho-Server`. Its ZIP and server changelog are named from `Version-Server.xcconfig`, not the Client release version. No shared GitHub tag or server ZIP upload is performed in the source repository.
 
 For scripted overrides, use `CARRACHO_CLIENT_VERSION_OVERRIDE` / `CARRACHO_CLIENT_BUILD_OVERRIDE` or `CARRACHO_SERVER_VERSION_OVERRIDE` / `CARRACHO_SERVER_BUILD_OVERRIDE`. The older generic `CARRACHO_VERSION_OVERRIDE` / `CARRACHO_BUILD_OVERRIDE` remain fallback overrides for one-product tooling such as Debian package builds.
 
@@ -82,7 +86,7 @@ Before running either publisher:
 
 - `Version-Client.xcconfig` must contain the intended Client version/build;
 - `Version-Server.xcconfig` must contain the intended Server version/build;
-- `Release.xcconfig` must contain the shared GitHub release version;
+- `Release.xcconfig` must contain the shared source documentation / Client release version;
 - `README_<release version>.md` must contain `## Highlights`, `## Carracho Client <client version>`, and `## Carracho Server <server version>`;
 - source changes must be committed;
 - the tracked working tree must be clean.
@@ -101,7 +105,7 @@ docs/client/appcast.xml
 docs/server/appcast.xml
 ```
 
-Both feeds point their enclosure URLs at the corresponding ZIP asset inside the same GitHub Release.
+The Client appcast downloads ZIP assets from `Carracho`. New Server appcast entries download ZIP assets from `Carracho-Server`, while historical Server entries continue using the URLs they were originally signed for.
 
 ## Xcode targets
 
@@ -117,7 +121,9 @@ scripts/release/publish_client.sh
 scripts/release/publish_server.sh
 ```
 
-Each publisher builds its own app, creates its ZIP/appcast, uploads its own asset to the shared GitHub Release, commits generated feed metadata, pushes `main`, and copies the published app to the Desktop.
+Client publishing is unchanged. Server publishing renders Server-only release notes and `README.md`/`CHANGELOG.md`, synchronizes only those two Markdown files to `Carracho-Server/main`, publishes `Carracho-Server-<version>.zip` to a `v<version>` Release in that repository, and updates the **existing** legacy Server appcast in `Carracho/main` for previously installed Servers. Neither Server source files nor server ZIP binaries are committed to `Carracho-Server`.
+
+To prepare metadata locally without publishing, run `python3 -B scripts/release/server_release_notes.py --source . --output .build/server-release-preview --version 1.1.7 --build 18`. Both publishers require their respective GitHub permissions and a clean source worktree before an actual publish.
 
 Release builds are forced to **Universal 2** (`arm64 + x86_64`) with a generic macOS destination. Before signing, notarization or upload, the publisher checks every Mach-O file in the app bundle with `lipo` and aborts unless both architecture slices are present.
 
