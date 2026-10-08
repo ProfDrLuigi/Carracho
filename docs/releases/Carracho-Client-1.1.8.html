@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Carracho Client 1.1.8</title>
+  <link rel="stylesheet" href="../styles.css">
+  <style>
+    .release-page { width:min(calc(100% - 40px), 900px); margin:0 auto; padding:72px 0 110px; }
+    .release-page h1 { font-size:clamp(2.8rem,7vw,5rem); margin-bottom:28px; }
+    .release-page h2 { margin-top:54px; font-size:2rem; }
+    .release-page h3 { margin-top:34px; }
+    .release-page p, .release-page li { color:var(--muted-strong); }
+    .release-page code { padding:.12em .38em; border-radius:6px; background:rgba(255,255,255,.07); }
+    .release-page pre { margin:22px 0; border:1px solid var(--line); border-radius:16px; background:#070b12; }
+    .release-back { display:inline-flex; margin-bottom:34px; color:var(--orange-2); text-decoration:none; font-weight:700; }
+  </style>
+</head>
+<body>
+  <main class="release-page">
+    <a class="release-back" href="../">← Carracho</a>
+<h2>Carracho Client 1.1.8</h2>
+<h3>Filter server log by text and activity category</h3>
+<p>Under <strong>Administration → Server Log</strong>, administrators can now filter the displayed log with a live search field and category menu: <strong>All Log Entries</strong>, <strong>Errors</strong>, <strong>Warnings</strong>, <strong>Connections</strong> or <strong>Authentication</strong>. Search matches IP addresses, nicknames and other message text without case or accent sensitivity. Multiple search terms match lines containing all terms, and the view displays the number of visible lines out of the total.</p>
+<p>Category filtering uses common log keywords, since older and Classic server logs do not consistently provide structured severity fields. Filters remain active when refreshing the log and while local log entries arrive. Filtering changes only the displayed lines: the complete unfiltered log remains available, and <strong>Save Log</strong> continues to export it in full so diagnostic information is not lost. The filter controls and counters are localized in English and German. No Server change is necessary.</p>
+<h3>Correct private-message sender attribution</h3>
+<p>Fixed a Message Center issue where a message sent by one person could appear inside a different person&#x27;s private conversation. On Classic and older Carracho servers, the numeric user ID identifies a live connection, not a permanent account. Reusing that ID after a disconnect could previously cause stored history to be displayed or merged under the wrong nickname.</p>
+<p>The client no longer treats a numeric ID by itself as proof that two conversations belong to the same user. Where available, stable account UUIDs continue to identify modern conversations.</p>
+<h3>Unique storage identity for each Classic conversation</h3>
+<p>New private conversations without a stable account UUID now use a separate, randomly generated conversation UUID as their local history namespace. Two different people can receive the same numeric routing ID without sharing saved messages, even when the server has not restarted.</p>
+<p>Classic private-message histories remain persistently stored in the existing local SQLite database. No destructive data migration or Server protocol change is needed.</p>
+<h3>Preserve old messages as unverified archives</h3>
+<p>Previously saved Classic/Legacy conversations keyed by numeric routing IDs are kept intact and shown as detached, read-only archives. They are visibly marked <strong>Unverified legacy history</strong> to distinguish them from verified, currently addressable peers. These archives are not automatically attached to the current owner of a reused user ID, and they are never silently rewritten to another person&#x27;s account.</p>
+<p>Existing messages that may already have been incorrectly grouped are <strong>not</strong> automatically reassigned: their original sender cannot always be established from legacy storage metadata alone. Archives can still be cleared or deleted independently.</p>
+<h3>Retire stale user IDs on logout and identity changes</h3>
+<p>When a user leaves a server, appears again or the server announces a different stable account UUID for an existing routing ID, the old conversation is detached from that live ID. The client cannot send a reply to an archived conversation using a reassigned numeric ID.</p>
+<p>This prevents a later login or refresh of the user list from reopening somebody else&#x27;s old messages as if they belonged to the newly connected user.</p>
+<h3>Protect incoming messages with unknown sender identity</h3>
+<p>If an incoming private message refers to a numeric ID that has not yet been identified by the current server user list, the client rejects that event rather than guessing a recipient conversation. The existing private-message workflow continues normally after the sender&#x27;s current identity is available.</p>
+<h3>Consistent safety across background server bookmarks</h3>
+<p>The same identity checks now apply to active and background-connected bookmarks. New messages, edits, reactions, user arrivals and disconnects use the current bookmark&#x27;s own live identities and per-conversation storage namespace. A background session cannot revive historical routing IDs when its server reconnects.</p>
+<h3>Safe legacy history deletion and read state</h3>
+<p>Saved Classic conversations are isolated by their own conversation epochs. Clearing or deleting one archive does not remove another conversation belonging to a different person who happened to receive the same numeric user ID. Existing durable histories associated with stable account UUIDs remain unchanged.</p>
+<h3>Localized archive label and regression tests</h3>
+<p>Added <strong>Unverified legacy history</strong> / <strong>Ungeprüfter Legacy-Verlauf</strong> to the English and German Message Center localization. A dedicated SQLite regression test stores two users under the same numeric routing ID, confirms their histories remain separate across server endpoints and verifies independent deletion.</p>
+  </main>
+</body>
+</html>

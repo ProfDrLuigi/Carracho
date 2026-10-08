@@ -430,6 +430,16 @@ def main() -> None:
             f"Client release section, but found ## {next_section.group(1) if next_section else '(none)'}. "
             "Use ### for individual Client features."
         )
+    # Validate and update the changelog BEFORE touching generated website pages.
+    # A malformed or incomplete release-notes section must abort the publish
+    # without truncating either the changelog or already-rendered pages.
+    ensure_client_changelog(
+        args.client_changelog, args.client_version, args.client_build, client_md
+    )
+    ensure_server_changelog(
+        args.server_changelog, args.server_version, args.server_build, server_md
+    )
+
     args.docs_releases.mkdir(parents=True, exist_ok=True)
     (args.docs_releases / f"{args.release_version}.html").write_text(
         standalone_html(f"Carracho release {args.release_version}", markdown)
@@ -442,12 +452,6 @@ def main() -> None:
     )
 
     summary = intro_summary(markdown)
-    ensure_client_changelog(
-        args.client_changelog, args.client_version, args.client_build, client_md
-    )
-    ensure_server_changelog(
-        args.server_changelog, args.server_version, args.server_build, server_md
-    )
     update_homepage(
         args.docs_index,
         args.release_version,

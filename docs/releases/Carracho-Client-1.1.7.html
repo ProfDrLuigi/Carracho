@@ -28,7 +28,7 @@
 <p>The <strong>Edit User Account…</strong> action is available only to authorized administrators. It resolves the selected live user&#x27;s login and opens the existing account editor, with the usual server-side permission checks. On modern servers, the client automatically requests account groups and membership if the <strong>Accounts</strong> page has not been opened yet. On Classic servers, the existing Classic account editor is used. The account must expose an editable login.</p>
 <p>This fixes the error that previously appeared on the first direct edit attempt until the administrator visited <strong>Accounts</strong> to initialize the groups.</p>
 <h3>Ignore users without administrator privileges</h3>
-<p>Any user can choose <strong>Ignore User</strong> on someone else. This is a <strong>local display/notification preference</strong>, not a kick or a server-side ban:</p>
+<p>Any user can choose <strong>Ignore User</strong> on someone else. New private messages and conference chat from ignored users are hidden locally, and their unread counts and notifications are suppressed. Existing conversations are retained and return after <strong>Stop Ignoring</strong>. This is a <strong>local display/notification preference</strong>, not a kick or a server-side ban:</p>
 <ul>
 <li>New private messages and conference chat entries from that user are not shown or saved to the local conversation/transcript during the ignore.</li>
 <li>Existing private conversations are hidden rather than deleted. They become visible again after <strong>Stop Ignoring</strong>.</li>

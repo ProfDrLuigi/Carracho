@@ -37,7 +37,7 @@ This fixes the error that previously appeared on the first direct edit attempt u
 
 ### Ignore users without administrator privileges
 
-Any user can choose **Ignore User** on someone else. This is a **local display/notification preference**, not a kick or a server-side ban:
+Any user can choose **Ignore User** on someone else. New private messages and conference chat from ignored users are hidden locally, and their unread counts and notifications are suppressed. Existing conversations are retained and return after **Stop Ignoring**. This is a **local display/notification preference**, not a kick or a server-side ban:
 
 - New private messages and conference chat entries from that user are not shown or saved to the local conversation/transcript during the ignore.
 - Existing private conversations are hidden rather than deleted. They become visible again after **Stop Ignoring**.

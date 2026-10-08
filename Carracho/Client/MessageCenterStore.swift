@@ -82,11 +82,11 @@ struct MessageCenterStoredSnapshot: Equatable {
 /// tables keyed only by the transient UInt32 session user ID are intentionally left untouched and
 /// never loaded, because a server restart can recycle those IDs for another account.
 ///
-/// When a server does not provide a peer account UUID, including original/Classic servers and
-/// older modern builds, fallback history is namespaced by a locally resolved server-boot ID plus
-/// the numeric user ID. The boot ID is derived from server uptime, so client restarts can restore
-/// history while an actual server restart starts a fresh namespace. Offline messages keep their
-/// existing table.
+/// Classic/older servers expose only recycled numeric routing IDs. New fallback histories
+/// therefore use a fresh conversation UUID as the storage namespace for each live routing lease.
+/// Old boot-scoped histories remain readable as unverified, detached archives, never as live
+/// conversations. The existing SQLite tables are reused without destructive migration.
+/// Offline messages retain their separate durable storage.
 final class MessageCenterStore {
     private let databaseURL: URL
     private let queue = DispatchQueue(label: "com.carracho.message-center-store")
@@ -298,6 +298,40 @@ final class MessageCenterStore {
             guard result == SQLITE_ROW else { throw databaseError(db) }
             return UUID(uuidString: columnText(statement!, 0))
         }
+    }
+
+    /// Legacy routing IDs are recycled. Enumerate the existing read-only boot histories and
+    /// individually-salted conversation epochs, without ever treating them as a live identity.
+    func loadArchivedLegacyConversations(scope: MessageCenterStoreScope,
+                                         limit: Int = 64) throws -> [(bootID: UUID, conversation: MessageCenterStoredBootConversation)] {
+        let bootIDs: [UUID] = try queue.sync {
+            let db = try openDatabase()
+            defer { sqlite3_close(db) }
+            var statement: OpaquePointer?
+            try prepare(db, """
+                SELECT boot_id FROM boot_conversations_v1
+                WHERE server_host=? AND server_port=? AND account_login=?
+                GROUP BY boot_id ORDER BY MAX(last_activity) DESC LIMIT ?
+                """, &statement)
+            defer { sqlite3_finalize(statement) }
+            try bindScope(scope, to: statement!)
+            try bindInt64(statement!, 4, Int64(max(1, limit)))
+            var ids: [UUID] = []
+            while true {
+                let result = sqlite3_step(statement)
+                if result == SQLITE_DONE { break }
+                guard result == SQLITE_ROW else { throw databaseError(db) }
+                if let id = UUID(uuidString: columnText(statement!, 0)) { ids.append(id) }
+            }
+            return ids
+        }
+        var histories: [(bootID: UUID, conversation: MessageCenterStoredBootConversation)] = []
+        for bootID in bootIDs {
+            for conversation in try loadBootConversations(scope: scope, bootID: bootID) {
+                histories.append((bootID: bootID, conversation: conversation))
+            }
+        }
+        return histories
     }
 
     func loadBootConversations(scope: MessageCenterStoreScope,

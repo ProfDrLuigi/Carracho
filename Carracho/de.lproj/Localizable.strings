@@ -2157,3 +2157,21 @@
 "Stop Ignoring" = "Ignorieren aufheben";
 "Edit User Account…" = "Benutzerkonto bearbeiten…";
 "This user has no editable login account, or the server does not expose their login." = "Dieser Benutzer hat kein bearbeitbares Login-Konto oder der Server stellt den Login nicht bereit.";
+
+"Unverified legacy history" = "Ungeprüfter Legacy-Verlauf";
+
+"All Log Entries" = "Alle Logeinträge";
+
+"Errors" = "Fehler";
+
+"Warnings" = "Warnungen";
+
+"Filter log lines by keyword category" = "Logeinträge anhand von Schlüsselwörtern filtern";
+
+"Filter server log…" = "Serverlog filtern…";
+
+"Search server log by IP, username or message text" = "Serverlog nach IP, Benutzername oder Meldung durchsuchen";
+
+"Save complete unfiltered server log" = "Vollständiges ungefiltertes Serverlog speichern";
+
+"Showing %@ of %@ log lines" = "%@ von %@ Logzeilen angezeigt";

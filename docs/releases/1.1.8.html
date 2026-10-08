@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Carracho release 1.1.8</title>
+  <link rel="stylesheet" href="../styles.css">
+  <style>
+    .release-page { width:min(calc(100% - 40px), 900px); margin:0 auto; padding:72px 0 110px; }
+    .release-page h1 { font-size:clamp(2.8rem,7vw,5rem); margin-bottom:28px; }
+    .release-page h2 { margin-top:54px; font-size:2rem; }
+    .release-page h3 { margin-top:34px; }
+    .release-page p, .release-page li { color:var(--muted-strong); }
+    .release-page code { padding:.12em .38em; border-radius:6px; background:rgba(255,255,255,.07); }
+    .release-page pre { margin:22px 0; border:1px solid var(--line); border-radius:16px; background:#070b12; }
+    .release-back { display:inline-flex; margin-bottom:34px; color:var(--orange-2); text-decoration:none; font-weight:700; }
+  </style>
+</head>
+<body>
+  <main class="release-page">
+    <a class="release-back" href="../">← Carracho</a>
+<h1>Carracho 1.1.8</h1>
+<p>Carracho <strong>Client 1.1.8 (build 19)</strong> is a focused private-message reliability and identity-safety update. It prevents stored conversations from being attached to a different user when Classic or older Carracho servers reuse a numeric user ID. <strong>Carracho Server remains 1.1.6 (build 17)</strong>. No protocol changes or Server update are required.</p>
+<h2>Highlights</h2>
+<ul>
+<li>Fixed the Message Center issue where a message from one user could appear in another user&#x27;s private conversation after numeric session IDs were reused.</li>
+<li>Each new Classic/Legacy private conversation now has a unique storage identity independent of transient server-assigned user IDs.</li>
+<li>Older private-message histories without a verifiable account UUID remain available as read-only <strong>Unverified legacy history</strong> archives, rather than being assigned to whoever currently has the same user ID.</li>
+<li>Removed stale live user routing when a person disconnects, reconnects or their account identity changes, including in background bookmarks.</li>
+<li>Incoming messages with an unknown current sender are rejected instead of being assigned to a possibly unrelated conversation.</li>
+<li>Preserved separation between server bookmarks and local account scopes when saving, reading, editing and deleting conversation history.</li>
+<li>Added English and German localization for the <strong>Unverified legacy history</strong> label.</li>
+<li>Added regression coverage for two different users sharing the same recycled numeric ID, including independent history deletion.</li>
+<li>Added an interactive search and category filter to <strong>Administration → Server Log</strong>; narrow log entries by IP, username, text, errors, warnings, connections or authentication activity without modifying the source log.</li>
+<li>Updated the macOS Client to <strong>1.1.8 / build 19</strong>; the Server stays on <strong>1.1.6 / build 17</strong>.</li>
+</ul>
+<h2>Carracho Client 1.1.8</h2>
+<h3>Filter server log by text and activity category</h3>
+<p>Under <strong>Administration → Server Log</strong>, administrators can now filter the displayed log with a live search field and category menu: <strong>All Log Entries</strong>, <strong>Errors</strong>, <strong>Warnings</strong>, <strong>Connections</strong> or <strong>Authentication</strong>. Search matches IP addresses, nicknames and other message text without case or accent sensitivity. Multiple search terms match lines containing all terms, and the view displays the number of visible lines out of the total.</p>
+<p>Category filtering uses common log keywords, since older and Classic server logs do not consistently provide structured severity fields. Filters remain active when refreshing the log and while local log entries arrive. Filtering changes only the displayed lines: the complete unfiltered log remains available, and <strong>Save Log</strong> continues to export it in full so diagnostic information is not lost. The filter controls and counters are localized in English and German. No Server change is necessary.</p>
+<h3>Correct private-message sender attribution</h3>
+<p>Fixed a Message Center issue where a message sent by one person could appear inside a different person&#x27;s private conversation. On Classic and older Carracho servers, the numeric user ID identifies a live connection, not a permanent account. Reusing that ID after a disconnect could previously cause stored history to be displayed or merged under the wrong nickname.</p>
+<p>The client no longer treats a numeric ID by itself as proof that two conversations belong to the same user. Where available, stable account UUIDs continue to identify modern conversations.</p>
+<h3>Unique storage identity for each Classic conversation</h3>
+<p>New private conversations without a stable account UUID now use a separate, randomly generated conversation UUID as their local history namespace. Two different people can receive the same numeric routing ID without sharing saved messages, even when the server has not restarted.</p>
+<p>Classic private-message histories remain persistently stored in the existing local SQLite database. No destructive data migration or Server protocol change is needed.</p>
+<h3>Preserve old messages as unverified archives</h3>
+<p>Previously saved Classic/Legacy conversations keyed by numeric routing IDs are kept intact and shown as detached, read-only archives. They are visibly marked <strong>Unverified legacy history</strong> to distinguish them from verified, currently addressable peers. These archives are not automatically attached to the current owner of a reused user ID, and they are never silently rewritten to another person&#x27;s account.</p>
+<p>Existing messages that may already have been incorrectly grouped are <strong>not</strong> automatically reassigned: their original sender cannot always be established from legacy storage metadata alone. Archives can still be cleared or deleted independently.</p>
+<h3>Retire stale user IDs on logout and identity changes</h3>
+<p>When a user leaves a server, appears again or the server announces a different stable account UUID for an existing routing ID, the old conversation is detached from that live ID. The client cannot send a reply to an archived conversation using a reassigned numeric ID.</p>
+<p>This prevents a later login or refresh of the user list from reopening somebody else&#x27;s old messages as if they belonged to the newly connected user.</p>
+<h3>Protect incoming messages with unknown sender identity</h3>
+<p>If an incoming private message refers to a numeric ID that has not yet been identified by the current server user list, the client rejects that event rather than guessing a recipient conversation. The existing private-message workflow continues normally after the sender&#x27;s current identity is available.</p>
+<h3>Consistent safety across background server bookmarks</h3>
+<p>The same identity checks now apply to active and background-connected bookmarks. New messages, edits, reactions, user arrivals and disconnects use the current bookmark&#x27;s own live identities and per-conversation storage namespace. A background session cannot revive historical routing IDs when its server reconnects.</p>
+<h3>Safe legacy history deletion and read state</h3>
+<p>Saved Classic conversations are isolated by their own conversation epochs. Clearing or deleting one archive does not remove another conversation belonging to a different person who happened to receive the same numeric user ID. Existing durable histories associated with stable account UUIDs remain unchanged.</p>
+<h3>Localized archive label and regression tests</h3>
+<p>Added <strong>Unverified legacy history</strong> / <strong>Ungeprüfter Legacy-Verlauf</strong> to the English and German Message Center localization. A dedicated SQLite regression test stores two users under the same numeric routing ID, confirms their histories remain separate across server endpoints and verifies independent deletion.</p>
+<h2>Carracho Server 1.1.6</h2>
+<h3>Dedicated Server and Tracker system services</h3>
+<p>The macOS Server and Tracker can now run as two independent launchd system services. Both jobs use the same compact carracho-serverd helper embedded in the Server app, while Server and Tracker retain separate launchd jobs and separate running/automatic-start state.</p>
+<p>Installing a service copies only the headless daemon binary and the service definitions required to run it. The daemon directory no longer needs a second complete copy of <strong>Carracho Server.app</strong>, avoiding duplicated application bundles under /Applications and the service installation.</p>
+<p>The helper is built as a Universal 2 binary and contains the headless Server/Tracker runtime rather than the AppKit administration UI or Sparkle updater.</p>
+<h3>System Service is the single control surface</h3>
+<p>Server and Tracker runtime control is now consolidated under the always-visible <strong>System Service</strong> section for each component. The old duplicate Start/Stop controls in the page header, application menu and status menu have been removed.</p>
+<p>Each service can be installed or uninstalled independently, started or stopped independently, and configured independently for automatic startup with macOS. Current running state and startup-at-boot state are separate: disabling automatic startup does not stop a service that is already running.</p>
+<p>The <strong>System Service</strong> section is permanently expanded and no longer has a disclosure arrow, so installation and runtime controls remain visible without another layer of navigation.</p>
+<h3>Daemon update reminder after an app update</h3>
+<p>The Server app now compares the daemon helper embedded in the current app with the binary installed for the system services. The comparison is byte-for-byte, so rebuilt hotfixes are detected even if their marketing version happens to be unchanged.</p>
+<p>When an installed daemon differs from the helper in the updated app, <strong>Reinstall</strong> changes to <strong>Update Now</strong>. On every normal launch of the Server app, a warning explains that the application was updated and the system service must also be refreshed. The warning continues to appear until the installed daemon matches the current app.</p>
+<p>Choosing <strong>Update Now</strong> performs the same privileged service refresh used by the System Service controls while preserving the installed sibling service&#x27;s running and automatic-start state. Because Server and Tracker share the daemon binary, updating either installed service refreshes the common executable.</p>
+<h2>Compatibility notes</h2>
+<ul>
+<li><strong>Client:</strong> 1.1.8 (build 19).</li>
+<li><strong>macOS and native Linux Server:</strong> unchanged at 1.1.6 (build 17); no Server rebuild is required for this client-side fix.</li>
+<li>Classic/Legacy protocol packet layouts and modern login/transport negotiation are unchanged.</li>
+<li>Previously misattributed messages are preserved, not silently deleted or automatically reassigned.</li>
+<li>Modern private conversations continue using stable peer account UUIDs for durable history; older servers use conversation-scoped storage IDs for safety.</li>
+<li>Release documents and a successful Xcode build are not a substitute for an end-to-end test with two live users reconnecting and exchanging private messages.</li>
+<li>The separate Intel i7/Sequoia account-login report is still being investigated; this Client update does not claim to fix it.</li>
+</ul>
+<p>Previous release: <a href="README_1.1.7.md">`README_1.1.7.md`</a>.</p>
+  </main>
+</body>
+</html>

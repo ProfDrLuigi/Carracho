@@ -18,14 +18,14 @@ The modern transport protects far more than login traffic: chat/control packets,
 
 See the collapsible **Security and modern encryption** section below for the protocol details.
 
-### Current release: 1.1.7
+### Current release: 1.1.8
 
-Carracho Client 1.1.7 (build 18) brings improved user context menus, personal Ignore controls, bookmark organization, more reliable reconnection and accurate read status. It also consolidates the existing multi-bookmark stability improvements into this release. Carracho Server remains 1.1.6 (build 17); Classic/Legacy packet layouts are unchanged.
+Carracho Client 1.1.8 (build 19) is a focused private-message reliability and identity-safety update. It prevents stored conversations from being attached to a different user when Classic or older Carracho servers reuse a numeric user ID. Carracho Server remains 1.1.6 (build 17). No protocol changes or Server update are required.
 
-- Client: **1.1.7 (build 18)**
+- Client: **1.1.8 (build 19)**
 - Server: **1.1.6 (build 17)**
 
-The full release notes are available in [`README_1.1.7.md`](README_1.1.7.md).
+The full release notes are available in [`README_1.1.8.md`](README_1.1.8.md).
 
 ## At a glance
 

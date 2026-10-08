@@ -390,6 +390,10 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         var unreadCount: Int = 0
         var draftText: String = ""
         var lastActivity: Date = Date()
+        /// Routing information of an archived Classic conversation, for safe deletion only.
+        /// NEVER use these fields to select a live sender or to send a message.
+        var archivedBootID: UUID? = nil
+        var archivedUserID: UInt32? = nil
     }
 
     enum MessageCenterListRow {
@@ -840,6 +844,9 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
     let newsFontSizePopup = NSPopUpButton(frame: .zero, pullsDown: false)
     let channelChatFontSizePopup = NSPopUpButton(frame: .zero, pullsDown: false)
     let serverLogFontSizePopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    let serverLogFilterField = NSSearchField()
+    let serverLogFilterPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    let serverLogFilterStatusLabel = NSTextField(labelWithString: "")
     let eventsFontSizePopup = NSPopUpButton(frame: .zero, pullsDown: false)
     let messageCenterFontSizePopup = NSPopUpButton(frame: .zero, pullsDown: false)
     let eventLogFilterField = NSSearchField()
@@ -1405,6 +1412,8 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
     var userStatusMessages: [UInt32: Data] = [:]
     var userGroupColors: [UInt32: UInt32] = [:]
     var localServerLogLines: [String] = []
+    /// Unfiltered source text; changing a filter must never overwrite the fetched log.
+    var serverLogRawText = ""
     var remoteServerLogLoading = false
     var remoteEventLogLoading = false
     var didProcessLaunchArguments = false
@@ -4171,6 +4180,8 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         userStatusMessages = [:]
         userGroupColors = [:]
         remoteServerLogLoading = false
+        serverLogRawText = ""
+        serverLogFilterStatusLabel.stringValue = ""
         remoteEventLogLoading = false
         advancedTrashOperationInProgress = false
         advancedSearchIndexRebuildInProgress = false
@@ -4382,11 +4393,32 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
 
         switch event {
         case let .userArrived(user):
+            for (id, var conversation) in snapshot.privateMessageConversations
+                where conversation.userID == user.userID {
+                if conversation.accountID == nil {
+                    conversation.archivedUserID = user.userID
+                    conversation.archivedBootID = conversation.id
+                }
+                conversation.userID = nil
+                snapshot.privateMessageConversations[id] = conversation
+            }
             snapshot.liveUsers[user.userID] = user
             context.snapshot = snapshot
             return false
 
         case let .userUpdated(userID, nickname, picture, statusMessage, accountID):
+            if let accountID, let old = snapshot.liveUsers[userID]?.accountID,
+               old != accountID {
+                for (id, var conversation) in snapshot.privateMessageConversations
+                    where conversation.userID == userID {
+                    if conversation.accountID == nil {
+                        conversation.archivedUserID = userID
+                        conversation.archivedBootID = conversation.id
+                    }
+                    conversation.userID = nil
+                    snapshot.privateMessageConversations[id] = conversation
+                }
+            }
             promoteSessionIgnore(userID: userID, accountID: accountID,
                                  scope: snapshot.messageCenterPersistenceScope,
                                  bookmarkID: context.bookmarkID)
@@ -4442,11 +4474,9 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
                     if let stored = storedConversation(conversation) {
                         do {
                             try messageCenterStore.saveConversationHistory(stored, scope: scope)
-                            if let bootID = snapshot.messageCenterServerBootID,
-                               let promotedBootUserID {
-                                try messageCenterStore.deleteBootConversation(userID: promotedBootUserID,
-                                                                              scope: scope,
-                                                                              bootID: bootID)
+                            if let transientID, let promotedBootUserID {
+                                try messageCenterStore.deleteBootConversation(
+                                    userID: promotedBootUserID, scope: scope, bootID: transientID)
                             }
                         } catch {
                             NSLog("Carracho background Message Center storage error: %@", Self.displayMessage(for: error))
@@ -4459,10 +4489,14 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
 
         case let .userDisconnected(userID):
             sessionIgnoredUserIDs[context.bookmarkID]?.remove(userID)
-            if let accountID = snapshot.liveUsers[userID]?.accountID,
-               var conversation = snapshot.privateMessageConversations[accountID] {
+            for (id, var conversation) in snapshot.privateMessageConversations
+                where conversation.userID == userID {
+                if conversation.accountID == nil {
+                    conversation.archivedUserID = userID
+                    conversation.archivedBootID = conversation.id
+                }
                 conversation.userID = nil
-                snapshot.privateMessageConversations[accountID] = conversation
+                snapshot.privateMessageConversations[id] = conversation
             }
             snapshot.liveUsers.removeValue(forKey: userID)
             context.snapshot = snapshot
@@ -4501,12 +4535,10 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
                         try messageCenterStore.insertPrivateMessage(storedMessage,
                                                                   conversation: stored,
                                                                   scope: scope)
-                    } else if let bootID = snapshot.messageCenterServerBootID,
+                    } else if conversation.userID != nil,
                               let stored = storedBootConversation(conversation) {
-                        try messageCenterStore.insertBootPrivateMessage(storedMessage,
-                                                                        conversation: stored,
-                                                                        scope: scope,
-                                                                        bootID: bootID)
+                        try messageCenterStore.insertBootPrivateMessage(storedMessage, conversation: stored,
+                                                                        scope: scope, bootID: conversation.id)
                     }
                 } catch {
                     NSLog("Carracho background Message Center storage error: %@", Self.displayMessage(for: error))
@@ -4547,12 +4579,10 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
                         try messageCenterStore.insertPrivateMessage(storedMessage,
                                                                   conversation: stored,
                                                                   scope: scope)
-                    } else if let bootID = snapshot.messageCenterServerBootID,
+                    } else if conversation.userID != nil,
                               let stored = storedBootConversation(conversation) {
-                        try messageCenterStore.insertBootPrivateMessage(storedMessage,
-                                                                        conversation: stored,
-                                                                        scope: scope,
-                                                                        bootID: bootID)
+                        try messageCenterStore.insertBootPrivateMessage(storedMessage, conversation: stored,
+                                                                        scope: scope, bootID: conversation.id)
                     }
                 } catch {
                     NSLog("Carracho background Message Center storage error: %@", Self.displayMessage(for: error))
@@ -4561,8 +4591,12 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
             return true
 
         case let .privateMessage(message):
-            let user = snapshot.liveUsers[message.senderUserID]
-            let accountID = user?.accountID
+            guard let user = snapshot.liveUsers[message.senderUserID] else {
+                NSLog("Carracho: rejecting background PM from unknown routing ID %@",
+                      String(message.senderUserID))
+                return true
+            }
+            let accountID = user.accountID
             let conversationID: UUID
             if let accountID {
                 conversationID = accountID
@@ -4579,9 +4613,9 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
                     id: conversationID,
                     accountID: accountID,
                     userID: message.senderUserID,
-                    nickname: user.map { Self.macRomanString($0.nickname) } ?? LF("User %@", String(message.senderUserID)),
-                    picture: user?.picture ?? Data(),
-                    isLegacyTransport: user?.isLegacyTransport ??
+                    nickname: Self.macRomanString(user.nickname),
+                    picture: user.picture,
+                    isLegacyTransport: user.isLegacyTransport ||
                         (target.transferSession?.usesModernCrypto == false),
                     entries: [], unreadCount: 0, draftText: "", lastActivity: Date()
                 )
@@ -4604,13 +4638,11 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
                 conversation.lastActivity = entry.timestamp
                 conversation.accountID = accountID
                 conversation.userID = message.senderUserID
-                if let user {
-                    let decoded = Self.macRomanString(user.nickname).trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !decoded.isEmpty { conversation.nickname = decoded }
-                    conversation.picture = user.picture
-                    conversation.isLegacyTransport = user.isLegacyTransport ||
-                        (target.transferSession?.usesModernCrypto == false)
-                }
+                let decoded = Self.macRomanString(user.nickname).trimmingCharacters(in: .whitespacesAndNewlines)
+                if !decoded.isEmpty { conversation.nickname = decoded }
+                conversation.picture = user.picture
+                conversation.isLegacyTransport = user.isLegacyTransport ||
+                    (target.transferSession?.usesModernCrypto == false)
                 snapshot.privateMessageConversations[conversationID] = conversation
 
                 if let scope = snapshot.messageCenterPersistenceScope {
@@ -4625,12 +4657,12 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
                             try messageCenterStore.insertPrivateMessage(storedMessage,
                                                                       conversation: stored,
                                                                       scope: scope)
-                        } else if let bootID = snapshot.messageCenterServerBootID,
+                        } else if conversation.userID != nil,
                                   let stored = storedBootConversation(conversation) {
                             try messageCenterStore.insertBootPrivateMessage(storedMessage,
                                                                             conversation: stored,
                                                                             scope: scope,
-                                                                            bootID: bootID)
+                                                                            bootID: conversation.id)
                         }
                     } catch {
                         NSLog("Carracho background Message Center storage error: %@", Self.displayMessage(for: error))
@@ -5062,8 +5094,8 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         snapshot.activeChannel = nil
         snapshot.channelMembers = [:]
         snapshot.joinedChannels = [:]
-        // Stable account conversations survive reconnects. Numeric routing IDs do not: they
-        // are reintroduced only after the current server boot has been confirmed from uptime.
+        // Stable account histories survive reconnects. Numeric routing leases do not:
+        // they are retained only as detached, read-only archives of earlier sessions.
         snapshot.privateMessageConversations = snapshot.privateMessageConversations.filter {
             $0.value.accountID != nil
         }
@@ -5145,56 +5177,8 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
 
         do {
             let bootID = try messageCenterStore.resolveServerBoot(scope: scope, uptimeTicks: uptimeTicks)
-            let stored = try messageCenterStore.loadBootConversations(scope: scope, bootID: bootID)
             snapshot.messageCenterServerBootID = bootID
-
-            var restoredUserIDs = Set<UInt32>()
-            for item in stored {
-                restoredUserIDs.insert(item.userID)
-                let disk = restoredBootConversation(item)
-                if let existingID = snapshot.privateMessageConversations.first(where: {
-                    $0.value.accountID == nil && $0.value.userID == item.userID
-                })?.key, var current = snapshot.privateMessageConversations[existingID] {
-                    var knownIDs = Set(disk.entries.map(\.id))
-                    var entries = disk.entries
-                    for entry in current.entries where knownIDs.insert(entry.id).inserted {
-                        entries.append(entry)
-                    }
-                    entries.sort {
-                        if $0.timestamp != $1.timestamp { return $0.timestamp < $1.timestamp }
-                        return $0.id.uuidString < $1.id.uuidString
-                    }
-                    if entries.count > 500 { entries.removeFirst(entries.count - 500) }
-                    current.entries = entries
-                    current.unreadCount = min(999, item.unreadCount + current.unreadCount)
-                    if current.draftText.isEmpty { current.draftText = item.draftText }
-                    current.lastActivity = max(current.lastActivity, item.lastActivity)
-                    if current.nickname.isEmpty { current.nickname = item.nickname }
-                    if current.picture.isEmpty { current.picture = item.picture }
-                    current.isLegacyTransport = current.isLegacyTransport || item.isLegacyTransport
-                    snapshot.privateMessageConversations[existingID] = current
-                    if let storedCurrent = storedBootConversation(current) {
-                        try messageCenterStore.saveBootConversationHistory(
-                            storedCurrent, scope: scope, bootID: bootID
-                        )
-                    }
-                } else {
-                    snapshot.privateMessageConversations[disk.id] = disk
-                }
-            }
-
-            // A message can arrive after login but before the uptime reply. Once this boot is
-            // proven, persist those new numeric-ID conversations in the correct namespace.
-            for conversation in snapshot.privateMessageConversations.values
-                where conversation.accountID == nil &&
-                      conversation.userID != nil &&
-                      !restoredUserIDs.contains(conversation.userID!) {
-                if let storedCurrent = storedBootConversation(conversation) {
-                    try messageCenterStore.saveBootConversationHistory(
-                        storedCurrent, scope: scope, bootID: bootID
-                    )
-                }
-            }
+            // Archived epochs were already loaded from storage without binding to live peers.
             context.snapshot = snapshot
         } catch {
             NSLog("Carracho background Message Center boot storage error: %@",
@@ -6867,6 +6851,8 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         userStatusMessages = [:]
         userGroupColors = [:]
         remoteServerLogLoading = false
+        serverLogRawText = ""
+        serverLogFilterStatusLabel.stringValue = ""
         remoteEventLogLoading = false
         advancedTrashOperationInProgress = false
         advancedSearchIndexRebuildInProgress = false
@@ -7769,6 +7755,7 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         }
         switch event {
         case let .userArrived(user):
+            retirePrivateConversationRouting(userID: user.userID)
             liveUsers[user.userID] = user
             let arrivedName = Self.macRomanString(user.nickname)
             emitClientEvent(.userSignedIn,
@@ -7815,8 +7802,12 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         case let .privateMessageReactionChanged(change):
             applyPrivateMessageReaction(change)
         case let .privateMessage(message):
-            let sender = liveUsers[message.senderUserID].map { Self.macRomanString($0.nickname) }
-                ?? L("Unknown User")
+            guard let senderUser = liveUsers[message.senderUserID] else {
+                NSLog("Carracho: rejecting PM from unknown routing ID %@; user identity not established",
+                      String(message.senderUserID))
+                break
+            }
+            let sender = Self.macRomanString(senderUser.nickname)
             let privateText = CarrachoHTMLText.plainText(fromWire: message.message, expandLegacyEmoticons: true)
             emitClientEvent(.message,
                             notificationTitle: LF("New message from %@", sender),
@@ -7827,6 +7818,8 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
                                  id: message.messageID ?? UUID(),
                                  reactable: message.messageID != nil && client.supportsPrivateMessageReactions)
         case let .userUpdated(userID, nickname, picture, statusMessage, accountID):
+            if let accountID, let previousID = liveUsers[userID]?.accountID,
+               previousID != accountID { retirePrivateConversationRouting(userID: userID) }
             promoteSessionIgnore(userID: userID, accountID: accountID,
                                  scope: messageCenterPersistenceScope,
                                  bookmarkID: activeBookmarkConnectionID)
@@ -9062,8 +9055,8 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         localServerLogLines.append("[\(formatter.string(from: Date()))] \(line)")
         if localServerLogLines.count > 10_000 { localServerLogLines.removeFirst(localServerLogLines.count - 10_000) }
         if !client.isConnected {
-            serverLogTextView.string = localServerLogLines.joined(separator: "\n")
-            serverLogTextView.scrollToEndOfDocument(nil)
+            serverLogRawText = localServerLogLines.joined(separator: "\n")
+            applyServerLogFilters(scrollToEnd: true)
         }
     }
 

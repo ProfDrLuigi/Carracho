@@ -2157,3 +2157,21 @@
 "Stop Ignoring" = "Stop Ignoring";
 "Edit User Account…" = "Edit User Account…";
 "This user has no editable login account, or the server does not expose their login." = "This user has no editable login account, or the server does not expose their login.";
+
+"Unverified legacy history" = "Unverified legacy history";
+
+"All Log Entries" = "All Log Entries";
+
+"Errors" = "Errors";
+
+"Warnings" = "Warnings";
+
+"Filter log lines by keyword category" = "Filter log lines by keyword category";
+
+"Filter server log…" = "Filter server log…";
+
+"Search server log by IP, username or message text" = "Search server log by IP, username or message text";
+
+"Save complete unfiltered server log" = "Save complete unfiltered server log";
+
+"Showing %@ of %@ log lines" = "Showing %@ of %@ log lines";

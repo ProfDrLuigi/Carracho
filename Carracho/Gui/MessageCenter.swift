@@ -349,11 +349,15 @@ extension ViewController {
         )
     }
 
-    func restoredBootConversation(_ conversation: MessageCenterStoredBootConversation) -> PrivateMessageConversation {
+    func restoredBootConversation(_ conversation: MessageCenterStoredBootConversation,
+                                  bootID: UUID? = nil) -> PrivateMessageConversation {
         PrivateMessageConversation(
             id: UUID(),
             accountID: nil,
-            userID: conversation.userID,
+            // No authenticated account UUID is recorded in this legacy history. The numeric
+            // routing ID can belong to someone else now, even during the same server boot.
+            // Display existing messages as an archive; never permit replies or live binding.
+            userID: nil,
             nickname: conversation.nickname,
             picture: conversation.picture,
             isLegacyTransport: conversation.isLegacyTransport,
@@ -365,8 +369,17 @@ extension ViewController {
             },
             unreadCount: conversation.unreadCount,
             draftText: conversation.draftText,
-            lastActivity: conversation.lastActivity
+            lastActivity: conversation.lastActivity,
+            archivedBootID: bootID,
+            archivedUserID: conversation.userID
         )
+    }
+
+    /// Legacy records with no verifiable account identity must be clearly distinguished from
+    /// authenticated live conversations, including when their nickname is still online.
+    func privateConversationDisplayName(_ conversation: PrivateMessageConversation) -> String {
+        guard conversation.accountID == nil, conversation.userID == nil else { return conversation.nickname }
+        return conversation.nickname + " (" + L("Unverified legacy history") + ")"
     }
 
     func privateConversationID(forUserID userID: UInt32) -> UUID? {
@@ -379,8 +392,8 @@ extension ViewController {
             })?.key
         }
 
-        // Without a stable account ID, only the current routing identity may be selected. Disk
-        // persistence, when available, is separately fenced by the current server-boot namespace.
+        // Without a stable account ID, only the current live routing lease may be selected.
+        // Past numeric-ID histories are detached archives; new writes use a conversation UUID.
         return privateMessageConversations.first(where: {
             $0.value.userID == userID && $0.value.accountID == nil
         })?.key
@@ -423,8 +436,10 @@ extension ViewController {
             )
 
             var promotedBootUserID: UInt32?
+            var promotedTransientID: UUID?
             if let transientID, let transient = privateMessageConversations.removeValue(forKey: transientID) {
                 promotedBootUserID = transient.userID
+                promotedTransientID = transientID
                 var knownIDs = Set(conversation.entries.map(\.id))
                 for entry in transient.entries where knownIDs.insert(entry.id).inserted {
                     conversation.entries.append(entry)
@@ -453,17 +468,12 @@ extension ViewController {
             privateMessageConversations[accountID] = conversation
             if transientID != nil {
                 let persisted = persistPrivateConversationHistory(accountID)
-                if persisted,
-                   let bootID = messageCenterServerBootID,
-                   let promotedBootUserID,
-                   let scope = messageCenterPersistenceScope {
+                if persisted, let transientID = promotedTransientID,
+                   let userID = promotedBootUserID, let scope = messageCenterPersistenceScope {
                     do {
-                        try messageCenterStore.deleteBootConversation(userID: promotedBootUserID,
-                                                                      scope: scope,
-                                                                      bootID: bootID)
-                    } catch {
-                        reportMessageCenterStoreError(error)
-                    }
+                        try messageCenterStore.deleteBootConversation(userID: userID, scope: scope,
+                                                                      bootID: transientID)
+                    } catch { reportMessageCenterStoreError(error) }
                 }
             } else {
                 persistPrivateConversation(accountID)
@@ -496,26 +506,25 @@ extension ViewController {
         return conversationID
     }
 
+    /// User IDs are connection leases, not identities. A disconnected peer's history may be
+    /// displayed but must never be selected as the inbox of the next peer to receive that ID.
     func disconnectPrivateConversation(userID: UInt32) {
-        guard let conversationID = privateConversationID(forUserID: userID),
-              var conversation = privateMessageConversations[conversationID] else { return }
-
-        if conversation.accountID != nil {
+        for (conversationID, var conversation) in privateMessageConversations
+            where conversation.userID == userID {
+            if conversation.accountID == nil {
+                conversation.archivedUserID = userID
+                conversation.archivedBootID = conversation.id
+            }
             conversation.userID = nil
             privateMessageConversations[conversationID] = conversation
-            persistPrivateConversation(conversationID)
-        } else if messageCenterServerBootID != nil {
-            privateMessageConversations[conversationID] = conversation
-            persistPrivateConversation(conversationID)
-        } else {
-            // Without either a stable account UUID or a confirmed server-boot namespace, a
-            // routing ID is not safe to persist across reconnects.
-            privateMessageConversations.removeValue(forKey: conversationID)
-            if selectedPrivateConversationID == conversationID {
-                selectedPrivateConversationID = nil
-                privateMessageComposer.string = ""
-            }
+            if conversation.accountID != nil { persistPrivateConversation(conversationID) }
         }
+    }
+
+    /// Also protects against a missing/delayed disconnect event, or a recycled numeric ID
+    /// during a user-list refresh. Once detached, a conversation remains read-only history.
+    func retirePrivateConversationRouting(userID: UInt32) {
+        disconnectPrivateConversation(userID: userID)
     }
 
     func reportMessageCenterStoreError(_ error: Error) {
@@ -534,18 +543,13 @@ extension ViewController {
                 return (restored.id, restored)
             })
 
-            // A local Message Center is useful even while disconnected, especially immediately
-            // after an app update/relaunch. UUID-backed conversations are always safe to show.
-            // For peers without UUID metadata, show only the most recently observed boot
-            // namespace. A real connection resets this provisional boot ID and validates the
-            // current server boot from uptime before any numeric routing ID is trusted again.
-            if includeLatestBootHistory,
-               let bootID = try messageCenterStore.latestServerBootID(scope: scope) {
-                messageCenterServerBootID = bootID
-                for item in try messageCenterStore.loadBootConversations(scope: scope, bootID: bootID) {
-                    let restored = restoredBootConversation(item)
-                    privateMessageConversations[restored.id] = restored
-                }
+            // Restore previously saved Classic sessions as read-only archives. Each new
+            // conversation gets its own UUID namespace; stored numeric user IDs are NEVER
+            // rebound to currently connected users, even when the server boot matches.
+            _ = includeLatestBootHistory
+            for item in try messageCenterStore.loadArchivedLegacyConversations(scope: scope) {
+                let archived = restoredBootConversation(item.conversation, bootID: item.bootID)
+                privateMessageConversations[archived.id] = archived
             }
 
             offlineMessageCenterMessages = snapshot.offlineMessages.map {
@@ -574,51 +578,9 @@ extension ViewController {
               let scope = messageCenterPersistenceScope else { return }
         do {
             let bootID = try messageCenterStore.resolveServerBoot(scope: scope, uptimeTicks: uptimeTicks)
-            let stored = try messageCenterStore.loadBootConversations(scope: scope, bootID: bootID)
             messageCenterServerBootID = bootID
-
-            var restoredUserIDs = Set<UInt32>()
-            for item in stored {
-                restoredUserIDs.insert(item.userID)
-                if let existingID = privateMessageConversations.first(where: {
-                    $0.value.accountID == nil && $0.value.userID == item.userID
-                })?.key, var current = privateMessageConversations[existingID] {
-                    let disk = restoredBootConversation(item)
-                    var knownIDs = Set(disk.entries.map(\.id))
-                    var entries = disk.entries
-                    for entry in current.entries where knownIDs.insert(entry.id).inserted {
-                        entries.append(entry)
-                    }
-                    entries.sort {
-                        if $0.timestamp != $1.timestamp { return $0.timestamp < $1.timestamp }
-                        return $0.id.uuidString < $1.id.uuidString
-                    }
-                    if entries.count > 500 { entries.removeFirst(entries.count - 500) }
-                    current.entries = entries
-                    current.unreadCount = min(999, item.unreadCount + current.unreadCount)
-                    if current.draftText.isEmpty { current.draftText = item.draftText }
-                    current.lastActivity = max(current.lastActivity, item.lastActivity)
-                    if current.nickname.isEmpty { current.nickname = item.nickname }
-                    if current.picture.isEmpty { current.picture = item.picture }
-                    current.isLegacyTransport = current.isLegacyTransport || item.isLegacyTransport
-                    privateMessageConversations[existingID] = current
-                    persistPrivateConversationHistory(existingID)
-                } else {
-                    let restored = restoredBootConversation(item)
-                    privateMessageConversations[restored.id] = restored
-                }
-            }
-
-            // Messages can arrive between login completion and the uptime reply. Persist those
-            // identity-less conversations now that the current server boot has been proven.
-            for (conversationID, conversation) in privateMessageConversations
-                where conversation.accountID == nil && conversation.userID != nil &&
-                      !restoredUserIDs.contains(conversation.userID!) {
-                persistPrivateConversationHistory(conversationID)
-            }
-            for userID in liveUsers.keys {
-                bindPrivateConversationIdentity(userID: userID, createIfMissing: false)
-            }
+            // Archives were already loaded, safely detached, by configureMessageCenterPersistence.
+            // Uptime is still recorded for compatibility, never to reconnect by numeric ID.
             refreshPrivateMessageCenter(scrollToBottom: false)
         } catch {
             reportMessageCenterStoreError(error)
@@ -631,9 +593,18 @@ extension ViewController {
         do {
             if let stored = storedConversation(conversation) {
                 try messageCenterStore.saveConversation(stored, scope: scope)
-            } else if let bootID = messageCenterServerBootID,
+            } else if let userID = conversation.userID,
                       let stored = storedBootConversation(conversation) {
-                try messageCenterStore.saveBootConversation(stored, scope: scope, bootID: bootID)
+                // The conversation UUID is a unique lease epoch, NOT the server's shared
+                // boot UUID. A recycled numeric user ID therefore cannot reuse this history.
+                try messageCenterStore.saveBootConversation(stored, scope: scope, bootID: conversation.id)
+            } else if let archivedBootID = conversation.archivedBootID,
+                      let archivedUserID = conversation.archivedUserID {
+                var archived = conversation
+                archived.userID = archivedUserID
+                if let stored = storedBootConversation(archived) {
+                    try messageCenterStore.saveBootConversation(stored, scope: scope, bootID: archivedBootID)
+                }
             }
         } catch {
             reportMessageCenterStoreError(error)
@@ -649,9 +620,9 @@ extension ViewController {
                 try messageCenterStore.saveConversationHistory(stored, scope: scope)
                 return true
             }
-            if let bootID = messageCenterServerBootID,
-               let stored = storedBootConversation(conversation) {
-                try messageCenterStore.saveBootConversationHistory(stored, scope: scope, bootID: bootID)
+            if conversation.userID != nil, let stored = storedBootConversation(conversation) {
+                try messageCenterStore.saveBootConversationHistory(stored, scope: scope,
+                                                                   bootID: conversation.id)
                 return true
             }
             return false
@@ -677,10 +648,9 @@ extension ViewController {
         do {
             if let stored = storedConversation(conversation) {
                 try messageCenterStore.insertPrivateMessage(storedMessage, conversation: stored, scope: scope)
-            } else if let bootID = messageCenterServerBootID,
-                      let stored = storedBootConversation(conversation) {
+            } else if conversation.userID != nil, let stored = storedBootConversation(conversation) {
                 try messageCenterStore.insertBootPrivateMessage(storedMessage, conversation: stored,
-                                                                  scope: scope, bootID: bootID)
+                                                                scope: scope, bootID: conversation.id)
             }
         } catch {
             reportMessageCenterStoreError(error)
@@ -1435,7 +1405,7 @@ extension ViewController {
             avatar.heightAnchor.constraint(equalToConstant: 36),
         ])
 
-        let name = NSTextField(labelWithString: conversation.nickname)
+        let name = NSTextField(labelWithString: privateConversationDisplayName(conversation))
         name.font = .systemFont(ofSize: messageCenterFontSize, weight: conversation.unreadCount > 0 ? .semibold : .medium)
         name.lineBreakMode = .byTruncatingTail
         name.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -1700,7 +1670,7 @@ extension ViewController {
         privateMessageHeaderAvatar.image = privateMessageAvatarImage(for: conversation)
         privateMessageHeaderAvatar.layer?.cornerRadius = conversation.isLegacyTransport ? 0 : 18
         privateMessageHeaderAvatar.layer?.masksToBounds = !conversation.isLegacyTransport
-        privateMessageHeaderNameLabel.stringValue = conversation.nickname
+        privateMessageHeaderNameLabel.stringValue = privateConversationDisplayName(conversation)
         let online = client.isConnected && liveUser(for: conversation) != nil
         var statusParts = [online ? L("Online") : L("Offline")]
         if conversation.isLegacyTransport { statusParts.append(L("Classic client")) }
@@ -1740,7 +1710,8 @@ extension ViewController {
         if let scope = messageCenterPersistenceScope {
             do {
                 try messageCenterStore.markAllConversationsRead(scope: scope)
-                if let bootID = messageCenterServerBootID {
+                let archiveEpochs = Set(privateMessageConversations.values.compactMap(\.archivedBootID))
+                for bootID in archiveEpochs {
                     try messageCenterStore.markAllBootConversationsRead(scope: scope, bootID: bootID)
                 }
                 try messageCenterStore.markAllOfflineMessagesRead(scope: scope)
@@ -1772,7 +1743,8 @@ extension ViewController {
                 do {
                     if let accountID = current.accountID {
                         try self.messageCenterStore.clearConversation(accountID: accountID, scope: scope)
-                    } else if let bootID = self.messageCenterServerBootID, let userID = current.userID {
+                    } else if let bootID = current.archivedBootID,
+                              let userID = current.archivedUserID {
                         try self.messageCenterStore.clearBootConversation(userID: userID, scope: scope,
                                                                            bootID: bootID)
                     }
@@ -1803,7 +1775,8 @@ extension ViewController {
                 do {
                     if let accountID = conversation.accountID {
                         try self.messageCenterStore.deleteConversation(accountID: accountID, scope: scope)
-                    } else if let bootID = self.messageCenterServerBootID, let userID = conversation.userID {
+                    } else if let bootID = conversation.archivedBootID,
+                              let userID = conversation.archivedUserID {
                         try self.messageCenterStore.deleteBootConversation(userID: userID, scope: scope,
                                                                             bootID: bootID)
                     }
