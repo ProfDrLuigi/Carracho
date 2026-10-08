@@ -23,6 +23,19 @@
     </style>
 </head>
     <body>
+        <p><span class="header" lang="en">New in 1.1.7</span></p>
+        <ul>
+            <span class="newstext">
+                <li>Updated Carracho Server for macOS to version 1.1.7 (build 18).</li>
+                <li><strong>Critical: prevent account loss when changing the administrator password</strong> — Fixed a data-loss defect in the macOS Server administration GUI. When the Server GUI and the background carracho-serverd service had independently loaded the same server.db, the GUI could retain an outdated account snapshot. Changing the administrator password then saved that stale *entire* server state, replacing the current accounts table and removing accounts created or changed by the daemon since the GUI opened. The updated code applies the password change against the latest database state, preserving all other accounts, credentials, newsgroups and server settings.</li>
+                <li><strong>Atomic cross-process SQLite state updates</strong> — Every Server state mutation now acquires SQLite&#x27;s BEGIN IMMEDIATE writer lock before reading the current persisted state, applies the change to that latest state and commits it atomically. This prevents the independently running Server GUI and system-service daemon from overwriting one another&#x27;s newer data. An error rolls back the whole transaction. The old API for blindly saving an out-of-date full-state snapshot has been removed.</li>
+                <li><strong>Administrator password changes update credentials only</strong> — The Server app now uses the backend&#x27;s dedicated password-change operation rather than submitting its cached administrator account as an entire replacement record. Existing admin metadata, group assignments, profile settings and changes made through a second process remain intact. The normal new-password validation and authentication verifier storage are unchanged.</li>
+                <li><strong>Refuse silent database reinitialization on existing installations</strong> — An existing server.db without a valid persisted Server state is now treated as an error rather than silently replaced with fresh default accounts. First-run initialization is serialized inside the same SQLite write lock so two simultaneous process starts cannot independently bootstrap the database. Fresh installations still initialize normally. This protection does not recover accounts already lost to an earlier overwritten state; restore those from a database backup if available.</li>
+                <li><strong>Regression coverage for GUI and daemon account safety</strong> — Added a standalone SQLite regression test using two separate backend instances pointing to one disposable test database. It confirms that an administrator password change from a stale GUI snapshot preserves accounts created by the other process, including their logins, UUIDs and usable passwords. Tests also check preserved newsgroups and server settings, reverse-direction stale-state changes, rollback after a deliberate failure and safe handling of an incomplete existing database.</li>
+                <li><strong>Update the macOS system-service daemon as well as the GUI</strong> — The fix changes shared persistence code used by both the macOS Server app and its embedded carracho-serverd helper. After installing the new app, use System Service → Update Now to replace any previously installed system-service helper. Installing only the GUI while leaving an older daemon running does not fully protect the Server database. No SQLite schema migration or Classic/modern packet-format change is required. The shared Server version metadata is also raised to 1.1.7 (build 18) for native Linux build/package reporting, but the reported stale-snapshot bug concerns the macOS Server GUI and daemon.</li>
+        </ul></span>
+
+
         <p><span class="header" lang="en">New in 1.1.6</span></p>
         <ul>
             <span class="newstext">

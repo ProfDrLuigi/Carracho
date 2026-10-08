@@ -85,54 +85,89 @@ struct ServerStateStore {
         let manager = FileManager.default
         let directory = databaseURL.deletingLastPathComponent()
         try manager.createDirectory(at: directory, withIntermediateDirectories: true)
+        let databaseExisted = manager.fileExists(atPath: databaseURL.path)
 
         var db: OpaquePointer?
         try openDatabase(&db)
         defer { sqlite3_close(db) }
         try createSchema(db)
-
-        if try hasPersistedState(db) {
-            let decoded = try loadState(db)
-            let migrated = try ServerStateMigrator.toCurrent(decoded, passwordIterations: passwordIterations)
-            try ServerStateValidator.validate(migrated)
-            try ensureAccountTransferRows(migrated.accounts, db: db)
-            if migrated != decoded { return try save(migrated) }
-            return migrated
+        // A second GUI/daemon process can start at exactly the same time. Lock before
+        // deciding whether this is a fresh installation, and commit the initial state
+        // through the SAME SQLite connection. No process may bootstrap over another.
+        try exec(db, "BEGIN IMMEDIATE TRANSACTION")
+        do {
+            let loaded: ServerState
+            if try hasPersistedState(db) {
+                let decoded = try loadState(db)
+                let migrated = try ServerStateMigrator.toCurrent(decoded,
+                                                                  passwordIterations: passwordIterations)
+                try ServerStateValidator.validate(migrated)
+                if migrated != decoded { try replaceState(migrated, db: db) }
+                try ensureAccountTransferRows(migrated.accounts, db: db)
+                loaded = migrated
+            } else if manager.fileExists(atPath: legacyJSONURL.path) {
+                let data = try Data(contentsOf: legacyJSONURL)
+                let decoder = JSONDecoder()
+                decoder.dateDecodingStrategy = .iso8601
+                let decoded = try decoder.decode(ServerState.self, from: data)
+                let migrated = try ServerStateMigrator.toCurrent(decoded,
+                                                                  passwordIterations: passwordIterations)
+                try ServerStateValidator.validate(migrated)
+                try replaceState(migrated, db: db)
+                loaded = migrated
+            } else if databaseExisted {
+                // Never silently replace an existing, partly damaged or interrupted DB
+                // with ServerState.initial. Stop and allow backup/recovery instead.
+                throw ServerStateSQLiteError.corrupt(
+                    "Existing server.db has no persisted server state. Refusing to reset accounts."
+                )
+            } else {
+                let initial = try ServerStateMigrator.toCurrent(ServerState.initial,
+                                                                  passwordIterations: passwordIterations)
+                try ServerStateValidator.validate(initial)
+                try replaceState(initial, db: db)
+                loaded = initial
+            }
+            try exec(db, "COMMIT")
+            return loaded
+        } catch {
+            try? exec(db, "ROLLBACK")
+            throw error
         }
-
-        if manager.fileExists(atPath: legacyJSONURL.path) {
-            let data = try Data(contentsOf: legacyJSONURL)
-            let decoder = JSONDecoder()
-            decoder.dateDecodingStrategy = .iso8601
-            let decoded = try decoder.decode(ServerState.self, from: data)
-            let migrated = try ServerStateMigrator.toCurrent(decoded, passwordIterations: passwordIterations)
-            try ServerStateValidator.validate(migrated)
-            return try save(migrated)
-        }
-
-        return try save(ServerState.initial)
     }
 
-    @discardableResult
-    func save(_ state: ServerState) throws -> ServerState {
-        let normalized = try ServerStateMigrator.toCurrent(state, passwordIterations: passwordIterations)
-        try ServerStateValidator.validate(normalized)
-        let manager = FileManager.default
-        try manager.createDirectory(at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-
+    /// Read, mutate and save the LATEST persisted state while holding one SQLite writer
+    /// transaction. The Server GUI and launchd daemon are separate processes with their
+    /// own in-memory snapshots; using either snapshot as the base for a full-table save
+    /// would silently erase accounts created by the other process.
+    ///
+    /// BEGIN IMMEDIATE serializes writers before the read, even across processes.
+    /// All schema/state tables are replaced atomically, with rollback on any error.
+    func mutate<T>(_ body: (inout ServerState) throws -> T) throws -> (T, ServerState) {
         var db: OpaquePointer?
         try openDatabase(&db)
         defer { sqlite3_close(db) }
         try createSchema(db)
         try exec(db, "BEGIN IMMEDIATE TRANSACTION")
         do {
+            guard try hasPersistedState(db) else {
+                throw ServerStateSQLiteError.corrupt(
+                    "No persisted server state; refusing to overwrite the accounts database."
+                )
+            }
+            let decoded = try loadState(db)
+            var latest = try ServerStateMigrator.toCurrent(decoded, passwordIterations: passwordIterations)
+            try ServerStateValidator.validate(latest)
+            let result = try body(&latest)
+            let normalized = try ServerStateMigrator.toCurrent(latest, passwordIterations: passwordIterations)
+            try ServerStateValidator.validate(normalized)
             try replaceState(normalized, db: db)
             try exec(db, "COMMIT")
+            return (result, normalized)
         } catch {
             try? exec(db, "ROLLBACK")
             throw error
         }
-        return normalized
     }
 
     private func openDatabase(_ db: inout OpaquePointer?) throws {

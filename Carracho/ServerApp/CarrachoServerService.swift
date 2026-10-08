@@ -694,7 +694,10 @@ final class CarrachoServerService {
         guard let account = administratorAccount else {
             throw ServerStateError.invalidValue(L("No administrator account exists in the server database."))
         }
-        return try backend.updateAccount(id: account.id, with: account, newPassword: newPassword)
+        // A password edit must touch ONLY this account's credentials. Supplying the
+        // GUI's cached account as an entire replacement can overwrite newer fields
+        // from the running daemon, even after transaction-safe persistence.
+        return try backend.changePassword(accountID: account.id, to: newPassword)
     }
 }
 #endif

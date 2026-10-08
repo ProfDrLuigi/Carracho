@@ -20,10 +20,10 @@ See the collapsible **Security and modern encryption** section below for the pro
 
 ### Current release: 1.1.9
 
-Carracho Client 1.1.9 (build 20) improves the Message Center for returning Guest users and safeguards private-message recipient selection. It also fixes Guest nicknames in chatroom departure notices. Carracho Server remains 1.1.6 (build 17); no Server rebuild or protocol change is required.
+Carracho Client 1.1.9 (build 20) improves the Message Center for returning Guest users and safeguards private-message recipient selection. It also fixes Guest nicknames in chatroom departure notices. Carracho Server 1.1.7 (build 18) fixes a critical database-safety bug: changing the administrator password in the macOS Server GUI could erase accounts created by the running daemon. Both the macOS Server app and its installed system-service daemon must be updated; no wire-protocol change is required.
 
 - Client: **1.1.9 (build 20)**
-- Server: **1.1.6 (build 17)**
+- Server: **1.1.7 (build 18)**
 
 The full release notes are available in [`README_1.1.9.md`](README_1.1.9.md).
 

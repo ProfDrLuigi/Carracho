@@ -538,12 +538,12 @@ final class ModernServerBackend {
         }
     }
 
-    /// Applies to a copy, persists the copy atomically, and only then publishes it.
+    /// Each GUI/daemon process has a cached snapshot. Mutations must start from the
+    /// current on-disk state under one cross-process SQLite write lock, never from that
+    /// potentially stale cache, or a password edit can erase other users' accounts.
     private func transaction<T>(_ body: (inout ServerState) throws -> T) throws -> T {
         try queue.sync {
-            var candidate = state
-            let result = try body(&candidate)
-            let persisted = try store.save(candidate)
+            let (result, persisted) = try store.mutate(body)
             state = persisted
             return result
         }

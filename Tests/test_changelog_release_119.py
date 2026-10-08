@@ -30,6 +30,7 @@ class ReleaseNotes119RegressionTests(unittest.TestCase):
             "docs/index.html",
             "docs/releases/1.1.9.html",
             "docs/releases/Carracho-Client-1.1.9.html",
+            "docs/releases/Carracho-Server-1.1.7.html",
             "docs/releases/Carracho-Server-1.1.6.html",
         ]
         for name in self.files:
@@ -42,7 +43,7 @@ class ReleaseNotes119RegressionTests(unittest.TestCase):
             sys.executable, "-B", str(ROOT / "scripts/release/render_release.py"),
             "--release-version", "1.1.9",
             "--client-version", "1.1.9", "--client-build", "20",
-            "--server-version", "1.1.6", "--server-build", "17",
+            "--server-version", "1.1.7", "--server-build", "18",
             "--notes", str(self.base / "README_1.1.9.md"),
             "--client-changelog", str(self.base / "carrachoclient.html"),
             "--server-changelog", str(self.base / "carrachoserver.html"),
@@ -73,6 +74,21 @@ class ReleaseNotes119RegressionTests(unittest.TestCase):
         self.assertEqual(len(re.findall(r"<li>", previous)), 10)
         old = content.split("New in 1.1.7", 1)[1].split("New in 1.1.6", 1)[0]
         self.assertEqual(len(re.findall(r"<li>", old)), 16)
+        server_content = (self.base / "carrachoserver.html").read_text()
+        latest_server = server_content.split("New in 1.1.7", 1)[1].split("New in 1.1.6", 1)[0]
+        previous_server = server_content.split("New in 1.1.6", 1)[1].split("New in 1.1.5", 1)[0]
+        self.assertEqual(len(re.findall(r"<li>", latest_server)), 7)  # build + 6 fixes
+        self.assertEqual(len(re.findall(r"<li>", previous_server)), 4)  # build + 3 past features
+        for title in (
+            "Critical: prevent account loss when changing the administrator password",
+            "Atomic cross-process SQLite state updates",
+            "Administrator password changes update credentials only",
+            "Refuse silent database reinitialization on existing installations",
+            "Regression coverage for GUI and daemon account safety",
+            "Update the macOS system-service daemon as well as the GUI",
+        ):
+            self.assertIn(f"<strong>{title}</strong>", latest_server)
+            self.assertIn(title, (self.base / "docs/releases/Carracho-Server-1.1.7.html").read_text())
 
     def test_stray_second_level_heading_fails_before_rewriting_anything(self) -> None:
         notes = self.base / "README_1.1.9.md"
@@ -89,7 +105,7 @@ class ReleaseNotes119RegressionTests(unittest.TestCase):
         notes = self.base / "README_1.1.9.md"
         content = notes.read_text()
         client_start = content.index("## Carracho Client 1.1.9")
-        server_start = content.index("## Carracho Server 1.1.6")
+        server_start = content.index("## Carracho Server 1.1.7")
         client = content[client_start:server_start].replace("### ", "#### ")
         notes.write_text(content[:client_start] + client + content[server_start:])
         old_output = {name: (self.base / name).read_bytes() for name in self.files if name != "README_1.1.9.md"}

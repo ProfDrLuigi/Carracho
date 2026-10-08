@@ -86,7 +86,7 @@
     <section class="stats-band">
       <div class="wrap stats">
         <div><strong>1.1.9</strong><span>Current release</span></div>
-        <div><strong>20 / 17</strong><span>Client / Server builds</span></div>
+        <div><strong>20 / 18</strong><span>Client / Server builds</span></div>
         <div><strong>10.15+</strong><span>macOS target</span></div>
         <div><strong>Swift + C</strong><span>Native implementations</span></div>
       </div>
@@ -105,7 +105,11 @@
           <li>Consolidated repeated Guest sessions under one conversation row in Message Center. Earlier messages remain organized by session with explicit identity warnings, rather than producing one visible orphan chat per reconnect.</li>
           <li>Fixed the grouped Guest chat staying <strong>Offline</strong> after the Guest returned; a uniquely matching live Guest now updates the existing view to <strong>Online</strong> immediately, without requiring a new message and without reusing unverified old session identities.</li>
           <li>Fixed Guest and Classic chatroom departure notices displaying <strong>Unknown User</strong> instead of the participant&#x27;s nickname when the global user-list entry disappears before the room leave event.</li>
-          <li>Updated the macOS Client to <strong>1.1.9 / build 20</strong>; Carracho Server remains <strong>1.1.6 / build 17</strong>.</li>
+          <li>Updated the macOS Client to <strong>1.1.9 / build 20</strong> and the Server to <strong>1.1.7 / build 18</strong>.</li>
+          <li><strong>Critical Server fix:</strong> Changing the administrator password in the macOS Server GUI no longer silently erases accounts created or edited by the running system-service daemon.</li>
+          <li>Server-state changes now reload the latest SQLite data inside a cross-process write transaction instead of persisting stale GUI/daemon snapshots.</li>
+          <li>A partially initialized existing server database now causes an explicit error, rather than being silently replaced with a fresh default-account database.</li>
+          <li>Added isolation tests for account and newsgroup survival, credential verification, transaction rollback, and incomplete database protection.</li>
           <!-- RELEASE_HIGHLIGHTS_END -->
         </ul>
       </div>
@@ -261,7 +265,7 @@ bash ServerLinux/build.sh
           <div class="eyebrow">Current release</div>
           <h2>Carracho release 1.1.9</h2>
           <p>
-            Carracho Client 1.1.9 (build 20) improves the Message Center for returning Guest users and safeguards private-message recipient selection. It also fixes Guest nicknames in chatroom departure notices. Carracho Server remains 1.1.6 (build 17); no Server rebuild or protocol change is required. Client 1.1.9 (build 20) · Server 1.1.6 (build 17).
+            Carracho Client 1.1.9 (build 20) improves the Message Center for returning Guest users and safeguards private-message recipient selection. It also fixes Guest nicknames in chatroom departure notices. Carracho Server 1.1.7 (build 18) fixes a critical database-safety bug: changing the administrator password in the macOS Server GUI could erase accounts created by the running daemon. Both the macOS Server app and its installed system-service daemon must be updated; no wire-protocol change is required. Client 1.1.9 (build 20) · Server 1.1.7 (build 18).
           </p>
         </div>
         <div class="release-actions">

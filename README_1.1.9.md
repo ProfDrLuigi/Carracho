@@ -1,6 +1,6 @@
 # Carracho 1.1.9
 
-Carracho **Client 1.1.9 (build 20)** improves the Message Center for returning Guest users and safeguards private-message recipient selection. It also fixes Guest nicknames in chatroom departure notices. **Carracho Server remains 1.1.6 (build 17)**; no Server rebuild or protocol change is required.
+Carracho **Client 1.1.9 (build 20)** improves the Message Center for returning Guest users and safeguards private-message recipient selection. It also fixes Guest nicknames in chatroom departure notices. **Carracho Server 1.1.7 (build 18)** fixes a critical database-safety bug: changing the administrator password in the macOS Server GUI could erase accounts created by the running daemon. Both the macOS Server app and its installed system-service daemon must be updated; no wire-protocol change is required.
 
 ## Highlights
 
@@ -8,7 +8,11 @@ Carracho **Client 1.1.9 (build 20)** improves the Message Center for returning G
 - Consolidated repeated Guest sessions under one conversation row in Message Center. Earlier messages remain organized by session with explicit identity warnings, rather than producing one visible orphan chat per reconnect.
 - Fixed the grouped Guest chat staying **Offline** after the Guest returned; a uniquely matching live Guest now updates the existing view to **Online** immediately, without requiring a new message and without reusing unverified old session identities.
 - Fixed Guest and Classic chatroom departure notices displaying **Unknown User** instead of the participant's nickname when the global user-list entry disappears before the room leave event.
-- Updated the macOS Client to **1.1.9 / build 20**; Carracho Server remains **1.1.6 / build 17**.
+- Updated the macOS Client to **1.1.9 / build 20** and the Server to **1.1.7 / build 18**.
+- **Critical Server fix:** Changing the administrator password in the macOS Server GUI no longer silently erases accounts created or edited by the running system-service daemon.
+- Server-state changes now reload the latest SQLite data inside a cross-process write transaction instead of persisting stale GUI/daemon snapshots.
+- A partially initialized existing server database now causes an explicit error, rather than being silently replaced with a fresh default-account database.
+- Added isolation tests for account and newsgroup survival, credential verification, transaction rollback, and incomplete database protection.
 
 ## Carracho Client 1.1.9
 
@@ -38,36 +42,39 @@ Corrected a further Message Center routing issue: choosing **Message** for one o
 
 An ambiguous or mismatching saved conversation is never silently rebound to a different person. The same identity checks apply to background server bookmarks, including late arrivals and recycled IDs. This fix is client-side and does not require the other participant to upgrade. Previously mixed historic messages cannot be safely reassigned automatically.
 
-## Carracho Server 1.1.6
+## Carracho Server 1.1.7
 
-### Dedicated Server and Tracker system services
+### Critical: prevent account loss when changing the administrator password
 
-The macOS Server and Tracker can now run as two independent launchd system services. Both jobs use the same compact carracho-serverd helper embedded in the Server app, while Server and Tracker retain separate launchd jobs and separate running/automatic-start state.
+Fixed a data-loss defect in the macOS Server administration GUI. When the Server GUI and the background `carracho-serverd` service had independently loaded the same `server.db`, the GUI could retain an outdated account snapshot. Changing the administrator password then saved that stale *entire* server state, replacing the current accounts table and removing accounts created or changed by the daemon since the GUI opened. The updated code applies the password change against the latest database state, preserving all other accounts, credentials, newsgroups and server settings.
 
-Installing a service copies only the headless daemon binary and the service definitions required to run it. The daemon directory no longer needs a second complete copy of **Carracho Server.app**, avoiding duplicated application bundles under /Applications and the service installation.
+### Atomic cross-process SQLite state updates
 
-The helper is built as a Universal 2 binary and contains the headless Server/Tracker runtime rather than the AppKit administration UI or Sparkle updater.
+Every Server state mutation now acquires SQLite's `BEGIN IMMEDIATE` writer lock **before reading the current persisted state**, applies the change to that latest state and commits it atomically. This prevents the independently running Server GUI and system-service daemon from overwriting one another's newer data. An error rolls back the whole transaction. The old API for blindly saving an out-of-date full-state snapshot has been removed.
 
-### System Service is the single control surface
+### Administrator password changes update credentials only
 
-Server and Tracker runtime control is now consolidated under the always-visible **System Service** section for each component. The old duplicate Start/Stop controls in the page header, application menu and status menu have been removed.
+The Server app now uses the backend's dedicated password-change operation rather than submitting its cached administrator account as an entire replacement record. Existing admin metadata, group assignments, profile settings and changes made through a second process remain intact. The normal new-password validation and authentication verifier storage are unchanged.
 
-Each service can be installed or uninstalled independently, started or stopped independently, and configured independently for automatic startup with macOS. Current running state and startup-at-boot state are separate: disabling automatic startup does not stop a service that is already running.
+### Refuse silent database reinitialization on existing installations
 
-The **System Service** section is permanently expanded and no longer has a disclosure arrow, so installation and runtime controls remain visible without another layer of navigation.
+An existing `server.db` without a valid persisted Server state is now treated as an error rather than silently replaced with fresh default accounts. First-run initialization is serialized inside the same SQLite write lock so two simultaneous process starts cannot independently bootstrap the database. Fresh installations still initialize normally. This protection **does not recover** accounts already lost to an earlier overwritten state; restore those from a database backup if available.
 
-### Daemon update reminder after an app update
+### Regression coverage for GUI and daemon account safety
 
-The Server app now compares the daemon helper embedded in the current app with the binary installed for the system services. The comparison is byte-for-byte, so rebuilt hotfixes are detected even if their marketing version happens to be unchanged.
+Added a standalone SQLite regression test using two separate backend instances pointing to one disposable test database. It confirms that an administrator password change from a stale GUI snapshot preserves accounts created by the other process, including their logins, UUIDs and usable passwords. Tests also check preserved newsgroups and server settings, reverse-direction stale-state changes, rollback after a deliberate failure and safe handling of an incomplete existing database.
 
-When an installed daemon differs from the helper in the updated app, **Reinstall** changes to **Update Now**. On every normal launch of the Server app, a warning explains that the application was updated and the system service must also be refreshed. The warning continues to appear until the installed daemon matches the current app.
+### Update the macOS system-service daemon as well as the GUI
 
-Choosing **Update Now** performs the same privileged service refresh used by the System Service controls while preserving the installed sibling service's running and automatic-start state. Because Server and Tracker share the daemon binary, updating either installed service refreshes the common executable.
+The fix changes shared persistence code used by **both** the macOS Server app and its embedded `carracho-serverd` helper. After installing the new app, use **System Service → Update Now** to replace any previously installed system-service helper. Installing only the GUI while leaving an older daemon running does not fully protect the Server database. No SQLite schema migration or Classic/modern packet-format change is required. The shared Server version metadata is also raised to 1.1.7 (build 18) for native Linux build/package reporting, but the reported stale-snapshot bug concerns the macOS Server GUI and daemon.
 
 ## Compatibility notes
 
 - **macOS Client:** 1.1.9 (build 20).
-- **macOS and native Linux Server:** unchanged at 1.1.6 (build 17).
+- **macOS Server app and Server/Tracker daemon:** 1.1.7 (build 18). Update the installed daemon helper after updating the app.
+- **Native Linux Server:** version/build metadata is 1.1.7 (build 18); the fixed GUI/daemon stale-snapshot failure is specific to macOS. No new protocol capabilities were introduced.
+- **Server database:** existing schema and accounts are retained without a destructive migration. Before upgrading, back up the complete `db` directory, including `server.db`, `server.db-wal` and `server.db-shm` if present.
+- **Recovery:** this fix prevents future overwrites; it cannot reconstruct accounts already removed by the old version.
 - User-to-user private-message protocol, account authentication and Classic packet layouts are unchanged.
 - Historical Guest sessions are grouped **for display only**. Their stored identities and routing leases remain separate, with unverified session boundaries visibly indicated.
 - A Guest returning with a unique matching nickname can appear Online immediately. Concurrent identical Guest nicknames remain ambiguous; the Client must not arbitrarily choose a recipient.
