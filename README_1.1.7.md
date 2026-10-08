@@ -23,18 +23,19 @@ Carracho **Client 1.1.7 (build 18)** brings improved user context menus, persona
 
 ## Carracho Client 1.1.7
 
-## User-list and conference context menus
+### Same user context menu in conferences
+
 Both the main server user list and each conference's participant list now offer the same right-click menu. Depending on connection state and permissions, it provides **Info**, **Message**, **Ignore User / Stop Ignoring**, **Edit User Account…**, **Kick** and **Ban**. The own-user **Sleep** action remains available where applicable.
 
 Conference actions are attached to the exact clicked user ID, rather than relying on a potentially unrelated selection in the main user list. Sorting the participant list therefore does not redirect a menu action to another user.
 
-### Direct administrator account editing
+### Admin account editing directly from user lists
 
 The **Edit User Account…** action is available only to authorized administrators. It resolves the selected live user's login and opens the existing account editor, with the usual server-side permission checks. On modern servers, the client automatically requests account groups and membership if the **Accounts** page has not been opened yet. On Classic servers, the existing Classic account editor is used. The account must expose an editable login.
 
 This fixes the error that previously appeared on the first direct edit attempt until the administrator visited **Accounts** to initialize the groups.
 
-### Personal Ignore action
+### Ignore users without administrator privileges
 
 Any user can choose **Ignore User** on someone else. This is a **local display/notification preference**, not a kick or a server-side ban:
 
@@ -44,9 +45,15 @@ Any user can choose **Ignore User** on someone else. This is a **local display/n
 - In the normal user list and the conference participant list, the ignored user's **nickname is struck through**, preserving its existing name color. Both lists refresh as soon as the setting changes.
 - Users cannot ignore their own account through this action.
 
+### Recognizable ignored users
+
+Ignored users have a struck-through nickname in both the main user list and every conference participant list. The indication updates immediately when Ignore or Stop Ignoring is selected, and the original nickname color is retained. Messages that were hidden are shown again if the ignore is removed.
+
+### Safe ignore persistence
+
 For modern peers with **stable account UUIDs**, an ignore is saved per server endpoint and local login, persists across application restarts and follows that account's identity. On older/Classic peers that provide only reusable numeric session IDs, the ignore applies **only to the current connection** to avoid mistakenly silencing someone else after a reconnect. If a stable identity becomes available during the session, the ignore can be promoted to that identity.
 
-## Bookmark switching and failed connections
+### Instant bookmark switching during connection failures
 
 Switching away from an offline server while its TCP connection is still pending no longer leaves the previous bookmark's empty workspace visible. The destination bookmark becomes active immediately, including an already-established session on another server.
 
@@ -57,7 +64,11 @@ Switching away from an offline server while its TCP connection is still pending 
 
 This addresses the case where a failed **Zeb's** connection left an empty Files/Overview panel displayed even after selecting the already-connected **Admin** bookmark.
 
-## Localization
+### Correct session status and asynchronous callbacks
+
+Returning to an already-connected server bookmark refreshes its connection status and Connect/Disconnect controls immediately. Background connection attempts are kept on their original client and their delayed success, failure or timeout callbacks cannot repaint another selected server's view.
+
+### German and English user actions
 
 The English and German `Localizable.strings` resources now correctly parse the new context-menu entries. In German, the actions are **Benutzerkonto bearbeiten…**, **Ignorieren** and **Ignorieren aufheben**. The issue was a malformed newline sequence in the resource file, not missing translations.
 

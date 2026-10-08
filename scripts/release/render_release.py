@@ -223,6 +223,15 @@ def ensure_client_changelog(path: Path, version: str, build: str, client_markdow
         re.S,
     )
     if existing:
+        # Release publication runs this generator again even if the changelog was already
+        # prepared. Never silently discard detailed changes when the source is malformed.
+        previous_items = len(re.findall(r"<li(?:\s[^>]*)?>", existing.group(0)))
+        if previous_items > len(items):
+            raise SystemExit(
+                f"Refusing to replace {previous_items} existing Client {version} changelog items "
+                f"with only {len(items)} generated items. Check the ## Carracho Client {version} "
+                "section and its ### feature headings in the release notes."
+            )
         tail = content[existing.end() :].lstrip()
         content = content[: existing.start()] + "\n" + block + "        " + tail
     else:
@@ -411,6 +420,16 @@ def main() -> None:
 
     client_md = section(markdown, f"Carracho Client {args.client_version}")
     server_md = section(markdown, f"Carracho Server {args.server_version}")
+    # A stray ## inside the Client section truncates release notes, silently producing
+    # a changelog containing only the version number. All feature headings must be ###.
+    after_client = markdown.split(f"## Carracho Client {args.client_version}", 1)[1]
+    next_section = re.search(r"^##\s+(.+)$", after_client, re.M)
+    if not next_section or next_section.group(1).strip() != f"Carracho Server {args.server_version}":
+        raise SystemExit(
+            f"Expected ## Carracho Server {args.server_version} immediately after the "
+            f"Client release section, but found ## {next_section.group(1) if next_section else '(none)'}. "
+            "Use ### for individual Client features."
+        )
     args.docs_releases.mkdir(parents=True, exist_ok=True)
     (args.docs_releases / f"{args.release_version}.html").write_text(
         standalone_html(f"Carracho release {args.release_version}", markdown)
