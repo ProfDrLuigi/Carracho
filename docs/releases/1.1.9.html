@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Carracho release 1.1.9</title>
+  <link rel="stylesheet" href="../styles.css">
+  <style>
+    .release-page { width:min(calc(100% - 40px), 900px); margin:0 auto; padding:72px 0 110px; }
+    .release-page h1 { font-size:clamp(2.8rem,7vw,5rem); margin-bottom:28px; }
+    .release-page h2 { margin-top:54px; font-size:2rem; }
+    .release-page h3 { margin-top:34px; }
+    .release-page p, .release-page li { color:var(--muted-strong); }
+    .release-page code { padding:.12em .38em; border-radius:6px; background:rgba(255,255,255,.07); }
+    .release-page pre { margin:22px 0; border:1px solid var(--line); border-radius:16px; background:#070b12; }
+    .release-back { display:inline-flex; margin-bottom:34px; color:var(--orange-2); text-decoration:none; font-weight:700; }
+  </style>
+</head>
+<body>
+  <main class="release-page">
+    <a class="release-back" href="../">← Carracho</a>
+<h1>Carracho 1.1.9</h1>
+<p>Carracho <strong>Client 1.1.9 (build 20)</strong> improves the Message Center for returning Guest users and safeguards private-message recipient selection. It also fixes Guest nicknames in chatroom departure notices. <strong>Carracho Server remains 1.1.6 (build 17)</strong>; no Server rebuild or protocol change is required.</p>
+<h2>Highlights</h2>
+<ul>
+<li>Fixed opening the wrong conversation when selecting a participant, including concurrently connected users sharing an anonymous/Guest account UUID.</li>
+<li>Consolidated repeated Guest sessions under one conversation row in Message Center. Earlier messages remain organized by session with explicit identity warnings, rather than producing one visible orphan chat per reconnect.</li>
+<li>Fixed the grouped Guest chat staying <strong>Offline</strong> after the Guest returned; a uniquely matching live Guest now updates the existing view to <strong>Online</strong> immediately, without requiring a new message and without reusing unverified old session identities.</li>
+<li>Fixed Guest and Classic chatroom departure notices displaying <strong>Unknown User</strong> instead of the participant&#x27;s nickname when the global user-list entry disappears before the room leave event.</li>
+<li>Updated the macOS Client to <strong>1.1.9 / build 20</strong>; Carracho Server remains <strong>1.1.6 / build 17</strong>.</li>
+</ul>
+<h2>Carracho Client 1.1.9</h2>
+<h3>Refresh Guest chat Online status on reconnect</h3>
+<p>The grouped Message Center conversation now switches from <strong>Offline</strong> to <strong>Online</strong> as soon as a returning Guest appears in the current server user list, without waiting for the first new outgoing message. If the user was viewing the previous Guest archive, the selection and reply composer automatically move to a newly created live routing session while the earlier messages remain visible as separately labeled, unverified history.</p>
+<p>Presence is matched only when exactly <strong>one</strong> live user has that display nickname. Two simultaneous Guests with the same name are treated as ambiguous rather than automatically selecting a recipient. Previous conversations are never merged into the new session by nickname or shared Guest account UUID. A Guest who reconnects and leaves without exchanging a message does not produce another empty persistent chat history. This change requires only the Client.</p>
+<h3>Preserve Guest nicknames in room leave messages</h3>
+<p>Fixed conference system messages showing <strong>Unknown User left the room</strong> when a Guest/Classic participant disconnects. The Client now captures the participant&#x27;s display nickname when they enter a room, updates it after nickname changes, and uses that room-specific snapshot if the global online-user list is already missing the participant at departure.</p>
+<p>If a global disconnect arrives before the room-leave event, the Client adds the departure notice using the remembered nickname while removing the room membership. A subsequent leave event cannot add a duplicate. Membership snapshots are cleared when the participant leaves, preventing recycled numeric session IDs from acquiring the wrong user&#x27;s nickname. No Server rebuild or protocol update is required.</p>
+<h3>Keep repeated Guest sessions in one Message Center row</h3>
+<p>Fixed the Guest/Legacy history clutter where each disconnect and reconnect added another separate &quot;Unverified legacy history&quot; chat to the inbox. Previous sessions sharing a visible Guest name now appear together under <strong>one sidebar conversation</strong>. Reconnecting a fourth time does not create a fourth visible orphan entry: the currently active conversation is shown, and earlier messages are available in the same view with dated, explicitly unverified session separators.</p>
+<p><strong>Safety:</strong> A Guest nickname is not an authenticated identity. Stored histories remain isolated by their original per-session IDs, and the client never automatically treats those archives as proof that a newly connected user is the same person. Two simultaneously connected users with the same nickname retain independent live chats. The displayed historical sections are clearly labeled as not identity-verified.</p>
+<p>Unread badges, transcript search, and clearing/deleting a grouped conversation handle its underlying session histories together. No existing Guest messages are silently deleted or reassigned. The interface is localized in German and English, and the change requires no Server upgrade.</p>
+<h3>Prevent private chats opening for the wrong selected user</h3>
+<p>Corrected a further Message Center routing issue: choosing <strong>Message</strong> for one online user could open another user&#x27;s conversation if their concurrent sessions exposed the same account UUID, as can happen with shared or anonymous logins. The client now checks the clicked table row, the active recipient&#x27;s numeric session ID and nickname, and whether any other live user advertises the same account UUID before reusing stored history.</p>
+<p>An ambiguous or mismatching saved conversation is never silently rebound to a different person. The same identity checks apply to background server bookmarks, including late arrivals and recycled IDs. This fix is client-side and does not require the other participant to upgrade. Previously mixed historic messages cannot be safely reassigned automatically.</p>
+<h2>Carracho Server 1.1.6</h2>
+<h3>Dedicated Server and Tracker system services</h3>
+<p>The macOS Server and Tracker can now run as two independent launchd system services. Both jobs use the same compact carracho-serverd helper embedded in the Server app, while Server and Tracker retain separate launchd jobs and separate running/automatic-start state.</p>
+<p>Installing a service copies only the headless daemon binary and the service definitions required to run it. The daemon directory no longer needs a second complete copy of <strong>Carracho Server.app</strong>, avoiding duplicated application bundles under /Applications and the service installation.</p>
+<p>The helper is built as a Universal 2 binary and contains the headless Server/Tracker runtime rather than the AppKit administration UI or Sparkle updater.</p>
+<h3>System Service is the single control surface</h3>
+<p>Server and Tracker runtime control is now consolidated under the always-visible <strong>System Service</strong> section for each component. The old duplicate Start/Stop controls in the page header, application menu and status menu have been removed.</p>
+<p>Each service can be installed or uninstalled independently, started or stopped independently, and configured independently for automatic startup with macOS. Current running state and startup-at-boot state are separate: disabling automatic startup does not stop a service that is already running.</p>
+<p>The <strong>System Service</strong> section is permanently expanded and no longer has a disclosure arrow, so installation and runtime controls remain visible without another layer of navigation.</p>
+<h3>Daemon update reminder after an app update</h3>
+<p>The Server app now compares the daemon helper embedded in the current app with the binary installed for the system services. The comparison is byte-for-byte, so rebuilt hotfixes are detected even if their marketing version happens to be unchanged.</p>
+<p>When an installed daemon differs from the helper in the updated app, <strong>Reinstall</strong> changes to <strong>Update Now</strong>. On every normal launch of the Server app, a warning explains that the application was updated and the system service must also be refreshed. The warning continues to appear until the installed daemon matches the current app.</p>
+<p>Choosing <strong>Update Now</strong> performs the same privileged service refresh used by the System Service controls while preserving the installed sibling service&#x27;s running and automatic-start state. Because Server and Tracker share the daemon binary, updating either installed service refreshes the common executable.</p>
+<h2>Compatibility notes</h2>
+<ul>
+<li><strong>macOS Client:</strong> 1.1.9 (build 20).</li>
+<li><strong>macOS and native Linux Server:</strong> unchanged at 1.1.6 (build 17).</li>
+<li>User-to-user private-message protocol, account authentication and Classic packet layouts are unchanged.</li>
+<li>Historical Guest sessions are grouped <strong>for display only</strong>. Their stored identities and routing leases remain separate, with unverified session boundaries visibly indicated.</li>
+<li>A Guest returning with a unique matching nickname can appear Online immediately. Concurrent identical Guest nicknames remain ambiguous; the Client must not arbitrarily choose a recipient.</li>
+<li>No previously misattributed historical messages are automatically rewritten or reassigned.</li>
+<li>Interactive testing of Guest disconnect/reconnect, simultaneous Guest nicknames and chatroom presence events is still recommended before public distribution.</li>
+</ul>
+<p>Previous release notes: <a href="README_1.1.8.md">`README_1.1.8.md`</a>.</p>
+  </main>
+</body>
+</html>

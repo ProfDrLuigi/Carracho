@@ -2175,3 +2175,11 @@
 "Save complete unfiltered server log" = "Save complete unfiltered server log";
 
 "Showing %@ of %@ log lines" = "Showing %@ of %@ log lines";
+
+"%@ previous Guest sessions (unverified)" = "%@ previous Guest sessions (unverified)";
+
+"Guest session identity unverified" = "Guest session identity unverified";
+
+"Current Guest session" = "Current Guest session";
+
+"Earlier Guest session (%@) · Identity not verified" = "Earlier Guest session (%@) · Identity not verified";

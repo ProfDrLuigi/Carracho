@@ -23,6 +23,17 @@
     </style>
 </head>
     <body>
+        <p><span class="header" lang="en">New in 1.1.9</span></p>
+        <ul>
+            <span class="newstext">
+                <li>Updated the macOS client to version 1.1.9 (build 20).</li>
+                <li><strong>Refresh Guest chat Online status on reconnect</strong> — The grouped Message Center conversation now switches from Offline to Online as soon as a returning Guest appears in the current server user list, without waiting for the first new outgoing message. If the user was viewing the previous Guest archive, the selection and reply composer automatically move to a newly created live routing session while the earlier messages remain visible as separately labeled, unverified history.</li>
+                <li><strong>Preserve Guest nicknames in room leave messages</strong> — Fixed conference system messages showing Unknown User left the room when a Guest/Classic participant disconnects. The Client now captures the participant&#x27;s display nickname when they enter a room, updates it after nickname changes, and uses that room-specific snapshot if the global online-user list is already missing the participant at departure.</li>
+                <li><strong>Keep repeated Guest sessions in one Message Center row</strong> — Fixed the Guest/Legacy history clutter where each disconnect and reconnect added another separate &quot;Unverified legacy history&quot; chat to the inbox. Previous sessions sharing a visible Guest name now appear together under one sidebar conversation. Reconnecting a fourth time does not create a fourth visible orphan entry: the currently active conversation is shown, and earlier messages are available in the same view with dated, explicitly unverified session separators.</li>
+                <li><strong>Prevent private chats opening for the wrong selected user</strong> — Corrected a further Message Center routing issue: choosing Message for one online user could open another user&#x27;s conversation if their concurrent sessions exposed the same account UUID, as can happen with shared or anonymous logins. The client now checks the clicked table row, the active recipient&#x27;s numeric session ID and nickname, and whether any other live user advertises the same account UUID before reusing stored history.</li>
+        </ul></span>
+
+
         <p><span class="header" lang="en">New in 1.1.8</span></p>
         <ul>
             <span class="newstext">

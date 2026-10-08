@@ -378,32 +378,60 @@ extension ViewController {
     /// Legacy records with no verifiable account identity must be clearly distinguished from
     /// authenticated live conversations, including when their nickname is still online.
     func privateConversationDisplayName(_ conversation: PrivateMessageConversation) -> String {
-        guard conversation.accountID == nil, conversation.userID == nil else { return conversation.nickname }
-        return conversation.nickname + " (" + L("Unverified legacy history") + ")"
+        // The archive warning belongs to its session separator, not repeated as a scary,
+        // misleading suffix on every row in the inbox.
+        return conversation.nickname
+    }
+
+    /// An account UUID is not necessarily a unique recipient: Guest and shared logins
+    /// can be active in several simultaneous sessions. Refuse ambiguous re-binding.
+    func trustedPrivateAccountID(userID: UInt32) -> UUID? {
+        trustedPrivateAccountID(userID: userID, users: liveUsers, conversations: privateMessageConversations)
+    }
+
+    func trustedPrivateAccountID(userID: UInt32, users: [UInt32: LegacyUserListEntry],
+                                 conversations: [UUID: PrivateMessageConversation]) -> UUID? {
+        guard let user = users[userID] else { return nil }
+        let accountID = user.accountID
+        let stored = accountID.flatMap { conversations[$0] }
+        return PrivateMessageRecipientPolicy.trustedAccountID(
+            userID: userID, accountID: accountID, nickname: Self.macRomanString(user.nickname),
+            otherUsers: users.map { (userID: $0.key, accountID: $0.value.accountID) },
+            saved: stored.map { (userID: $0.userID, nickname: $0.nickname) }
+        )
+    }
+
+    func matchesPrivateRecipient(_ conversation: PrivateMessageConversation,
+                                 userID: UInt32, users: [UInt32: LegacyUserListEntry]) -> Bool {
+        guard conversation.userID == userID, let user = users[userID] else { return false }
+        let nickname = Self.macRomanString(user.nickname)
+        return PrivateMessageRecipientPolicy.namesMatch(conversation.nickname, nickname)
     }
 
     func privateConversationID(forUserID userID: UInt32) -> UUID? {
-        if let accountID = liveUsers[userID]?.accountID {
+        if let accountID = trustedPrivateAccountID(userID: userID) {
             if privateMessageConversations[accountID] != nil { return accountID }
             // A routing ID may only promote an identity-less conversation. Never let it select a
             // durable conversation belonging to a different account UUID.
             return privateMessageConversations.first(where: {
-                $0.value.userID == userID && $0.value.accountID == nil
+                $0.value.accountID == nil && matchesPrivateRecipient($0.value, userID: userID, users: liveUsers)
             })?.key
         }
 
         // Without a stable account ID, only the current live routing lease may be selected.
         // Past numeric-ID histories are detached archives; new writes use a conversation UUID.
         return privateMessageConversations.first(where: {
-            $0.value.userID == userID && $0.value.accountID == nil
+            $0.value.accountID == nil && matchesPrivateRecipient($0.value, userID: userID, users: liveUsers)
         })?.key
     }
 
     func liveUser(for conversation: PrivateMessageConversation) -> LegacyUserListEntry? {
         guard let userID = conversation.userID, let user = liveUsers[userID] else { return nil }
         if let accountID = conversation.accountID {
-            guard user.accountID == accountID else { return nil }
+            guard trustedPrivateAccountID(userID: userID) == accountID else { return nil }
         }
+        let name = Self.macRomanString(user.nickname)
+        guard PrivateMessageRecipientPolicy.namesMatch(conversation.nickname, name) else { return nil }
         return user
     }
 
@@ -416,7 +444,19 @@ extension ViewController {
         guard let user = liveUsers[userID] else { return privateConversationID(forUserID: userID) }
 
         let nickname = Self.macRomanString(user.nickname).trimmingCharacters(in: .whitespacesAndNewlines)
-        if let accountID = user.accountID {
+        // A Guest presence lease must stay scoped to this live session, even if the
+        // server reports a UUID shared by several anonymous accounts.
+        if let leaseID = privateMessageConversations.first(where: {
+            $0.value.isGuestPresenceLease &&
+                matchesPrivateRecipient($0.value, userID: userID, users: liveUsers)
+        })?.key, var lease = privateMessageConversations[leaseID] {
+            lease.nickname = nickname
+            lease.picture = user.picture
+            lease.isLegacyTransport = user.isLegacyTransport || isConnectedToClassicServer
+            privateMessageConversations[leaseID] = lease
+            return leaseID
+        }
+        if let accountID = trustedPrivateAccountID(userID: userID) {
             let transientID = privateMessageConversations.first(where: {
                 $0.key != accountID && $0.value.userID == userID && $0.value.accountID == nil
             })?.key
@@ -481,8 +521,16 @@ extension ViewController {
             return accountID
         }
 
+        // A reused numeric session ID must never inherit a former user's transcript.
+        if privateMessageConversations.values.contains(where: {
+            $0.userID == userID && $0.accountID == nil &&
+                !matchesPrivateRecipient($0, userID: userID, users: liveUsers)
+        }) {
+            retirePrivateConversationRouting(userID: userID)
+        }
         if let existingID = privateMessageConversations.first(where: {
-            $0.value.userID == userID && $0.value.accountID == nil
+            $0.value.accountID == nil &&
+                matchesPrivateRecipient($0.value, userID: userID, users: liveUsers)
         })?.key {
             var conversation = privateMessageConversations[existingID]!
             if !nickname.isEmpty { conversation.nickname = nickname }
@@ -506,11 +554,81 @@ extension ViewController {
         return conversationID
     }
 
+    /// When the only online user with an archived Guest label returns, create a NEW,
+    /// disposable live routing lease and move the visible selection to it. This updates
+    /// Online status and enables chatting immediately, without claiming that the old
+    /// history belongs to this session or reusing its numeric ID/account UUID.
+    func reconnectVisibleGuestPresenceIfNeeded() {
+        guard client.isConnected else { return }
+        let onlineNames: [(userID: UInt32, nickname: String)] = liveUsers.compactMap { userID, user in
+            guard userID != lastLoginResult?.session.userID else { return nil }
+            return (userID: userID, nickname: Self.macRomanString(user.nickname))
+        }
+        let archived = privateMessageConversations.values.filter {
+            $0.accountID == nil && $0.userID == nil && !isIgnoredConversation($0)
+        }
+        for old in archived {
+            guard let userID = GuestConversationPresentation.uniqueLiveRecipient(
+                for: old.nickname, users: onlineNames),
+                  let user = liveUsers[userID], !isIgnoredUser(userID) else { continue }
+
+            // If the current user already has a live conversation, only the sidebar
+            // representative needs to change; no second session should be created.
+            if privateMessageConversations.values.contains(where: {
+                matchesPrivateRecipient($0, userID: userID, users: liveUsers)
+            }) { continue }
+
+            let nickname = Self.macRomanString(user.nickname).trimmingCharacters(in: .whitespacesAndNewlines)
+            let conversationID = UUID()
+            privateMessageConversations[conversationID] = PrivateMessageConversation(
+                id: conversationID, accountID: nil, userID: userID,
+                nickname: nickname, picture: user.picture,
+                isLegacyTransport: user.isLegacyTransport || isConnectedToClassicServer,
+                entries: [], unreadCount: 0, draftText: "", lastActivity: Date(),
+                isGuestPresenceLease: true
+            )
+
+            // The archived entry is hidden once this new live session becomes the
+            // group's sidebar representative. Keep selection and header in sync.
+            if let selectedID = selectedPrivateConversationID,
+               var selected = privateMessageConversations[selectedID],
+               selected.accountID == nil, selected.userID == nil,
+               GuestConversationPresentation.sameLabel(selected.nickname, nickname),
+               !selectedOfflineMessages {
+                selected.draftText = privateMessageComposer.string
+                privateMessageConversations[selectedID] = selected
+                persistPrivateConversation(selectedID)
+                privateMessageAttachments.imageIDs.forEach(deletePendingMedia)
+                privateMessageAttachments.clear()
+                selectedPrivateConversationID = conversationID
+                privateMessageComposer.string = ""
+            }
+        }
+    }
+
     /// User IDs are connection leases, not identities. A disconnected peer's history may be
     /// displayed but must never be selected as the inbox of the next peer to receive that ID.
     func disconnectPrivateConversation(userID: UInt32) {
         for (conversationID, var conversation) in privateMessageConversations
             where conversation.userID == userID {
+            if conversation.isGuestPresenceLease && conversation.entries.isEmpty {
+                if selectedPrivateConversationID == conversationID &&
+                   !privateMessageComposer.string.isEmpty {
+                    conversation.draftText = privateMessageComposer.string
+                }
+                if conversation.draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    privateMessageConversations.removeValue(forKey: conversationID)
+                    if selectedPrivateConversationID == conversationID {
+                        let archive = privateMessageConversations.values
+                            .filter { $0.accountID == nil && $0.userID == nil &&
+                                GuestConversationPresentation.sameLabel($0.nickname, conversation.nickname) }
+                            .max(by: { $0.lastActivity < $1.lastActivity })
+                        selectedPrivateConversationID = archive?.id
+                        privateMessageComposer.string = archive?.draftText ?? ""
+                    }
+                    continue
+                }
+            }
             if conversation.accountID == nil {
                 conversation.archivedUserID = userID
                 conversation.archivedBootID = conversation.id
@@ -590,6 +708,10 @@ extension ViewController {
     func persistPrivateConversation(_ conversationID: UUID) {
         guard let scope = messageCenterPersistenceScope,
               let conversation = privateMessageConversations[conversationID] else { return }
+        // Presence alone is not a conversation. A Guest arriving and leaving without
+        // exchanging messages must not generate another empty SQLite history row.
+        if conversation.isGuestPresenceLease && conversation.entries.isEmpty &&
+            conversation.draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return }
         do {
             if let stored = storedConversation(conversation) {
                 try messageCenterStore.saveConversation(stored, scope: scope)
@@ -1405,8 +1527,10 @@ extension ViewController {
             avatar.heightAnchor.constraint(equalToConstant: 36),
         ])
 
+        let members = guestHistoryMembers(for: conversation)
+        let unreadCount = min(999, members.reduce(0) { $0 + $1.unreadCount })
         let name = NSTextField(labelWithString: privateConversationDisplayName(conversation))
-        name.font = .systemFont(ofSize: messageCenterFontSize, weight: conversation.unreadCount > 0 ? .semibold : .medium)
+        name.font = .systemFont(ofSize: messageCenterFontSize, weight: unreadCount > 0 ? .semibold : .medium)
         name.lineBreakMode = .byTruncatingTail
         name.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         let time = NSTextField(labelWithString: DateFormatter.localizedString(from: conversation.lastActivity, dateStyle: .none, timeStyle: .short))
@@ -1428,12 +1552,25 @@ extension ViewController {
         preview.lineBreakMode = .byTruncatingTail
         preview.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         var lowerViews: [NSView] = [preview, NSView()]
-        if conversation.unreadCount > 0 { lowerViews.append(newsBadgeLabel(conversation.unreadCount)) }
+        if unreadCount > 0 { lowerViews.append(newsBadgeLabel(unreadCount)) }
         let lowerRow = horizontalStack(lowerViews, spacing: 6)
+        if members.count > 1 {
+            let olderSessions = members.filter { $0.id != conversation.id }.count
+            let historyLabel = NSTextField(labelWithString: LF("%@ previous Guest sessions (unverified)", String(olderSessions)))
+            historyLabel.font = .systemFont(ofSize: 10)
+            historyLabel.textColor = CarrachoTheme.tertiaryText
+            historyLabel.lineBreakMode = .byTruncatingTail
+            let labels = verticalStack([titleRow, lowerRow, historyLabel], spacing: 3)
+            labels.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            let row = horizontalStack([avatar, labels], spacing: 9)
+            row.setAccessibilityLabel(LF("Conversation with %@, %@ unread", conversation.nickname,
+                                         String(unreadCount)))
+            return row
+        }
         let labels = verticalStack([titleRow, lowerRow], spacing: 3)
         labels.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         let row = horizontalStack([avatar, labels], spacing: 9)
-        row.setAccessibilityLabel(LF("Conversation with %@, %@ unread", conversation.nickname, String(conversation.unreadCount)))
+        row.setAccessibilityLabel(LF("Conversation with %@, %@ unread", conversation.nickname, String(unreadCount)))
         return row
     }
 
@@ -1472,7 +1609,8 @@ extension ViewController {
             badge.textColor = CarrachoTheme.tertiaryText
             headerViews.append(badge)
         }
-        if entry.outgoing, entry.editable, !conversation.isLegacyTransport, client.supportsMessageEditing,
+        if entry.outgoing, entry.editable, conversation.userID != nil,
+           !conversation.isLegacyTransport, client.supportsMessageEditing,
            Date().timeIntervalSince(entry.timestamp) >= 0,
            Date().timeIntervalSince(entry.timestamp) < LegacyMessageEdit.maximumAge,
            LegacyMediaReference.references(inWire: entry.message).isEmpty {
@@ -1550,17 +1688,36 @@ extension ViewController {
         } else if let conversationID = selectedPrivateConversationID,
                   let conversation = privateMessageConversations[conversationID],
                   !isIgnoredConversation(conversation) {
-            if conversation.entries.isEmpty {
+            let sessions = guestHistoryMembers(for: conversation)
+            if sessions.allSatisfy({ $0.entries.isEmpty }) {
                 privateMessageEmptyLabel.stringValue = conversation.isLegacyTransport
                     ? L("This user is on a Classic client. Every message you send is delivered as a normal individual Private Message.")
                     : L("No messages yet. Write the first one below.")
                 privateMessageEmptyLabel.isHidden = false
             } else {
                 privateMessageEmptyLabel.isHidden = true
-                for entry in conversation.entries {
-                    privateMessageTranscriptStack.addArrangedSubview(
-                        leftAlignedMessageTranscriptRow(privateMessageTranscriptCard(entry, conversation: conversation))
-                    )
+                for session in sessions {
+                    guard !session.entries.isEmpty else { continue }
+                    if session.accountID == nil && (sessions.count > 1 || session.userID == nil) {
+                        let labelText: String
+                        if session.userID != nil {
+                            labelText = L("Current Guest session")
+                        } else {
+                            let date = DateFormatter.localizedString(from: session.entries[0].timestamp,
+                                                                    dateStyle: .medium, timeStyle: .short)
+                            labelText = LF("Earlier Guest session (%@) · Identity not verified", date)
+                        }
+                        let separator = NSTextField(labelWithString: labelText)
+                        separator.font = .systemFont(ofSize: 11, weight: .medium)
+                        separator.textColor = CarrachoTheme.secondaryText
+                        separator.lineBreakMode = .byWordWrapping
+                        privateMessageTranscriptStack.addArrangedSubview(separator)
+                    }
+                    for entry in session.entries {
+                        privateMessageTranscriptStack.addArrangedSubview(
+                            leftAlignedMessageTranscriptRow(privateMessageTranscriptCard(entry, conversation: session))
+                        )
+                    }
                 }
             }
         } else {
@@ -1598,6 +1755,7 @@ extension ViewController {
     }
 
     func refreshPrivateMessageCenter(scrollToBottom: Bool) {
+        reconnectVisibleGuestPresenceIfNeeded()
         for userID in Array(liveUsers.keys) { updatePrivateConversationMetadata(userID) }
         let rows = displayedMessageCenterRows
         isReloadingPrivateMessageTable = true
@@ -1664,7 +1822,7 @@ extension ViewController {
         }
 
         privateMessageClearChatButton.isHidden = false
-        privateMessageClearChatButton.isEnabled = !conversation.entries.isEmpty
+        privateMessageClearChatButton.isEnabled = guestHistoryMembers(for: conversation).contains { !$0.entries.isEmpty }
         privateMessageDeleteChatButton.isHidden = false
         privateMessageDeleteChatButton.isEnabled = true
         privateMessageHeaderAvatar.image = privateMessageAvatarImage(for: conversation)
@@ -1674,6 +1832,10 @@ extension ViewController {
         let online = client.isConnected && liveUser(for: conversation) != nil
         var statusParts = [online ? L("Online") : L("Offline")]
         if conversation.isLegacyTransport { statusParts.append(L("Classic client")) }
+        if conversation.accountID == nil && (conversation.userID == nil ||
+             guestHistoryMembers(for: conversation).count > 1) {
+            statusParts.append(L("Guest session identity unverified"))
+        }
         privateMessageHeaderStatusLabel.stringValue = statusParts.joined(separator: " · ")
         privateMessageHeaderStatusLabel.textColor = online ? CarrachoTheme.success : CarrachoTheme.secondaryText
         if conversation.isLegacyTransport {
@@ -1691,7 +1853,12 @@ extension ViewController {
 
     func openPrivateConversation(with user: LegacyUserListEntry, focusComposer: Bool = true) {
         guard !isIgnoredUser(user.userID) else { return }
+        guard let actualUser = liveUsers[user.userID], actualUser.nickname == user.nickname else { return }
         let conversation = ensurePrivateConversation(userID: user.userID)
+        guard matchesPrivateRecipient(conversation, userID: user.userID, users: liveUsers) else {
+            NSLog("Carracho: refused private chat for a mismatched routing recipient (%@)", String(user.userID))
+            return
+        }
         selectWorkspace(.messageCenter)
         selectPrivateConversation(conversation.id, focusComposer: focusComposer)
     }
@@ -1722,37 +1889,53 @@ extension ViewController {
         refreshPrivateMessageCenter(scrollToBottom: false)
     }
 
+    /// Clear/delete affects the displayed Guest group, not only the most recent session.
+    /// Stable account conversations and concurrently active users remain independent.
+    func removePrivateChatStoredData(_ conversation: PrivateMessageConversation,
+                                      scope: MessageCenterStoreScope, delete: Bool) throws {
+        if let accountID = conversation.accountID {
+            if delete {
+                try messageCenterStore.deleteConversation(accountID: accountID, scope: scope)
+            } else {
+                try messageCenterStore.clearConversation(accountID: accountID, scope: scope)
+            }
+        } else if let bootID = conversation.archivedBootID ?? (conversation.userID != nil ? conversation.id : nil),
+                  let userID = conversation.archivedUserID ?? conversation.userID {
+            if delete {
+                try messageCenterStore.deleteBootConversation(userID: userID, scope: scope, bootID: bootID)
+            } else {
+                try messageCenterStore.clearBootConversation(userID: userID, scope: scope, bootID: bootID)
+            }
+        }
+    }
+
     @objc func clearSelectedPrivateChat(_ sender: Any?) {
-        guard let conversationID = selectedPrivateConversationID,
-              let conversation = privateMessageConversations[conversationID],
-              !conversation.entries.isEmpty, let window = view.window else { return }
+        guard let selectedID = selectedPrivateConversationID,
+              let selected = privateMessageConversations[selectedID],
+              let window = view.window else { return }
+        let conversations = guestHistoryMembers(for: selected)
+        guard conversations.contains(where: { !$0.entries.isEmpty }) else { return }
 
         let alert = NSAlert()
         alert.alertStyle = .warning
         alert.messageText = L("Clear Chat?")
-        alert.informativeText = LF("Remove all messages from the chat with %@? The conversation itself stays available. This cannot be undone.", conversation.nickname)
+        alert.informativeText = LF("Remove all messages from the chat with %@? The conversation itself stays available. This cannot be undone.", selected.nickname)
         alert.addButton(withTitle: L("Clear Chat"))
         alert.addButton(withTitle: L("Cancel"))
         alert.beginSheetModal(for: window) { [weak self] response in
-            guard response == .alertFirstButtonReturn, let self,
-                  var current = self.privateMessageConversations[conversationID] else { return }
-            current.entries.removeAll()
-            current.unreadCount = 0
-            self.privateMessageConversations[conversationID] = current
-            if let scope = self.messageCenterPersistenceScope {
-                do {
-                    if let accountID = current.accountID {
-                        try self.messageCenterStore.clearConversation(accountID: accountID, scope: scope)
-                    } else if let bootID = current.archivedBootID,
-                              let userID = current.archivedUserID {
-                        try self.messageCenterStore.clearBootConversation(userID: userID, scope: scope,
-                                                                           bootID: bootID)
-                    }
-                } catch {
-                    self.reportMessageCenterStoreError(error)
+            guard response == .alertFirstButtonReturn, let self else { return }
+            for session in conversations {
+                guard var current = self.privateMessageConversations[session.id] else { continue }
+                current.entries.removeAll()
+                current.unreadCount = 0
+                self.privateMessageConversations[session.id] = current
+                if let scope = self.messageCenterPersistenceScope {
+                    do {
+                        try self.removePrivateChatStoredData(current, scope: scope, delete: false)
+                    } catch { self.reportMessageCenterStoreError(error) }
                 }
+                self.persistPrivateConversation(session.id)
             }
-            self.persistPrivateConversation(conversationID)
             self.refreshPrivateMessageCenter(scrollToBottom: false)
         }
     }
@@ -1761,6 +1944,7 @@ extension ViewController {
         guard let conversationID = selectedPrivateConversationID,
               let conversation = privateMessageConversations[conversationID],
               let window = view.window else { return }
+        let sessions = guestHistoryMembers(for: conversation)
 
         let alert = NSAlert()
         alert.alertStyle = .warning
@@ -1770,18 +1954,12 @@ extension ViewController {
         alert.addButton(withTitle: L("Cancel"))
         alert.beginSheetModal(for: window) { [weak self] response in
             guard response == .alertFirstButtonReturn, let self else { return }
-            self.privateMessageConversations.removeValue(forKey: conversationID)
-            if let scope = self.messageCenterPersistenceScope {
-                do {
-                    if let accountID = conversation.accountID {
-                        try self.messageCenterStore.deleteConversation(accountID: accountID, scope: scope)
-                    } else if let bootID = conversation.archivedBootID,
-                              let userID = conversation.archivedUserID {
-                        try self.messageCenterStore.deleteBootConversation(userID: userID, scope: scope,
-                                                                            bootID: bootID)
-                    }
-                } catch {
-                    self.reportMessageCenterStoreError(error)
+            for session in sessions {
+                guard let current = self.privateMessageConversations.removeValue(forKey: session.id) else { continue }
+                if let scope = self.messageCenterPersistenceScope {
+                    do {
+                        try self.removePrivateChatStoredData(current, scope: scope, delete: true)
+                    } catch { self.reportMessageCenterStoreError(error) }
                 }
             }
             if self.selectedPrivateConversationID == conversationID {

@@ -1169,6 +1169,15 @@ extension ViewController {
         )
         session.state = state
         session.members = members
+        // A join snapshot is authoritative: keep names only for actual room members,
+        // and prefer the current user-list nickname whenever it is available.
+        let previousMemberNicknames = session.memberNicknames
+        session.memberNicknames = Dictionary(uniqueKeysWithValues: members.keys.compactMap { userID in
+            if let user = liveUsers[userID] {
+                return (userID, Self.macRomanString(user.nickname))
+            }
+            return previousMemberNicknames[userID].map { (userID, $0) }
+        })
         session.unreadCount = 0
         if session.transcript.count > 1000 { session.transcript.removeFirst(session.transcript.count - 1000) }
         joinedChannels[state.channelID] = session
@@ -1358,6 +1367,11 @@ extension ViewController {
         for channelID in Array(joinedChannels.keys) {
             guard var session = joinedChannels[channelID],
                   session.members.removeValue(forKey: userID) != nil else { continue }
+            // Global userDisconnected can arrive before channelUserLeft. Write the
+            // departure while the old identity is still known, exactly once.
+            let nickname = liveUsers[userID].map { Self.macRomanString($0.nickname) }
+                ?? session.memberNicknames[userID] ?? L("Unknown User")
+            session.memberNicknames.removeValue(forKey: userID)
             session.state.members = session.members.map { LegacyChannelMember(userID: $0.key, mode: $0.value) }
             joinedChannels[channelID] = session
 
@@ -1368,6 +1382,9 @@ extension ViewController {
                 activeChannel = session.state
                 channelMembers = session.members
             }
+            // If channelUserLeft follows, it finds no membership and will not log a
+            // duplicate. A new Guest session must never inherit this cached nickname.
+            appendChannelSystem(LF("%@ left the room.", nickname), channelID: channelID)
         }
     }
 

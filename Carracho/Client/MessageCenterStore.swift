@@ -1144,3 +1144,83 @@ final class MessageCenterStore {
         .database(String(cString: sqlite3_errmsg(db)))
     }
 }
+
+
+/// Session routing IDs and shared account UUIDs are not proof of a unique PM recipient.
+enum PrivateMessageRecipientPolicy {
+    static func namesMatch(_ lhs: String, _ rhs: String) -> Bool {
+        let a = lhs.trimmingCharacters(in: .whitespacesAndNewlines)
+        let b = rhs.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !a.isEmpty && !b.isEmpty &&
+            a.compare(b, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame
+    }
+
+    static func trustedAccountID(
+        userID: UInt32, accountID: UUID?, nickname: String,
+        otherUsers: [(userID: UInt32, accountID: UUID?)],
+        saved: (userID: UInt32?, nickname: String)?
+    ) -> UUID? {
+        guard let accountID, !nickname.isEmpty else { return nil }
+        guard !otherUsers.contains(where: { $0.userID != userID && $0.accountID == accountID }) else {
+            return nil
+        }
+        if let saved {
+            guard saved.userID == nil || saved.userID == userID,
+                  namesMatch(saved.nickname, nickname) else { return nil }
+        }
+        return accountID
+    }
+}
+
+
+/// Presentation only: several unidentified Guest sessions can occupy one sidebar row.
+/// Their database rows and routing IDs remain separate, so a nickname is NEVER trusted
+/// as proof that the next Guest is the same person.
+enum GuestConversationPresentation {
+    struct Session {
+        var id: UUID
+        var nickname: String
+        var hasAccountIdentity: Bool
+        var isLive: Bool
+        var activity: Date
+    }
+
+    static func sameLabel(_ lhs: String, _ rhs: String) -> Bool {
+        let a = lhs.trimmingCharacters(in: .whitespacesAndNewlines)
+        let b = rhs.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !a.isEmpty && !b.isEmpty &&
+            a.compare(b, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame
+    }
+
+    /// Presence can be shown for a Guest label only when exactly one currently online
+    /// user has that name. This is a display/routing lease, never a verified identity.
+    static func uniqueLiveRecipient(for nickname: String,
+                                    users: [(userID: UInt32, nickname: String)]) -> UInt32? {
+        let matches = users.filter { sameLabel($0.nickname, nickname) }
+        guard matches.count == 1 else { return nil }
+        return matches[0].userID
+    }
+
+    /// Return IDs of sidebar representatives. Archived Guest sessions with one display name
+    /// are shown under the sole live session, or under the newest archive when nobody is live.
+    /// Multiple concurrent live users with that name are never coalesced.
+    static func visibleIDs(_ sessions: [Session]) -> Set<UUID> {
+        var visible = Set(sessions.map(\.id))
+        for session in sessions where !session.hasAccountIdentity && !session.isLive {
+            let matching = sessions.filter {
+                !$0.hasAccountIdentity && sameLabel($0.nickname, session.nickname)
+            }
+            let live = matching.filter(\.isLive)
+            if live.count == 1 {
+                visible.remove(session.id)
+            } else {
+                let archives = matching.filter { !$0.isLive }.sorted {
+                    if $0.activity != $1.activity { return $0.activity > $1.activity }
+                    return $0.id.uuidString < $1.id.uuidString
+                }
+                if archives.first?.id != session.id { visible.remove(session.id) }
+            }
+        }
+        return visible
+    }
+}

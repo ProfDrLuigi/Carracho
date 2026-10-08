@@ -213,6 +213,12 @@ extension ViewController {
            let identifier = item.representedObject as? NSNumber {
             return liveUsers[identifier.uint32Value]
         }
+        // The visible selection is authoritative for the Message button. A cached user ID
+        // can still refer to a previous row while AppKit processes the selection change.
+        let row = userTable.selectedRow
+        if row >= 0, row < visibleUsers.count {
+            return liveUsers[visibleUsers[row].userID]
+        }
         return selectedUserEntry
     }
 

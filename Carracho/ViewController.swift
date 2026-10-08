@@ -355,6 +355,9 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
     struct JoinedChannelSession {
         var state: LegacyChannelState
         var members: [UInt32: UInt8]
+        /// Nickname captured for each channel membership. It survives a global user-list
+        /// removal until that membership ends, but is never reused for a new participant.
+        var memberNicknames: [UInt32: String] = [:]
         var transcript: [ChannelTranscriptEntry]
         var unreadCount: Int
         var draftText: String = ""
@@ -394,6 +397,9 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         /// NEVER use these fields to select a live sender or to send a message.
         var archivedBootID: UUID? = nil
         var archivedUserID: UInt32? = nil
+        /// Created only to display/react to a returning Guest immediately, without
+        /// merging their old histories or trusting a potentially shared account UUID.
+        var isGuestPresenceLease: Bool = false
     }
 
     enum MessageCenterListRow {
@@ -4433,7 +4439,8 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
             // A PM may have arrived while this bookmark was already in the background but before
             // the modern account UUID event. Promote that in-memory conversation now and persist
             // the complete history, exactly like the foreground Message Center path.
-            if let accountID,
+            if let accountID = trustedPrivateAccountID(userID: userID, users: snapshot.liveUsers,
+                                                       conversations: snapshot.privateMessageConversations),
                let scope = snapshot.messageCenterPersistenceScope {
                 let transientID = snapshot.privateMessageConversations.first(where: {
                     $0.key != accountID && $0.value.userID == userID && $0.value.accountID == nil
@@ -4505,7 +4512,9 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         case let .messageEdited(edit):
             guard edit.kind == LegacyMessageEdit.privateMessage else { return false }
             let conversationID: UUID?
-            if let accountID = snapshot.liveUsers[edit.scope]?.accountID,
+            if let accountID = trustedPrivateAccountID(userID: edit.scope,
+                                                       users: snapshot.liveUsers,
+                                                       conversations: snapshot.privateMessageConversations),
                snapshot.privateMessageConversations[accountID] != nil {
                 conversationID = accountID
             } else {
@@ -4548,7 +4557,9 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
 
         case let .privateMessageReactionChanged(change):
             let conversationID: UUID?
-            if let accountID = snapshot.liveUsers[change.peerUserID]?.accountID,
+            if let accountID = trustedPrivateAccountID(userID: change.peerUserID,
+                                                       users: snapshot.liveUsers,
+                                                       conversations: snapshot.privateMessageConversations),
                snapshot.privateMessageConversations[accountID] != nil {
                 conversationID = accountID
             } else {
@@ -4596,12 +4607,25 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
                       String(message.senderUserID))
                 return true
             }
-            let accountID = user.accountID
+            // A routing ID may be recycled even without a timely disconnect packet.
+            // Archive an old different-name conversation before routing new PM traffic.
+            for (id, var previous) in snapshot.privateMessageConversations
+                where previous.accountID == nil && previous.userID == message.senderUserID &&
+                    !matchesPrivateRecipient(previous, userID: message.senderUserID,
+                                             users: snapshot.liveUsers) {
+                previous.archivedUserID = message.senderUserID
+                previous.archivedBootID = previous.id
+                previous.userID = nil
+                snapshot.privateMessageConversations[id] = previous
+            }
+            let accountID = trustedPrivateAccountID(userID: message.senderUserID,
+                                                   users: snapshot.liveUsers,
+                                                   conversations: snapshot.privateMessageConversations)
             let conversationID: UUID
             if let accountID {
                 conversationID = accountID
             } else if let existing = snapshot.privateMessageConversations.first(where: {
-                $0.value.accountID == nil && $0.value.userID == message.senderUserID
+                $0.value.accountID == nil && matchesPrivateRecipient($0.value, userID: message.senderUserID, users: snapshot.liveUsers)
             })?.key {
                 conversationID = existing
             } else {
@@ -7668,18 +7692,50 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         return visibleUsers[row]
     }
 
+    /// Other Guest sessions shown alongside this conversation, never merged with it in storage.
+    /// A visible session may display older archives of the same *label* with explicit separators;
+    /// it is never allowed to send to those past sessions based on the nickname alone.
+    func guestHistoryMembers(for conversation: PrivateMessageConversation) -> [PrivateMessageConversation] {
+        guard conversation.accountID == nil else { return [conversation] }
+        let sameName = privateMessageConversations.values.filter {
+            $0.accountID == nil && !isIgnoredConversation($0) &&
+                GuestConversationPresentation.sameLabel($0.nickname, conversation.nickname)
+        }
+        let live = sameName.filter { $0.userID != nil }
+        if live.count > 1 {
+            return conversation.userID != nil ? [conversation] :
+                sameName.filter { $0.userID == nil }.sorted { $0.lastActivity < $1.lastActivity }
+        }
+        return sameName.sorted {
+            if $0.lastActivity != $1.lastActivity { return $0.lastActivity < $1.lastActivity }
+            return $0.id.uuidString < $1.id.uuidString
+        }
+    }
+
     var displayedPrivateMessageConversations: [PrivateMessageConversation] {
+        let all = privateMessageConversations.values.filter { !isIgnoredConversation($0) }
+        let visibleIDs = GuestConversationPresentation.visibleIDs(all.map {
+            .init(id: $0.id, nickname: $0.nickname, hasAccountIdentity: $0.accountID != nil,
+                  isLive: $0.userID != nil, activity: $0.lastActivity)
+        })
         let query = privateMessageSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-        let filtered = privateMessageConversations.values.filter { conversation in
-            guard !isIgnoredConversation(conversation) else { return false }
+        let filtered = all.filter { conversation in
+            guard visibleIDs.contains(conversation.id) else { return false }
             guard !query.isEmpty else { return true }
-            if conversation.nickname.range(of: query, options: [.caseInsensitive, .diacriticInsensitive]) != nil { return true }
-            guard let last = conversation.entries.last else { return false }
-            let preview = CarrachoHTMLText.plainText(fromWire: last.message)
-            return preview.range(of: query, options: [.caseInsensitive, .diacriticInsensitive]) != nil
+            return guestHistoryMembers(for: conversation).contains { member in
+                if member.nickname.range(of: query, options: [.caseInsensitive, .diacriticInsensitive]) != nil {
+                    return true
+                }
+                return member.entries.contains { entry in
+                    CarrachoHTMLText.plainText(fromWire: entry.message)
+                        .range(of: query, options: [.caseInsensitive, .diacriticInsensitive]) != nil
+                }
+            }
         }
         return filtered.sorted { lhs, rhs in
-            if lhs.lastActivity != rhs.lastActivity { return lhs.lastActivity > rhs.lastActivity }
+            let leftActivity = guestHistoryMembers(for: lhs).last?.lastActivity ?? lhs.lastActivity
+            let rightActivity = guestHistoryMembers(for: rhs).last?.lastActivity ?? rhs.lastActivity
+            if leftActivity != rightActivity { return leftActivity > rightActivity }
             return lhs.nickname.localizedCaseInsensitiveCompare(rhs.nickname) == .orderedAscending
         }
     }
@@ -7757,6 +7813,14 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         case let .userArrived(user):
             retirePrivateConversationRouting(userID: user.userID)
             liveUsers[user.userID] = user
+            // A room membership can arrive before its user-list record. Fill its
+            // missing name as soon as the real user record becomes available.
+            for channelID in Array(joinedChannels.keys) {
+                guard var session = joinedChannels[channelID],
+                      session.members[user.userID] != nil else { continue }
+                session.memberNicknames[user.userID] = Self.macRomanString(user.nickname)
+                joinedChannels[channelID] = session
+            }
             let arrivedName = Self.macRomanString(user.nickname)
             emitClientEvent(.userSignedIn,
                             notificationTitle: L("User signed in"),
@@ -7828,6 +7892,12 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
                 user.picture = picture
                 if let accountID { user.accountID = accountID }
                 liveUsers[userID] = user
+                for channelID in Array(joinedChannels.keys) {
+                    guard var session = joinedChannels[channelID],
+                          session.members[userID] != nil else { continue }
+                    session.memberNicknames[userID] = Self.macRomanString(nickname)
+                    joinedChannels[channelID] = session
+                }
             }
             if let statusMessage { userStatusMessages[userID] = statusMessage }
             updatePrivateConversationMetadata(userID)
@@ -7899,6 +7969,11 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
             refreshCurrentServerDirectory()
         case let .channelUserJoined(channelID, userID, mode):
             if var session = joinedChannels[channelID] {
+                // A recycled UInt32 is a new member: discard any old name snapshot first.
+                session.memberNicknames.removeValue(forKey: userID)
+                if let user = liveUsers[userID] {
+                    session.memberNicknames[userID] = Self.macRomanString(user.nickname)
+                }
                 session.members[userID] = mode
                 session.state.members = session.members.map { LegacyChannelMember(userID: $0.key, mode: $0.value) }
                 joinedChannels[channelID] = session
@@ -7927,7 +8002,12 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
                     activeChannel = session.state
                     channelMembers = session.members
                 }
-                let name = liveUsers[userID].map { Self.macRomanString($0.nickname) } ?? L("Unknown User")
+                // The server may have removed this user from the global online list
+                // already. Use the nickname captured when they entered this room.
+                let name = liveUsers[userID].map { Self.macRomanString($0.nickname) }
+                    ?? session.memberNicknames[userID] ?? L("Unknown User")
+                session.memberNicknames.removeValue(forKey: userID)
+                joinedChannels[channelID] = session
                 appendChannelSystem(LF("%@ left the room.", name), channelID: channelID)
                 syncChannelMemberCount(channelID)
                 if isActive { reloadChannelView() }

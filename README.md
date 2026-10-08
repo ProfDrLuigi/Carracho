@@ -18,14 +18,14 @@ The modern transport protects far more than login traffic: chat/control packets,
 
 See the collapsible **Security and modern encryption** section below for the protocol details.
 
-### Current release: 1.1.8
+### Current release: 1.1.9
 
-Carracho Client 1.1.8 (build 19) is a focused private-message reliability and identity-safety update. It prevents stored conversations from being attached to a different user when Classic or older Carracho servers reuse a numeric user ID. Carracho Server remains 1.1.6 (build 17). No protocol changes or Server update are required.
+Carracho Client 1.1.9 (build 20) improves the Message Center for returning Guest users and safeguards private-message recipient selection. It also fixes Guest nicknames in chatroom departure notices. Carracho Server remains 1.1.6 (build 17); no Server rebuild or protocol change is required.
 
-- Client: **1.1.8 (build 19)**
+- Client: **1.1.9 (build 20)**
 - Server: **1.1.6 (build 17)**
 
-The full release notes are available in [`README_1.1.8.md`](README_1.1.8.md).
+The full release notes are available in [`README_1.1.9.md`](README_1.1.9.md).
 
 ## At a glance
 

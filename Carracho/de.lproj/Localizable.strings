@@ -2175,3 +2175,11 @@
 "Save complete unfiltered server log" = "Vollständiges ungefiltertes Serverlog speichern";
 
 "Showing %@ of %@ log lines" = "%@ von %@ Logzeilen angezeigt";
+
+"%@ previous Guest sessions (unverified)" = "%@ frühere Gast-Sitzungen (nicht verifiziert)";
+
+"Guest session identity unverified" = "Identität früherer Gast-Sitzungen nicht verifiziert";
+
+"Current Guest session" = "Aktuelle Gast-Sitzung";
+
+"Earlier Guest session (%@) · Identity not verified" = "Frühere Gast-Sitzung (%@) · Identität nicht verifiziert";
