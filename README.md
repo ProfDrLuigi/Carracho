@@ -20,7 +20,7 @@ See the collapsible **Security and modern encryption** section below for the pro
 
 ### Current release: 1.1.7
 
-Carracho Client 1.1.7 improves user context menus, direct administrator account editing, per-user Ignore controls and switching between connected and unreachable server bookmarks. The macOS Client advances to 1.1.7 (build 18); Carracho Server remains at 1.1.6 (build 17).
+Carracho Client 1.1.7 (build 18) brings improved user context menus, personal Ignore controls, bookmark organization, more reliable reconnection and accurate read status. It also consolidates the existing multi-bookmark stability improvements into this release. Carracho Server remains 1.1.6 (build 17); Classic/Legacy packet layouts are unchanged.
 
 - Client: **1.1.7 (build 18)**
 - Server: **1.1.6 (build 17)**

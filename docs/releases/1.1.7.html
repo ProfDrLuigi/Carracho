@@ -21,14 +21,14 @@
   <main class="release-page">
     <a class="release-back" href="../">← Carracho</a>
 <h1>Carracho 1.1.7</h1>
-<p>Carracho Client <strong>1.1.7 (build 18)</strong> combines improved user menus, direct administrator account editing, personal Ignore controls, bookmark organization, safer multi-server reconnection and read-status fixes. Carracho Server remains <strong>1.1.6 (build 17)</strong>.</p>
+<p>Carracho <strong>Client 1.1.7 (build 18)</strong> brings improved user context menus, personal Ignore controls, bookmark organization, more reliable reconnection and accurate read status. It also consolidates the existing multi-bookmark stability improvements into this release. <strong>Carracho Server remains 1.1.6 (build 17)</strong>; Classic/Legacy packet layouts are unchanged.</p>
 <h2>Highlights</h2>
 <ul>
-<li>Edit a connected user's account directly from the user-list context menu as an authorized administrator, without visiting <strong>Accounts</strong> first.</li>
+<li>Edit a connected user&#x27;s account directly from the user-list context menu as an authorized administrator, without visiting <strong>Accounts</strong> first.</li>
 <li>Use the same context menu in the conference participant list, with actions bound to the actual clicked user.</li>
 <li>Ignore or unignore users without administrator privileges; hide their private messages and conference messages, and suppress new-message notifications and unread counts.</li>
 <li>See ignored users with a strikethrough nickname in the regular and conference user lists.</li>
-<li>Switch immediately from a stalled/offline server bookmark to another connected server without leaving the previous server's empty workspace on screen.</li>
+<li>Switch immediately from a stalled/offline server bookmark to another connected server without leaving the previous server&#x27;s empty workspace on screen.</li>
 <li>Restore the correct status and control state when selecting an existing server connection, and prevent late callbacks from one server affecting another.</li>
 <li>Correct the German/English localization of the new context-menu actions.</li>
 <li>Fixed a multi-bookmark reconnect bug that could leave one bookmark selected while its underlying client reconnected with another bookmark&#x27;s host and login, causing data such as the Files view to come from the wrong server.</li>
@@ -43,10 +43,10 @@
 </ul>
 <h2>Carracho Client 1.1.7</h2>
 <h2>User-list and conference context menus</h2>
-<p>Both the main server user list and each conference's participant list now offer the same right-click menu. Depending on connection state and permissions, it provides <strong>Info</strong>, <strong>Message</strong>, <strong>Ignore User / Stop Ignoring</strong>, <strong>Edit User Account…</strong>, <strong>Kick</strong> and <strong>Ban</strong>. The own-user <strong>Sleep</strong> action remains available where applicable.</p>
+<p>Both the main server user list and each conference&#x27;s participant list now offer the same right-click menu. Depending on connection state and permissions, it provides <strong>Info</strong>, <strong>Message</strong>, <strong>Ignore User / Stop Ignoring</strong>, <strong>Edit User Account…</strong>, <strong>Kick</strong> and <strong>Ban</strong>. The own-user <strong>Sleep</strong> action remains available where applicable.</p>
 <p>Conference actions are attached to the exact clicked user ID, rather than relying on a potentially unrelated selection in the main user list. Sorting the participant list therefore does not redirect a menu action to another user.</p>
 <h3>Direct administrator account editing</h3>
-<p>The <strong>Edit User Account…</strong> action is available only to authorized administrators. It resolves the selected live user's login and opens the existing account editor, with the usual server-side permission checks. On modern servers, the client automatically requests account groups and membership if the <strong>Accounts</strong> page has not been opened yet. On Classic servers, the existing Classic account editor is used. The account must expose an editable login.</p>
+<p>The <strong>Edit User Account…</strong> action is available only to authorized administrators. It resolves the selected live user&#x27;s login and opens the existing account editor, with the usual server-side permission checks. On modern servers, the client automatically requests account groups and membership if the <strong>Accounts</strong> page has not been opened yet. On Classic servers, the existing Classic account editor is used. The account must expose an editable login.</p>
 <p>This fixes the error that previously appeared on the first direct edit attempt until the administrator visited <strong>Accounts</strong> to initialize the groups.</p>
 <h3>Personal Ignore action</h3>
 <p>Any user can choose <strong>Ignore User</strong> on someone else. This is a <strong>local display/notification preference</strong>, not a kick or a server-side ban:</p>
@@ -54,19 +54,19 @@
 <li>New private messages and conference chat entries from that user are not shown or saved to the local conversation/transcript during the ignore.</li>
 <li>Existing private conversations are hidden rather than deleted. They become visible again after <strong>Stop Ignoring</strong>.</li>
 <li>Ignored conversations no longer contribute new-message notifications or unread badges, including when other connected bookmarks are running in the background.</li>
-<li>In the normal user list and the conference participant list, the ignored user's <strong>nickname is struck through</strong>, preserving its existing name color. Both lists refresh as soon as the setting changes.</li>
+<li>In the normal user list and the conference participant list, the ignored user&#x27;s <strong>nickname is struck through</strong>, preserving its existing name color. Both lists refresh as soon as the setting changes.</li>
 <li>Users cannot ignore their own account through this action.</li>
 </ul>
-<p>For modern peers with <strong>stable account UUIDs</strong>, an ignore is saved per server endpoint and local login, persists across application restarts and follows that account's identity. On older/Classic peers that provide only reusable numeric session IDs, the ignore applies <strong>only to the current connection</strong> to avoid mistakenly silencing someone else after a reconnect. If a stable identity becomes available during the session, the ignore can be promoted to that identity.</p>
+<p>For modern peers with <strong>stable account UUIDs</strong>, an ignore is saved per server endpoint and local login, persists across application restarts and follows that account&#x27;s identity. On older/Classic peers that provide only reusable numeric session IDs, the ignore applies <strong>only to the current connection</strong> to avoid mistakenly silencing someone else after a reconnect. If a stable identity becomes available during the session, the ignore can be promoted to that identity.</p>
 <h2>Bookmark switching and failed connections</h2>
-<p>Switching away from an offline server while its TCP connection is still pending no longer leaves the previous bookmark's empty workspace visible. The destination bookmark becomes active immediately, including an already-established session on another server.</p>
+<p>Switching away from an offline server while its TCP connection is still pending no longer leaves the previous bookmark&#x27;s empty workspace visible. The destination bookmark becomes active immediately, including an already-established session on another server.</p>
 <ul>
-<li>The new bookmark's own session snapshot, workspace data, status label and Connect/Disconnect control are restored together.</li>
-<li>The shared presentation is cleared before loading a different bookmark's state, avoiding stale Files or Overview content.</li>
-<li>Connection callbacks are tied to the originating client. A timeout or login result that arrives later for the old bookmark cannot replace the selected server's UI.</li>
-<li>A connecting bookmark can continue its own connection attempt in the background. A server agreement is never accepted on the user's behalf.</li>
+<li>The new bookmark&#x27;s own session snapshot, workspace data, status label and Connect/Disconnect control are restored together.</li>
+<li>The shared presentation is cleared before loading a different bookmark&#x27;s state, avoiding stale Files or Overview content.</li>
+<li>Connection callbacks are tied to the originating client. A timeout or login result that arrives later for the old bookmark cannot replace the selected server&#x27;s UI.</li>
+<li>A connecting bookmark can continue its own connection attempt in the background. A server agreement is never accepted on the user&#x27;s behalf.</li>
 </ul>
-<p>This addresses the case where a failed <strong>Zeb's</strong> connection left an empty Files/Overview panel displayed even after selecting the already-connected <strong>Admin</strong> bookmark.</p>
+<p>This addresses the case where a failed <strong>Zeb&#x27;s</strong> connection left an empty Files/Overview panel displayed even after selecting the already-connected <strong>Admin</strong> bookmark.</p>
 <h2>Localization</h2>
 <p>The English and German <code>Localizable.strings</code> resources now correctly parse the new context-menu entries. In German, the actions are <strong>Benutzerkonto bearbeiten…</strong>, <strong>Ignorieren</strong> and <strong>Ignorieren aufheben</strong>. The issue was a malformed newline sequence in the resource file, not missing translations.</p>
 <h3>Multi-bookmark reconnect isolation</h3>
@@ -106,10 +106,12 @@
 <h2>Compatibility notes</h2>
 <ul>
 <li>Classic/Legacy protocol packet layouts are unchanged in Client 1.1.7.</li>
-<li>This release adds Client user controls and improves bookmark/reconnect behavior; Carracho Server remains <strong>1.1.6 / build 17</strong>.</li>
-<li>Auto-reconnect continues to apply to saved bookmarks that have the option enabled; merely selecting an unconnected bookmark does not implicitly start a background connection.</li>
-<li>Background reconnects do not bypass server agreement prompts.</li>
-<li>Message Center conversations with stable account UUIDs remain durable across reconnects; numeric session identities remain protected by the server-boot namespace.</li>
+<li>Account editing requires server-granted administrator/account-management rights; Ignoring users is a local feature that does not require administrator privileges.</li>
+<li>Auto-reconnect continues to apply only to saved bookmarks with the option enabled. Selecting a previously unconnected bookmark does not automatically start a background connection.</li>
+<li>Background reconnects never bypass server agreement prompts.</li>
+<li>Message Center conversations with stable account UUIDs remain durable across reconnects; numeric routing identities are protected by server-boot scoping.</li>
+<li>Modern-user Ignore settings can persist using stable account UUIDs; Classic/numeric-only ignores are limited to their current connection to avoid blocking the wrong person.</li>
+<li>A successful client build does not replace user-to-user integration testing, app signing, notarization or distribution verification.</li>
 <li>The macOS Client is <strong>1.1.7 / build 18</strong>. macOS Server and native Linux Server remain <strong>1.1.6 / build 17</strong>.</li>
 </ul>
   </main>
