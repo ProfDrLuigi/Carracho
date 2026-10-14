@@ -18,14 +18,14 @@ The modern transport protects far more than login traffic: chat/control packets,
 
 See the collapsible **Security and modern encryption** section below for the protocol details.
 
-### Current release: 1.1.9
+### Current release: 1.1.10
 
-Carracho Client 1.1.9 (build 20) improves the Message Center for returning Guest users and safeguards private-message recipient selection. It also fixes Guest nicknames in chatroom departure notices. Carracho Server 1.1.7 (build 18) fixes a critical database-safety bug: changing the administrator password in the macOS Server GUI could erase accounts created by the running daemon. Both the macOS Server app and its installed system-service daemon must be updated; no wire-protocol change is required.
+Carracho Client 1.1.10 (build 21) and Server 1.1.8 (build 19) fix file sizes above 4 GB being displayed as 4.29 GB. Modern connections now carry exact 64-bit sizes for directory listings, file information and search results. Update both Client and Server to use the correction; Classic clients retain their historical protocol format.
 
-- Client: **1.1.9 (build 20)**
-- Server: **1.1.7 (build 18)**
+- Client: **1.1.10 (build 21)**
+- Server: **1.1.8 (build 19)**
 
-The full release notes are available in [`README_1.1.9.md`](README_1.1.9.md).
+The full release notes are available in [`README_1.1.10.md`](README_1.1.10.md).
 
 ## At a glance
 

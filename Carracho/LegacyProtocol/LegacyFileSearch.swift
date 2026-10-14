@@ -5,6 +5,8 @@ import Foundation
 struct LegacyFileSearchQuery: Equatable {
     static let maximumTextLength = 0xff
     var text: Data
+    /// Negotiated only on modern transports. Old servers ignore the auxiliary byte.
+    var supports64BitSizes = false
 
     func encoded() throws -> Data {
         guard !text.isEmpty, text.count <= Self.maximumTextLength else {
@@ -13,7 +15,7 @@ struct LegacyFileSearchQuery: Equatable {
         var data = LegacyWire.uint16BE(1)
         data.append(1) // field: filename
         data.append(1) // comparator: contains
-        data.append(1) // classic auxiliary byte
+        data.append(supports64BitSizes ? 2 : 1) // modern size capability / Classic auxiliary byte
         data.append(LegacyWire.uint32BE(UInt32(text.count)))
         data.append(text)
         return data
@@ -24,22 +26,26 @@ struct LegacyFileSearchQuery: Equatable {
         let count = Int(try cursor.readUInt16BE())
         guard count > 0 else { throw LegacyProtocolError.invalidRecord("file-search query has no clauses") }
         var found: Data?
+        var supports64BitSizes = false
         for _ in 0..<count {
             let field = try cursor.readUInt8()
             let comparator = try cursor.readUInt8()
-            _ = try cursor.readUInt8()
+            let auxiliary = try cursor.readUInt8()
             let length = Int(try cursor.readUInt32BE())
             guard length <= Self.maximumTextLength else {
                 throw LegacyProtocolError.invalidLength("file-search clause exceeds 255 bytes")
             }
             let value = try cursor.readBytes(count: length)
-            if found == nil, field == 1, comparator == 1, !value.isEmpty { found = value }
+            if found == nil, field == 1, comparator == 1, !value.isEmpty {
+                found = value
+                supports64BitSizes = auxiliary == 2
+            }
         }
         try cursor.requireEnd()
         guard let found else {
             throw LegacyProtocolError.invalidRecord("file-search query has no classic filename-contains clause")
         }
-        return LegacyFileSearchQuery(text: found)
+        return LegacyFileSearchQuery(text: found, supports64BitSizes: supports64BitSizes)
     }
 }
 
@@ -49,7 +55,7 @@ struct LegacyFileSearchResult: Equatable {
     var name: Data
     var creator: UInt32
     var fileType: UInt32
-    var size: UInt32
+    var size: UInt64
     var timestamp: UInt32
     var path: Data
 
@@ -61,7 +67,9 @@ struct LegacyFileSearchResult: Equatable {
                              flags: isFolder ? LegacyDirectoryFlags.folder : 0)
     }
 
-    func encodedClassicRecord() throws -> Data {
+    func encodedClassicRecord() throws -> Data { try encodedRecord(modernSizes: false) }
+
+    func encodedRecord(modernSizes: Bool) throws -> Data {
         guard !name.isEmpty, name.count <= Self.maximumNameLength else {
             throw LegacyProtocolError.invalidLength("file-search result name must contain 1...255 bytes")
         }
@@ -72,7 +80,8 @@ struct LegacyFileSearchResult: Equatable {
         data.append(name)
         data.append(LegacyWire.uint32BE(creator))
         data.append(LegacyWire.uint32BE(fileType))
-        data.append(LegacyWire.uint32BE(size))
+        data.append(modernSizes ? LegacyWire.uint64BE(size)
+                                : LegacyWire.uint32BE(UInt32(clamping: size)))
         data.append(LegacyWire.uint32BE(timestamp))
         data.append(try LegacyWire.string16(path))
         return data
@@ -88,15 +97,16 @@ enum LegacyFileSearchTransfer {
     /// The wire format has always carried a result count even though the historical server
     /// normally emitted one record per frame. Modern sessions use this to amortize AEAD and
     /// socket overhead for very large result sets while Classic sessions may keep count=1.
-    static func resultFrame<C: Collection>(_ results: C) throws -> Data where C.Element == LegacyFileSearchResult {
+    static func resultFrame<C: Collection>(_ results: C, modernSizes: Bool = false) throws -> Data where C.Element == LegacyFileSearchResult {
         guard !results.isEmpty, results.count <= Int(UInt32.max) else {
             throw LegacyProtocolError.invalidLength("file-search result frame count is invalid")
         }
         var data = Data([1])
         data.append(LegacyWire.uint32BE(UInt32(results.count)))
         for result in results {
-            data.append(LegacyWire.uint32BE(0))
-            data.append(try result.encodedClassicRecord())
+            // Reserved=1 identifies a 64-bit size record, only after the client's opt-in.
+            data.append(LegacyWire.uint32BE(modernSizes ? 1 : 0))
+            data.append(try result.encodedRecord(modernSizes: modernSizes))
         }
         return data
     }

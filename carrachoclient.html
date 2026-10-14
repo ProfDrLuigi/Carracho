@@ -23,6 +23,14 @@
     </style>
 </head>
     <body>
+        <p><span class="header" lang="en">New in 1.1.10</span></p>
+        <ul>
+            <span class="newstext">
+                <li>Updated the macOS client to version 1.1.10 (build 21).</li>
+                <li><strong>Display correct sizes for files above 4 GB</strong> — Fixed large files appearing as 4.29 GB in the file list. The Client now reads the Server&#x27;s additional 64-bit size metadata and uses the full value for the displayed size, sorting and the file information window. For example, a 10 GiB file is correctly displayed as approximately 10.74 GB instead of the historical 4.29 GB maximum.</li>
+                <li><strong>Show full file sizes in search results</strong> — File searches now request and decode 64-bit result sizes on modern connections. Search results use the same full-size file-list model as ordinary directory listings, so displayed sizes and size sorting remain consistent after a search. Older servers can still return Classic-format results, which the Client continues to accept.</li>
+        </ul></span>
+
         <p><span class="header" lang="en">New in 1.1.9</span></p>
         <ul>
             <span class="newstext">

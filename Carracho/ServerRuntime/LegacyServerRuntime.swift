@@ -2114,6 +2114,8 @@ final class LegacyServerRuntime {
             if !session.isLegacyTransport {
                 fields.append(LegacyTLV(type: LegacyFileLabelField.directoryLabels,
                                         value: Data(pageListing.entries.map { $0.label.rawValue })))
+                fields.append(LegacyTLV(type: ModernFileSizeField.directorySizes,
+                                        value: ModernFileSizeField.encodeDirectorySizes(pageListing.entries)))
                 if let nextOffset {
                     guard nextOffset <= Int(UInt32.max) else {
                         throw LegacyServerRuntimeError.protocolFailure("directory page offset exceeds UInt32")
@@ -3389,7 +3391,7 @@ final class LegacyServerRuntime {
                 throw LegacyServerRuntimeError.protocolFailure("stored file metadata is invalid")
             }
             let flags = stored.flags | (kind.isFolder ? LegacyDirectoryFlags.folder : 0)
-            let size = kind.isFolder ? UInt32(0) : UInt32(min(UInt64(max(values.fileSize ?? 0, 0)), UInt64(UInt32.max)))
+            let size = kind.isFolder ? UInt64(0) : UInt64(max(values.fileSize ?? 0, 0))
             let createdDate = stored.createdAt ?? values.creationDate ?? values.contentModificationDate
             let metadata = LegacyFileInfoMetadata(flags: flags, size: size,
                                                   created: createdDate?.legacyMacTimestamp ?? 0,
@@ -3404,6 +3406,7 @@ final class LegacyServerRuntime {
             if !session.isLegacyTransport {
                 let label = LegacyFileLabel(rawValue: stored.label) ?? .none
                 fields.append(LegacyTLV(type: LegacyFileLabelField.fileInfo, value: label.encoded))
+                fields.append(LegacyTLV(type: ModernFileSizeField.fileInfo, value: LegacyWire.uint64BE(size)))
             }
             try session.sendAuthenticated(LegacyPacket(command: LegacyCommand.moveFile,
                                                         transactionID: packet.transactionID,
@@ -6637,14 +6640,13 @@ extension LegacyServerRuntime {
                 try stream.sendPayload(try LegacyFileSearchTransfer.resultFrame(result))
             }
         } else {
-            // Modern AEAD transfer framing is comparatively expensive per payload. The classic
-            // search record format already carries a count, so batch records without changing
-            // the logical protocol seen by the client.
+            // Batch modern replies and use 64-bit sizes only after the client's opt-in.
+            // Earlier modern clients continue receiving the Classic record layout.
             let batchSize = 256
             var start = results.startIndex
             while start < results.endIndex {
                 let end = min(start + batchSize, results.endIndex)
-                try stream.sendPayload(try LegacyFileSearchTransfer.resultFrame(results[start..<end]))
+                try stream.sendPayload(try LegacyFileSearchTransfer.resultFrame(results[start..<end], modernSizes: query.supports64BitSizes))
                 start = end
             }
         }
@@ -6661,12 +6663,20 @@ extension LegacyServerRuntime {
         if !scopedRoot, let fileSearchIndex = currentFileSearchIndex() {
             do {
                 return try fileSearchIndex.search(queryData).map { entry in
-                    LegacyFileSearchResult(name: entry.name,
-                                           creator: entry.isFolder ? Self.folderCreator : 0,
-                                           fileType: entry.isFolder ? Self.folderType : 0,
-                                           size: entry.size,
-                                           timestamp: entry.timestamp,
-                                           path: entry.path)
+                    var size = UInt64(entry.size)
+                    // Existing disposable indexes contain Classic 32-bit sizes. Resolve only
+                    // saturated values so upgrades also show exact sizes without a rebuild.
+                    if !legacyTransport, !entry.isFolder, entry.size == UInt32.max {
+                        let url = try storageURL(for: entry.path, account: account,
+                                                 legacyTransport: false, requireExisting: true)
+                        size = UInt64(max(try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0, 0))
+                    }
+                    return LegacyFileSearchResult(name: entry.name,
+                                                  creator: entry.isFolder ? Self.folderCreator : 0,
+                                                  fileType: entry.isFolder ? Self.folderType : 0,
+                                                  size: size,
+                                                  timestamp: entry.timestamp,
+                                                  path: entry.path)
                 }
             } catch {
                 log("Indexed file search failed; using filesystem fallback: \(error.localizedDescription)")
@@ -6718,7 +6728,7 @@ extension LegacyServerRuntime {
                         name: name,
                         creator: isFolder ? Self.folderCreator : 0,
                         fileType: isFolder ? Self.folderType : 0,
-                        size: isFolder ? 0 : UInt32(min(rawSize, UInt64(UInt32.max))),
+                        size: isFolder ? 0 : rawSize,
                         timestamp: timestamp,
                         path: path
                     ))
@@ -7461,7 +7471,7 @@ extension LegacyServerRuntime {
             let storedFlags = storedMetadata?.flags ?? 0
             let storedLabel = legacyTransport ? LegacyFileLabel.none : (LegacyFileLabel(rawValue: storedMetadata?.label ?? 0) ?? .none)
             let wireFlags = storedFlags | (targetIsFolder ? LegacyDirectoryFlags.folder : 0)
-            let wireSize: UInt32
+            let wireSize: UInt64
             if targetIsFolder {
                 let hiddenDropbox: Bool
                 if account?.permissions.contains(.viewDropboxes) != true {
@@ -7469,9 +7479,9 @@ extension LegacyServerRuntime {
                 } else {
                     hiddenDropbox = false
                 }
-                wireSize = hiddenDropbox ? 0 : visibleDirectoryItemCount(at: targetURL, supportsTaggedUTF8Names: supportsTaggedUTF8Names)
+                wireSize = hiddenDropbox ? 0 : UInt64(visibleDirectoryItemCount(at: targetURL, supportsTaggedUTF8Names: supportsTaggedUTF8Names))
             } else {
-                wireSize = UInt32(min(fileSize, UInt64(UInt32.max)))
+                wireSize = fileSize
             }
             let presentedAsFolder = targetIsFolder
             entries.append(LegacyDirectoryEntry(name: name,
@@ -7531,7 +7541,7 @@ extension LegacyServerRuntime {
                 let wireFlags = (storedMetadata?.flags ?? 0) | LegacyDirectoryFlags.folder
 
                 entries.append(LegacyDirectoryEntry(name: name,
-                                                    size: wireSize,
+                                                    size: UInt64(wireSize),
                                                     timestamp: timestamp,
                                                     fileType: Self.folderType,
                                                     creator: Self.folderCreator,
@@ -7546,7 +7556,7 @@ extension LegacyServerRuntime {
             let values = try home.resourceValues(forKeys: [.contentModificationDateKey])
             let timestamp = values.contentModificationDate?.legacyMacTimestamp ?? 0
             let itemCount = visibleDirectoryItemCount(at: home, supportsTaggedUTF8Names: supportsTaggedUTF8Names)
-            entries.append(LegacyDirectoryEntry(name: name, size: itemCount, timestamp: timestamp,
+            entries.append(LegacyDirectoryEntry(name: name, size: UInt64(itemCount), timestamp: timestamp,
                                                 fileType: Self.folderType, creator: Self.folderCreator,
                                                 flags: LegacyDirectoryFlags.folder))
         }

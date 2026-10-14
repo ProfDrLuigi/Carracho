@@ -317,7 +317,7 @@ final class FileInfoWindowController: NSWindowController, NSWindowDelegate, NSTe
 
         var metadataRows: [(String, String)] = []
         if !isFolder {
-            metadataRows.append((L("Size"), ByteCountFormatter.string(fromByteCount: Int64(info.metadata.size), countStyle: .file)))
+            metadataRows.append((L("Size"), ByteCountFormatter.string(fromByteCount: Int64(clamping: info.metadata.size), countStyle: .file)))
         }
         metadataRows.append((L("Created"), ViewController.macDateString(info.metadata.created)))
         metadataRows.append((L("Modified"), ViewController.macDateString(info.metadata.modified)))
@@ -2271,7 +2271,7 @@ extension ViewController {
 
     func canQuickView(_ entry: LegacyDirectoryEntry) -> Bool {
         guard !entry.isFolder, !entry.isSymbolicLink,
-              UInt64(entry.size) <= Self.quickViewMaximumBytes else { return false }
+              entry.size <= Self.quickViewMaximumBytes else { return false }
         return Self.quickViewExtension(forName: Self.macRomanString(entry.name)) != nil
     }
 
@@ -2317,7 +2317,7 @@ extension ViewController {
                 let title = Self.macRomanString(info.name)
                 guard !isFolder,
                       let suffix = Self.quickViewExtension(forName: title),
-                      UInt64(info.metadata.size) <= Self.quickViewMaximumBytes,
+                      info.metadata.size <= Self.quickViewMaximumBytes,
                       let transfer = self.fileTransferClient else {
                     self.isQuickViewPreparing = false
                     self.updateFileTransferButtons()
@@ -3125,10 +3125,10 @@ extension ViewController {
         return LF("%@ File", fileExtension.uppercased())
     }
 
-    func cachedFileSizeString(_ size: UInt32) -> String {
+    func cachedFileSizeString(_ size: UInt64) -> String {
         let key = NSNumber(value: size)
         if let cached = filesSizeTextCache.object(forKey: key) { return cached as String }
-        let value = Self.fileByteCountFormatter.string(fromByteCount: Int64(size))
+        let value = Self.fileByteCountFormatter.string(fromByteCount: Int64(clamping: size))
         filesSizeTextCache.setObject(value as NSString, forKey: key)
         return value
     }

@@ -2,7 +2,7 @@ import Foundation
 
 struct LegacyDirectoryEntry: Equatable {
     var name: Data
-    var size: UInt32
+    var size: UInt64
     var timestamp: UInt32
     var fileType: UInt32
     var creator: UInt32
@@ -17,7 +17,7 @@ struct LegacyDirectoryEntry: Equatable {
         var data = LegacyWire.uint16BE(UInt16(name.count + 20))
         data.append(LegacyWire.uint16BE(UInt16(name.count)))
         data.append(name)
-        data.append(LegacyWire.uint32BE(size))
+        data.append(LegacyWire.uint32BE(UInt32(clamping: size)))
         data.append(LegacyWire.uint32BE(timestamp))
         data.append(LegacyWire.uint32BE(fileType))
         data.append(LegacyWire.uint32BE(creator))
@@ -93,7 +93,7 @@ struct LegacyDirectoryListing: Equatable {
             let name = try cursor.readBytes(count: Int(cursor.readUInt16BE()))
             let entry = LegacyDirectoryEntry(
                 name: name,
-                size: try cursor.readUInt32BE(),
+                size: UInt64(try cursor.readUInt32BE()),
                 timestamp: try cursor.readUInt32BE(),
                 fileType: try cursor.readUInt32BE(),
                 creator: try cursor.readUInt32BE(),

@@ -23,6 +23,14 @@
     </style>
 </head>
     <body>
+        <p><span class="header" lang="en">New in 1.1.8</span></p>
+        <ul>
+            <span class="newstext">
+                <li>Updated Carracho Server for macOS to version 1.1.8 (build 19).</li>
+                <li><strong>Send exact 64-bit sizes to modern clients</strong> — The macOS Server and native Linux Server now send exact file sizes in modern-only metadata for directory listings and file information replies. Previously, both Server implementations clamped these values to the historical 32-bit maximum of 4,294,967,295 bytes even for modern connections. Large-file sizes are now retained before encoding, and each directory page carries one 64-bit value for each entry.</li>
+                <li><strong>Preserve full sizes in filesystem and indexed searches</strong> — Modern file searches can opt into 64-bit result records. Both Server implementations retain full sizes during filesystem searches and resolve saturated 32-bit sizes from existing search indexes against the current file metadata. Existing indexes therefore support the correction without a database schema migration or a mandatory index rebuild.</li>
+        </ul></span>
+
         <p><span class="header" lang="en">New in 1.1.7</span></p>
         <ul>
             <span class="newstext">

@@ -49,7 +49,7 @@ final class LegacyFileSearchClient {
 
     func search(text: Data, completion: @escaping (Result<[LegacyFileSearchResult], Error>) -> Void) {
         let query: Data
-        do { query = try LegacyFileSearchQuery(text: text).encoded() }
+        do { query = try LegacyFileSearchQuery(text: text, supports64BitSizes: session.usesModernCrypto).encoded() }
         catch { completion(.failure(error)); return }
 
         // Search responses can legitimately contain tens of thousands of records. Parsing all
@@ -88,17 +88,20 @@ final class LegacyFileSearchClient {
                 do {
                     var prefix = LegacyByteCursor(try prefixResult.get())
                     let reserved = try prefix.readUInt32BE()
-                    guard reserved == 0 else { throw LegacyFileSearchClientError.invalidResponse("reserved word is nonzero") }
+                    guard reserved == 0 || (reserved == 1 && self.session.usesModernCrypto) else {
+                        throw LegacyFileSearchClientError.invalidResponse("unsupported result record format")
+                    }
+                    let modernSizes = reserved == 1
                     let nameLength = Int(try prefix.readUInt8())
                     guard nameLength > 0 else { throw LegacyFileSearchClientError.invalidResponse("empty result name") }
-                    stream.readPayload(nameLength + 18) { fixedResult in
+                    stream.readPayload(nameLength + (modernSizes ? 22 : 18)) { fixedResult in
                         do {
                             let fixed = try fixedResult.get()
                             var cursor = LegacyByteCursor(fixed)
                             let name = try cursor.readBytes(count: nameLength)
                             let creator = try cursor.readUInt32BE()
                             let fileType = try cursor.readUInt32BE()
-                            let size = try cursor.readUInt32BE()
+                            let size = modernSizes ? try cursor.readUInt64BE() : UInt64(try cursor.readUInt32BE())
                             let timestamp = try cursor.readUInt32BE()
                             let pathLength = Int(try cursor.readUInt16BE())
                             guard pathLength <= Self.maximumPathLength else {

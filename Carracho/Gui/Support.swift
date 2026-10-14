@@ -219,25 +219,24 @@ final class BookmarkReorderStackView: NSStackView {
         return (id, row, handle)
     }
 
-    private func insertionIndex(excluding draggedView: NSView, at point: NSPoint) -> Int? {
-        guard bounds.insetBy(dx: -4, dy: -4).contains(point) else { return nil }
-        let rows = arrangedSubviews.filter { $0 !== draggedView && !$0.isHidden && $0.frame.height > 1 }
-        guard !rows.isEmpty else { return 0 }
-
-        for (index, row) in rows.enumerated() {
-            if isFlipped {
-                if point.y < row.frame.midY { return index }
-            } else if point.y > row.frame.midY {
-                return index
-            }
-        }
-        return rows.count
+    private func insertionIndex(draggedView: NSView, at point: NSPoint) -> Int? {
+        guard bounds.insetBy(dx: -6, dy: -6).contains(point) else { return nil }
+        // Compare the cursor to the actual laid-out rows, including the source row.
+        // Excluding it here used to make dropping on the *upper half* of a row
+        // below the source resolve to the source's original slot (a no-op).
+        let rows = arrangedSubviews.filter { !$0.isHidden && $0.frame.height > 1 }
+        guard let sourceIndex = rows.firstIndex(where: { $0 === draggedView }) else { return nil }
+        return BookmarkReorderPolicy.destinationIndex(
+            rowCenters: rows.map { $0.frame.midY },
+            dragging: sourceIndex,
+            droppingAt: point.y
+        )
     }
 
     private func validDrop(_ sender: NSDraggingInfo) -> (UUID, Int, BookmarkRowDragHandle)? {
         guard let (id, row, handle) = validSource(sender) else { return nil }
         let point = convert(sender.draggingLocation, from: nil)
-        guard let index = insertionIndex(excluding: row, at: point) else { return nil }
+        guard let index = insertionIndex(draggedView: row, at: point) else { return nil }
         return (id, index, handle)
     }
 

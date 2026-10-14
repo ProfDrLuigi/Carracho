@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Carracho Client 1.1.10</title>
+  <link rel="stylesheet" href="../styles.css">
+  <style>
+    .release-page { width:min(calc(100% - 40px), 900px); margin:0 auto; padding:72px 0 110px; }
+    .release-page h1 { font-size:clamp(2.8rem,7vw,5rem); margin-bottom:28px; }
+    .release-page h2 { margin-top:54px; font-size:2rem; }
+    .release-page h3 { margin-top:34px; }
+    .release-page p, .release-page li { color:var(--muted-strong); }
+    .release-page code { padding:.12em .38em; border-radius:6px; background:rgba(255,255,255,.07); }
+    .release-page pre { margin:22px 0; border:1px solid var(--line); border-radius:16px; background:#070b12; }
+    .release-back { display:inline-flex; margin-bottom:34px; color:var(--orange-2); text-decoration:none; font-weight:700; }
+    .release-downloads { display:flex; flex-wrap:wrap; gap:12px; margin:0 0 36px; }
+  </style>
+</head>
+<body>
+  <main class="release-page">
+    <a class="release-back" href="../">← Carracho</a>
+    <nav class="release-downloads" aria-label="Downloads"><a class="button button-secondary" href="https://github.com/ProfDrLuigi/Carracho/releases" rel="noreferrer">Client downloads</a></nav>
+<h2>Carracho Client 1.1.10</h2>
+<h3>Display correct sizes for files above 4 GB</h3>
+<p>Fixed large files appearing as 4.29 GB in the file list. The Client now reads the Server&#x27;s additional 64-bit size metadata and uses the full value for the displayed size, sorting and the file information window. For example, a 10 GiB file is correctly displayed as approximately 10.74 GB instead of the historical 4.29 GB maximum.</p>
+<p>The correction applies to modern connections, including connections to a Server with Legacy compatibility enabled. The size cache retains the full 64-bit value, and directory pages are merged with their corresponding size metadata. Folder item counts keep their existing meaning. Client 1.1.10 requires Server 1.1.8 or later for exact large-file sizes; older servers and explicit Legacy connections continue to provide their historical 32-bit values.</p>
+<h3>Show full file sizes in search results</h3>
+<p>File searches now request and decode 64-bit result sizes on modern connections. Search results use the same full-size file-list model as ordinary directory listings, so displayed sizes and size sorting remain consistent after a search. Older servers can still return Classic-format results, which the Client continues to accept.</p>
+  </main>
+</body>
+</html>

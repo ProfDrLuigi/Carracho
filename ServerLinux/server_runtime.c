@@ -194,6 +194,8 @@
 #define DIRECTORY_LABELS_FIELD 0xf0000601u
 #define DIRECTORY_PAGE_REQUEST_OFFSET_FIELD 0xf0000602u
 #define DIRECTORY_PAGE_NEXT_OFFSET_FIELD 0xf0000603u
+#define DIRECTORY_SIZES_FIELD 0xf0000604u
+#define FILE_INFO_SIZE_FIELD 0xf0000605u
 #define DIRECTORY_PAGE_MAX_BYTES (60u * 1024u)
 #define LOGIN_FIELD_MEDIA_CAPABILITIES 0xf0000200u
 #define LOGIN_FIELD_FILES_ROOT_NAME 0xf0000201u
@@ -502,7 +504,8 @@ typedef struct dir_item {
     char name[NAME_MAX+1];
     uint8_t wire_name[512];
     size_t wire_name_len;
-    uint32_t size, timestamp, file_type, creator;
+    uint64_t size;
+    uint32_t timestamp, file_type, creator;
     uint16_t flags;
     uint8_t label;
 } dir_item;
@@ -1273,8 +1276,8 @@ static size_t classic_agreement_style(uint8_t out[22]){
 }
 
 static int encode_directory(cr_server*s,cr_session*session,const uint8_t*legacy,size_t legacy_len,
-                            size_t page_offset,int paged,cr_buffer*out,cr_buffer*labels,size_t*next_offset){
-    cr_buffer_init(out);cr_buffer_init(labels);if(next_offset)*next_offset=(size_t)-1;
+                            size_t page_offset,int paged,cr_buffer*out,cr_buffer*labels,cr_buffer*sizes,size_t*next_offset){
+    cr_buffer_init(out);cr_buffer_init(labels);cr_buffer_init(sizes);if(next_offset)*next_offset=(size_t)-1;
     if(!account_perm(session,PERM_VIEW_DROPBOXES)&&path_is_inside_dropbox(s,session,legacy,legacy_len))return cr_buffer_append_string16(out,legacy,legacy_len)||cr_buffer_append_u16(out,0)?-1:0;
     char dir[PATH_MAX];if(resolve_legacy_path(s,session,legacy,legacy_len,dir,sizeof(dir)))return-1;struct stat rootst;if(stat(dir,&rootst)||!S_ISDIR(rootst.st_mode))return-1;DIR*d=opendir(dir);if(!d)return-1;dir_item*items=NULL;size_t count=0,cap=0;struct dirent*de;
     while((de=readdir(d))){
@@ -1285,7 +1288,7 @@ static int encode_directory(cr_server*s,cr_session*session,const uint8_t*legacy,
         uint8_t child[4096];size_t child_len=0;if(build_legacy_child(legacy,legacy_len,wire_name,wn,child,&child_len))continue;
         if(is_symlink){char resolved_child[PATH_MAX];if(!resolve_legacy_path_ex(s,session,child,child_len,resolved_child,sizeof(resolved_child),1)&&!stat(resolved_child,&effective)&&(S_ISREG(effective.st_mode)||S_ISDIR(effective.st_mode)))target_accessible=1;}
         if(count==cap){size_t nc=cap?cap*2:32;dir_item*ni=realloc(items,nc*sizeof(*ni));if(!ni){closedir(d);free(items);return-1;}items=ni;cap=nc;}dir_item*x=&items[count++];memset(x,0,sizeof(*x));snprintf(x->name,sizeof(x->name),"%s",de->d_name);memcpy(x->wire_name,wire_name,wn);x->wire_name_len=wn;
-        if(target_accessible&&S_ISREG(effective.st_mode))x->size=(uint32_t)((uint64_t)effective.st_size>UINT32_MAX?UINT32_MAX:effective.st_size);
+        if(target_accessible&&S_ISREG(effective.st_mode))x->size=(uint64_t)(effective.st_size<0?0:effective.st_size);
         else if(target_accessible&&S_ISDIR(effective.st_mode)){int hidden_dropbox=!account_perm(session,PERM_VIEW_DROPBOXES)&&path_is_inside_dropbox(s,session,child,child_len);if(!hidden_dropbox)x->size=visible_directory_item_count(full,session->modern_transport);}
         x->timestamp=stat_mac_time(target_accessible?effective.st_mtime:lst.st_mtime);if(target_accessible&&S_ISDIR(effective.st_mode))x->flags|=DIR_FLAG_FOLDER;if(target_accessible&&S_ISDIR(effective.st_mode)){x->file_type=FILETYPE_FOLDER;x->creator=CREATOR_FOLDER;}else if(is_symlink){x->file_type=FILETYPE_SYMLINK;x->creator=CREATOR_FOLDER;}
         if(target_accessible){cr_file_metadata m;int found=0;if(!cr_file_metadata_get(session_metadata_store(s,session),child,child_len,&m,&found)){if(found){x->flags|=m.flags;x->label=m.label;}cr_file_metadata_free(&m);}}
@@ -1365,12 +1368,13 @@ static int encode_directory(cr_server*s,cr_session*session,const uint8_t*legacy,
            cr_buffer_append_u16(out,(uint16_t)(x->wire_name_len+20))||
            cr_buffer_append_u16(out,(uint16_t)x->wire_name_len)||
            cr_buffer_append(out,x->wire_name,x->wire_name_len)||
-           cr_buffer_append_u32(out,x->size)||
+           cr_buffer_append_u32(out,x->size>UINT32_MAX?UINT32_MAX:(uint32_t)x->size)||
            cr_buffer_append_u32(out,x->timestamp)||
            cr_buffer_append_u32(out,x->file_type)||
            cr_buffer_append_u32(out,x->creator)||
            cr_buffer_append_u16(out,x->flags)||
-           cr_buffer_append_u8(labels,x->label)){free(items);return-1;}
+           cr_buffer_append_u8(labels,x->label)||
+           (session->modern_transport&&cr_buffer_append_u64(sizes,x->size))){free(items);return-1;}
     }
     if(next_offset&&end<count)*next_offset=end;
     free(items);return 0;
@@ -2372,22 +2376,23 @@ static int handle_directory(cr_session*s,const cr_packet*p){
     size_t page_offset=page?(size_t)cr_read_be32(page->value):0;
     int paged=page!=NULL;
     size_t next_offset=(size_t)-1;
-    cr_buffer listing,labels;
-    if(encode_directory(s->server,s,pv,pn,page_offset,paged,&listing,&labels,&next_offset)){
-        cr_buffer_free(&listing);cr_buffer_free(&labels);
+    cr_buffer listing,labels,sizes;
+    if(encode_directory(s->server,s,pv,pn,page_offset,paged,&listing,&labels,&sizes,&next_offset)){
+        cr_buffer_free(&listing);cr_buffer_free(&labels);cr_buffer_free(&sizes);
         return send_error(s,p->transaction_id,200);
     }
-    if(listing.len>UINT16_MAX||labels.len>UINT16_MAX){
-        cr_buffer_free(&listing);cr_buffer_free(&labels);
+    if(listing.len>UINT16_MAX||labels.len>UINT16_MAX||sizes.len>UINT16_MAX){
+        cr_buffer_free(&listing);cr_buffer_free(&labels);cr_buffer_free(&sizes);
         return send_error(s,p->transaction_id,200);
     }
-    cr_tlv_out f[3];size_t n=0;uint8_t next_bytes[4];
+    cr_tlv_out f[4];size_t n=0;uint8_t next_bytes[4];
     f[n++]=(cr_tlv_out){2,listing.data,(uint16_t)listing.len};
     if(s->modern_transport){
         f[n++]=(cr_tlv_out){DIRECTORY_LABELS_FIELD,labels.data,(uint16_t)labels.len};
+        f[n++]=(cr_tlv_out){DIRECTORY_SIZES_FIELD,sizes.data,(uint16_t)sizes.len};
         if(next_offset!=(size_t)-1){
             if(next_offset>UINT32_MAX){
-                cr_buffer_free(&listing);cr_buffer_free(&labels);
+                cr_buffer_free(&listing);cr_buffer_free(&labels);cr_buffer_free(&sizes);
                 return send_error(s,p->transaction_id,200);
             }
             cr_write_be32(next_bytes,(uint32_t)next_offset);
@@ -2395,7 +2400,7 @@ static int handle_directory(cr_session*s,const cr_packet*p){
         }
     }
     int rc=session_send(s,CMD_DIRECTORY,p->transaction_id,f,n);
-    cr_buffer_free(&listing);cr_buffer_free(&labels);
+    cr_buffer_free(&listing);cr_buffer_free(&labels);cr_buffer_free(&sizes);
     return rc;
 }
 static int handle_channel_list(cr_session*s,const cr_packet*p){cr_buffer b;if(encode_channel_list(s->server,&b))return-1;if(b.len>UINT16_MAX){cr_buffer_free(&b);return send_error(s,p->transaction_id,200);}cr_tlv_out f={0x0a,b.data,(uint16_t)b.len};int rc=session_send(s,CMD_CHANNEL_LIST,p->transaction_id,&f,1);cr_buffer_free(&b);return rc;}
@@ -3002,7 +3007,7 @@ static int handle_delete_file(cr_session*s,const cr_packet*p){
         log_msg("Moved to server Trash across filesystems: %s -> %s",source,dest);
     return send_task_complete(s,p->transaction_id);
 }
-static int handle_file_info(cr_session*s,const cr_packet*p){const cr_tlv*pf=cr_packet_field(p,1);if(!pf||!pf->length)return send_error(s,p->transaction_id,1);if(!account_perm(s,PERM_VIEW_DROPBOXES)&&path_is_inside_dropbox(s->server,s,pf->value,pf->length))return send_error(s,p->transaction_id,1);char path[PATH_MAX];struct stat st;int folder=0;if(resolve_legacy_path_ex(s->server,s,pf->value,pf->length,path,sizeof(path),1)||resource_kind(path,&folder,NULL,&st))return send_error(s,p->transaction_id,1);cr_file_metadata m;int found=0;if(cr_file_metadata_get(session_metadata_store(s->server,s),pf->value,pf->length,&m,&found))return send_error(s,p->transaction_id,1);uint8_t meta[30];memset(meta,0,sizeof(meta));cr_write_be16(meta,(uint16_t)(m.flags|(folder?DIR_FLAG_FOLDER:0)));uint64_t sz=folder?0:(uint64_t)(st.st_size<0?0:st.st_size);cr_write_be32(meta+2,sz>UINT32_MAX?UINT32_MAX:(uint32_t)sz);cr_write_be32(meta+6,m.has_created_at?cr_iso8601_to_mac_timestamp(m.created_at):stat_mac_time(st.st_mtime));cr_write_be32(meta+10,stat_mac_time(st.st_mtime));memcpy(meta+14,m.finder_info,16);const uint8_t*leaf=NULL;size_t ll=0;if(legacy_leaf(pf->value,pf->length,&leaf,&ll)){cr_file_metadata_free(&m);return send_error(s,p->transaction_id,1);}cr_tlv_out f[5];size_t n=0;f[n++]=(cr_tlv_out){1,pf->value,pf->length};f[n++]=(cr_tlv_out){2,leaf,(uint16_t)ll};f[n++]=(cr_tlv_out){3,meta,30};f[n++]=(cr_tlv_out){4,m.comment,(uint16_t)m.comment_len};if(s->modern_transport)f[n++]=(cr_tlv_out){FILE_LABEL_FIELD,&m.label,1};int rc=session_send(s,CMD_MOVE_FILE,p->transaction_id,f,n);cr_file_metadata_free(&m);return rc;}
+static int handle_file_info(cr_session*s,const cr_packet*p){const cr_tlv*pf=cr_packet_field(p,1);if(!pf||!pf->length)return send_error(s,p->transaction_id,1);if(!account_perm(s,PERM_VIEW_DROPBOXES)&&path_is_inside_dropbox(s->server,s,pf->value,pf->length))return send_error(s,p->transaction_id,1);char path[PATH_MAX];struct stat st;int folder=0;if(resolve_legacy_path_ex(s->server,s,pf->value,pf->length,path,sizeof(path),1)||resource_kind(path,&folder,NULL,&st))return send_error(s,p->transaction_id,1);cr_file_metadata m;int found=0;if(cr_file_metadata_get(session_metadata_store(s->server,s),pf->value,pf->length,&m,&found))return send_error(s,p->transaction_id,1);uint8_t meta[30];memset(meta,0,sizeof(meta));cr_write_be16(meta,(uint16_t)(m.flags|(folder?DIR_FLAG_FOLDER:0)));uint64_t sz=folder?0:(uint64_t)(st.st_size<0?0:st.st_size);cr_write_be32(meta+2,sz>UINT32_MAX?UINT32_MAX:(uint32_t)sz);cr_write_be32(meta+6,m.has_created_at?cr_iso8601_to_mac_timestamp(m.created_at):stat_mac_time(st.st_mtime));cr_write_be32(meta+10,stat_mac_time(st.st_mtime));memcpy(meta+14,m.finder_info,16);const uint8_t*leaf=NULL;size_t ll=0;if(legacy_leaf(pf->value,pf->length,&leaf,&ll)){cr_file_metadata_free(&m);return send_error(s,p->transaction_id,1);}uint8_t size64[8];cr_write_be64(size64,sz);cr_tlv_out f[6];size_t n=0;f[n++]=(cr_tlv_out){1,pf->value,pf->length};f[n++]=(cr_tlv_out){2,leaf,(uint16_t)ll};f[n++]=(cr_tlv_out){3,meta,30};f[n++]=(cr_tlv_out){4,m.comment,(uint16_t)m.comment_len};if(s->modern_transport){f[n++]=(cr_tlv_out){FILE_LABEL_FIELD,&m.label,1};f[n++]=(cr_tlv_out){FILE_INFO_SIZE_FIELD,size64,8};}int rc=session_send(s,CMD_MOVE_FILE,p->transaction_id,f,n);cr_file_metadata_free(&m);return rc;}
 static int handle_set_file_info(cr_session*s,const cr_packet*p){const cr_tlv*pf=cr_packet_field(p,1),*name=cr_packet_field(p,2),*flagsf=cr_packet_field(p,3),*comment=cr_packet_field(p,4),*labelf=s->modern_transport?cr_packet_field(p,FILE_LABEL_FIELD):NULL;if(!pf||!pf->length||!name||validate_legacy_leaf(name->value,name->length,0x200)||!flagsf||flagsf->length!=2||!comment||comment->length>255||(labelf&&(labelf->length!=1||labelf->value[0]>7)))return send_error(s,p->transaction_id,1);if(!account_perm(s,PERM_VIEW_DROPBOXES)&&path_is_inside_dropbox(s->server,s,pf->value,pf->length))return send_error(s,p->transaction_id,1);char source[PATH_MAX];int folder=0;struct stat st;if(resolve_legacy_path_ex(s->server,s,pf->value,pf->length,source,sizeof(source),1)||resource_kind(source,&folder,NULL,&st))return send_error(s,p->transaction_id,1);cr_file_metadata m;int found=0;if(cr_file_metadata_get(session_metadata_store(s->server,s),pf->value,pf->length,&m,&found))return send_error(s,p->transaction_id,1);const uint8_t*oldleaf=NULL;size_t oldlen=0;if(legacy_leaf(pf->value,pf->length,&oldleaf,&oldlen)){cr_file_metadata_free(&m);return send_error(s,p->transaction_id,1);}uint16_t requested=(uint16_t)(cr_read_be16(flagsf->value)&~DIR_FLAG_FOLDER),oldflags=(uint16_t)(m.flags&~DIR_FLAG_FOLDER);int rename_req=oldlen!=name->length||memcmp(oldleaf,name->value,oldlen),comment_req=m.comment_len!=comment->length||(m.comment_len&&memcmp(m.comment,comment->value,m.comment_len)),flags_req=folder&&requested!=oldflags,label_req=labelf&&m.label!=labelf->value[0];if((rename_req&&!can_rename(s,folder))||(comment_req&&!can_comment(s,folder))||(label_req&&!can_comment(s,folder))||(flags_req&&!account_perm(s,PERM_CHANGE_FOLDER_MODE))){cr_file_metadata_free(&m);return send_error(s,p->transaction_id,1);}uint8_t final_path[4096];size_t final_len=pf->length;memcpy(final_path,pf->value,pf->length);char final_fs[PATH_MAX];strcpy(final_fs,source);if(rename_req){size_t parent_len=legacy_parent_length(pf->value,pf->length);if(build_legacy_child(pf->value,parent_len,name->value,name->length,final_path,&final_len)||resolve_legacy_path_ex(s->server,s,final_path,final_len,final_fs,sizeof(final_fs),0)||rename(source,final_fs)){cr_file_metadata_free(&m);return send_error(s,p->transaction_id,1);}if(cr_file_metadata_move(session_metadata_store(s->server,s),pf->value,pf->length,final_path,final_len,folder)){rename(final_fs,source);cr_file_metadata_free(&m);return send_error(s,p->transaction_id,1);}}
     cr_file_metadata_free(&m);if(cr_file_metadata_get(session_metadata_store(s->server,s),final_path,final_len,&m,&found)){if(rename_req)rename(final_fs,source);return send_error(s,p->transaction_id,1);}free(m.comment);m.comment=NULL;m.comment_len=comment->length;if(comment->length){m.comment=malloc(comment->length);if(!m.comment){cr_file_metadata_free(&m);return send_error(s,p->transaction_id,1);}memcpy(m.comment,comment->value,comment->length);}if(folder)m.flags=requested;if(labelf)m.label=labelf->value[0];if(!m.has_created_at){cr_now_iso8601(m.created_at);m.has_created_at=1;}if(cr_file_metadata_set(session_metadata_store(s->server,s),final_path,final_len,&m)){cr_file_metadata_free(&m);return send_error(s,p->transaction_id,1);}cr_file_metadata_free(&m);if(file_search_index_incremental_available(s->server)&&!session_uses_legacy_files_root(s->server,s)&&!s->files_root_path[0]){int irc=rename_req?cr_file_search_index_move_subtree(&s->server->file_index,pf->value,pf->length,final_path,final_len,final_fs,&s->server->metadata,&s->server->search_index_exclusions):cr_file_search_index_upsert_subtree(&s->server->file_index,final_fs,final_path,final_len,&s->server->metadata,&s->server->search_index_exclusions);if(irc){log_msg("File-search index metadata/rename update failed");invalidate_file_search_index(s->server,"incremental metadata/rename failure");}}return send_task_complete(s,p->transaction_id);}
 static int handle_set_file_label(cr_session*s,const cr_packet*p){
@@ -4894,27 +4899,30 @@ static int banner_is_oversized_builtin_logo(const uint8_t*data,size_t len){
 
 
 static int ascii_case_contains(const char *haystack,const char *needle){if(!*needle)return 1;size_t nl=strlen(needle);for(const char*h=haystack;*h;h++){size_t i=0;while(i<nl&&h[i]&&tolower((unsigned char)h[i])==tolower((unsigned char)needle[i]))i++;if(i==nl)return 1;}return 0;}
-static int append_search_result_record(cr_buffer*b,const uint8_t*name,size_t name_len,uint32_t creator,uint32_t file_type,uint32_t size,uint32_t timestamp,const uint8_t*path,size_t path_len){
+static int append_search_result_record(cr_buffer*b,const uint8_t*name,size_t name_len,uint32_t creator,uint32_t file_type,uint64_t size,uint32_t timestamp,const uint8_t*path,size_t path_len,int modern_sizes){
     return !b||!name_len||name_len>255||path_len>4096||
-           cr_buffer_append_u32(b,0)||
+           cr_buffer_append_u32(b,modern_sizes?1:0)||
            cr_buffer_append_u8(b,(uint8_t)name_len)||
            cr_buffer_append(b,name,name_len)||
            cr_buffer_append_u32(b,creator)||
            cr_buffer_append_u32(b,file_type)||
-           cr_buffer_append_u32(b,size)||
+           (modern_sizes?cr_buffer_append_u64(b,size):cr_buffer_append_u32(b,size>UINT32_MAX?UINT32_MAX:(uint32_t)size))||
            cr_buffer_append_u32(b,timestamp)||
            cr_buffer_append_u16(b,(uint16_t)path_len)||
            cr_buffer_append(b,path,path_len)?-1:0;
 }
-static int send_search_result(cr_transfer_stream*stream,const uint8_t*name,size_t name_len,uint32_t creator,uint32_t file_type,uint32_t size,uint32_t timestamp,const uint8_t*path,size_t path_len){
+static int send_search_result(cr_transfer_stream*stream,const uint8_t*name,size_t name_len,uint32_t creator,uint32_t file_type,uint64_t size,uint32_t timestamp,const uint8_t*path,size_t path_len,int modern_sizes){
     cr_buffer b;cr_buffer_init(&b);int rc=-1;
     if(cr_buffer_append_u8(&b,1)==0&&cr_buffer_append_u32(&b,1)==0&&
-       append_search_result_record(&b,name,name_len,creator,file_type,size,timestamp,path,path_len)==0&&
+       append_search_result_record(&b,name,name_len,creator,file_type,size,timestamp,path,path_len,modern_sizes)==0&&
        cr_transfer_send(stream,b.data,b.len)==0)rc=0;
     cr_buffer_free(&b);return rc;
 }
 typedef struct cr_index_send_context {
     cr_transfer_stream *stream;
+    cr_server *server;
+    cr_session *session;
+    int modern_sizes;
     cr_buffer batch;
     uint32_t batch_count;
     size_t emitted;
@@ -4936,12 +4944,19 @@ static int flush_index_search_batch(cr_index_send_context*c){
 static int send_indexed_search_result(void *context,const cr_file_search_index_result *r){
     cr_index_send_context*c=context;
     if(!c||!r)return-1;
+    uint64_t size=r->size;
+    /* Disposable indexes from earlier releases contain clamped Classic sizes. */
+    if(c->modern_sizes&&!r->is_folder&&r->size==UINT32_MAX){
+        char path[PATH_MAX];struct stat st;
+        if(resolve_legacy_path_ex(c->server,c->session,r->path,r->path_len,path,sizeof(path),1)||stat(path,&st)||st.st_size<0){c->failed=1;return-1;}
+        size=(uint64_t)st.st_size;
+    }
     if(!c->batched){
-        if(send_search_result(c->stream,r->name,r->name_len,r->is_folder?CREATOR_FOLDER:0,r->is_folder?FILETYPE_FOLDER:0,r->size,r->timestamp,r->path,r->path_len)){c->failed=1;return-1;}
+        if(send_search_result(c->stream,r->name,r->name_len,r->is_folder?CREATOR_FOLDER:0,r->is_folder?FILETYPE_FOLDER:0,size,r->timestamp,r->path,r->path_len,c->modern_sizes)){c->failed=1;return-1;}
         c->emitted++;return 0;
     }
     if(!c->batch_count&&(cr_buffer_append_u8(&c->batch,1)||cr_buffer_append_u32(&c->batch,0))){c->failed=1;return-1;}
-    if(append_search_result_record(&c->batch,r->name,r->name_len,r->is_folder?CREATOR_FOLDER:0,r->is_folder?FILETYPE_FOLDER:0,r->size,r->timestamp,r->path,r->path_len)){c->failed=1;return-1;}
+    if(append_search_result_record(&c->batch,r->name,r->name_len,r->is_folder?CREATOR_FOLDER:0,r->is_folder?FILETYPE_FOLDER:0,size,r->timestamp,r->path,r->path_len,c->modern_sizes)){c->failed=1;return-1;}
     c->batch_count++;
     if(c->batch_count>=256||c->batch.len>=1024u*1024u)return flush_index_search_batch(c);
     return 0;
@@ -4959,7 +4974,7 @@ static int search_visited_add(cr_search_visited*v,const struct stat*st){if(!v||!
 static int search_walk(cr_server *s, cr_transfer_stream *stream, cr_file_metadata_store *metadata,
                        const char *directory, const uint8_t *legacy_parent,
                        size_t parent_len, const char *query,
-                       size_t *result_count, cr_search_visited *visited) {
+                       size_t *result_count, cr_search_visited *visited, int modern_sizes) {
   DIR *d = opendir(directory);
   if (!d)
     return -1;
@@ -5027,8 +5042,8 @@ static int search_walk(cr_server *s, cr_transfer_stream *stream, cr_file_metadat
       uint64_t raw = folder ? 0 : (uint64_t)(st.st_size < 0 ? 0 : st.st_size);
       if (send_search_result(stream, name, nn, folder ? CREATOR_FOLDER : 0,
                              folder ? FILETYPE_FOLDER : 0,
-                             raw > UINT32_MAX ? UINT32_MAX : (uint32_t)raw,
-                             stat_mac_time(st.st_mtime), path, pl)) {
+                             raw,
+                             stat_mac_time(st.st_mtime), path, pl, modern_sizes)) {
         rc = -1;
         break;
       }
@@ -5053,7 +5068,7 @@ static int search_walk(cr_server *s, cr_transfer_stream *stream, cr_file_metadat
         }
         if (added)
           rc = search_walk(s, stream, metadata, full, path, pl, query, result_count,
-                           visited);
+                           visited, modern_sizes);
       }
     }
   }
@@ -5075,6 +5090,7 @@ static int serve_file_search(cr_server *s, cr_transfer_stream *stream,
     return -1;
   char query[1024] = "";
   int found_query = 0;
+  int modern_sizes = 0;
   for (uint16_t i = 0; i < clauses; i++) {
     uint8_t h[7];
     if (cr_transfer_read(stream, h, 7))
@@ -5089,6 +5105,7 @@ static int serve_file_search(cr_server *s, cr_transfer_stream *stream,
       if (cr_macroman_to_utf8(data, n, query, sizeof(query)))
         return -1;
       found_query = 1;
+      modern_sizes = session->modern_transport && h[2] == 2;
     }
   }
   if (!found_query)
@@ -5104,6 +5121,7 @@ static int serve_file_search(cr_server *s, cr_transfer_stream *stream,
   if (s->file_index_ready && !scoped_root) {
     cr_index_send_context ctx;
     index_send_context_init(&ctx,stream);
+    ctx.server=s;ctx.session=session;ctx.modern_sizes=modern_sizes;
     search_rc = cr_file_search_index_search(
         &s->file_index, query, &s->search_index_exclusions,
         send_indexed_search_result, &ctx, &results);
@@ -5127,7 +5145,7 @@ static int serve_file_search(cr_server *s, cr_transfer_stream *stream,
       return -1;
     }
     int walk_rc = search_walk(s, stream, session_metadata_store(s,session), search_root, NULL, 0, query,
-                              &results, &visited);
+                              &results, &visited, modern_sizes);
     search_visited_free(&visited);
     if (walk_rc)
       return -1;

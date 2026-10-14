@@ -41,11 +41,40 @@ enum LegacyDirectoryPagingField {
     static let maximumPageBytes = 60 * 1024
 }
 
+/// Exact sizes for modern peers; Classic packed records retain their 32-bit layout.
+enum ModernFileSizeField {
+    static let directorySizes: UInt32 = 0xf0000604
+    static let fileInfo: UInt32 = 0xf0000605
+
+    static func encodeDirectorySizes(_ entries: [LegacyDirectoryEntry]) -> Data {
+        var data = Data()
+        for entry in entries { data.append(LegacyWire.uint64BE(entry.size)) }
+        return data
+    }
+
+    static func applyDirectorySizes(_ data: Data, to listing: inout LegacyDirectoryListing) throws {
+        guard data.count == listing.entries.count * 8 else {
+            throw LegacyProtocolError.invalidLength("invalid modern directory-size payload")
+        }
+        var cursor = LegacyByteCursor(data)
+        for index in listing.entries.indices {
+            listing.entries[index].size = try cursor.readUInt64BE()
+        }
+    }
+
+    static func decodeSize(_ data: Data) throws -> UInt64 {
+        var cursor = LegacyByteCursor(data)
+        let size = try cursor.readUInt64BE()
+        try cursor.requireEnd()
+        return size
+    }
+}
+
 struct LegacyFileInfoMetadata: Equatable {
     static let wireSize = 30
 
     var flags: UInt16
-    var size: UInt32
+    var size: UInt64
     var created: UInt32
     var modified: UInt32
     var finderInfo: Data
@@ -55,7 +84,7 @@ struct LegacyFileInfoMetadata: Equatable {
             throw LegacyProtocolError.invalidLength("Finder metadata must be exactly 16 bytes")
         }
         var data = LegacyWire.uint16BE(flags)
-        data.append(LegacyWire.uint32BE(size))
+        data.append(LegacyWire.uint32BE(UInt32(clamping: size)))
         data.append(LegacyWire.uint32BE(created))
         data.append(LegacyWire.uint32BE(modified))
         data.append(finderInfo)
@@ -69,7 +98,7 @@ struct LegacyFileInfoMetadata: Equatable {
         var cursor = LegacyByteCursor(data)
         let value = LegacyFileInfoMetadata(
             flags: try cursor.readUInt16BE(),
-            size: try cursor.readUInt32BE(),
+            size: UInt64(try cursor.readUInt32BE()),
             created: try cursor.readUInt32BE(),
             modified: try cursor.readUInt32BE(),
             finderInfo: try cursor.readBytes(count: 16)

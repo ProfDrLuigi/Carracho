@@ -499,6 +499,9 @@ final class LegacyControlClient {
                         listing.entries[index].label = LegacyFileLabel(rawValue: labels[index]) ?? .none
                     }
                 }
+                if let sizes = packet.firstField(type: ModernFileSizeField.directorySizes)?.value {
+                    try ModernFileSizeField.applyDirectorySizes(sizes, to: &listing)
+                }
                 completion(.success(listing))
             } catch {
                 completion(.failure(error))
@@ -543,6 +546,9 @@ final class LegacyControlClient {
                     }
                 }
 
+                if let sizes = packet.firstField(type: ModernFileSizeField.directorySizes)?.value {
+                    try ModernFileSizeField.applyDirectorySizes(sizes, to: &page)
+                }
                 let combined = accumulated + page.entries
                 guard let nextField = packet.firstField(type: LegacyDirectoryPagingField.nextOffset) else {
                     completion(.success(LegacyDirectoryListing(currentPath: expectedPath ?? page.currentPath,
@@ -1343,9 +1349,13 @@ final class LegacyControlClient {
                 } else {
                     label = .none
                 }
+                var metadata = try LegacyFileInfoMetadata.decode(metadataField.value)
+                if let size = packet.firstField(type: ModernFileSizeField.fileInfo)?.value {
+                    metadata.size = try ModernFileSizeField.decodeSize(size)
+                }
                 completion(.success(LegacyFileInfoReply(path: pathField.value,
                                                         name: nameField.value,
-                                                        metadata: try LegacyFileInfoMetadata.decode(metadataField.value),
+                                                        metadata: metadata,
                                                         comment: packet.firstField(type: 4)?.value ?? Data(),
                                                         label: label)))
             } catch { completion(.failure(error)) }
