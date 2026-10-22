@@ -5060,6 +5060,9 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
                 }
 
                 if self.activeBookmarkConnectionID == bookmark.id, self.client === target {
+                    // The bookmark can become active while its background login is still
+                    // in flight. Install the new session once before any live events arrive.
+                    if let snapshot = context.snapshot { self.restoreBookmarkSession(snapshot) }
                     self.connectedBookmarkID = bookmark.id
                     self.connectingBookmarkID = nil
                     self.autoReconnectBookmarkID = bookmark.autoReconnect ? bookmark.id : nil
@@ -5223,10 +5226,10 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         context.reconnectRequiresForegroundAgreement = false
 
         lastLoginResult = login
-        liveUsers = Dictionary(uniqueKeysWithValues: login.users.map { ($0.userID, $0) })
-        sleepingUsers = Set(login.users.lazy.filter { ($0.flags & 0x0100) != 0 }.map(\.userID))
-        userStatusMessages = [:]
-        userGroupColors = [:]
+        // activate(bookmark:) has restored the current reconnect snapshot and replayed
+        // queued events. Modern login.users deliberately omits avatars; replacing the
+        // live roster here would erase pictures, presence and users received since login.
+        // prepareBackgroundReconnectSnapshot already initialized this session's roster.
         messageCenterServerBootID = nil
         if messageCenterPersistenceScope == nil {
             configureMessageCenterPersistence(host: bookmark.host, port: bookmark.port, login: bookmark.login)

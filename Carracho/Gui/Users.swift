@@ -861,15 +861,34 @@ extension ViewController {
     }
 
     func refreshUserStatus(userID: UInt32) {
-        guard client.isConnected, liveUsers[userID] != nil else { return }
-        client.requestUserInfo(userID: userID) { [weak self] result in
-            guard let self, self.liveUsers[userID] != nil else { return }
-            if case let .success(info) = result {
+        guard client.isConnected, let requestedUser = liveUsers[userID],
+              let session = client.transferSession else { return }
+        let requestedClient = client
+        let bookmarkID = activeBookmarkConnectionID
+        requestedClient.requestUserInfo(userID: userID) { [weak self, weak requestedClient] result in
+            guard let self, let requestedClient, requestedClient.isConnected,
+                  requestedClient.transferSession == session,
+                  case let .success(info) = result, info.userID == userID else { return }
+
+            if self.client === requestedClient, self.activeBookmarkConnectionID == bookmarkID {
+                // A user update or a recycled routing ID must win over an older info reply.
+                guard self.liveUsers[userID] == requestedUser else { return }
+                self.liveUsers[userID]?.picture = info.picture
                 self.userStatusMessages[userID] = info.statusMessage
                 if let color = info.groupColorRGB { self.userGroupColors[userID] = color }
                 else { self.userGroupColors.removeValue(forKey: userID) }
+                self.updatePrivateConversationMetadata(userID)
                 self.reloadUserTablePreservingSelection()
                 if self.channelMembers[userID] != nil { self.channelMemberTable.reloadData() }
+                self.refreshPrivateMessageCenter(scrollToBottom: false)
+            } else if let bookmarkID, let context = self.bookmarkConnections[bookmarkID],
+                      context.client === requestedClient,
+                      context.snapshot?.liveUsers[userID] == requestedUser {
+                // The bookmark may have been parked while the request was in flight.
+                // Keep its recovered avatar in that connection's snapshot, not another server's UI.
+                context.snapshot?.liveUsers[userID]?.picture = info.picture
+                context.snapshot?.userStatusMessages[userID] = info.statusMessage
+                context.snapshot?.userGroupColors[userID] = info.groupColorRGB
             }
         }
     }

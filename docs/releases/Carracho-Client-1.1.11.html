@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Carracho Client 1.1.11</title>
+  <link rel="stylesheet" href="../styles.css">
+  <style>
+    .release-page { width:min(calc(100% - 40px), 900px); margin:0 auto; padding:72px 0 110px; }
+    .release-page h1 { font-size:clamp(2.8rem,7vw,5rem); margin-bottom:28px; }
+    .release-page h2 { margin-top:54px; font-size:2rem; }
+    .release-page h3 { margin-top:34px; }
+    .release-page p, .release-page li { color:var(--muted-strong); }
+    .release-page code { padding:.12em .38em; border-radius:6px; background:rgba(255,255,255,.07); }
+    .release-page pre { margin:22px 0; border:1px solid var(--line); border-radius:16px; background:#070b12; }
+    .release-back { display:inline-flex; margin-bottom:34px; color:var(--orange-2); text-decoration:none; font-weight:700; }
+    .release-downloads { display:flex; flex-wrap:wrap; gap:12px; margin:0 0 36px; }
+  </style>
+</head>
+<body>
+  <main class="release-page">
+    <a class="release-back" href="../">← Carracho</a>
+    <nav class="release-downloads" aria-label="Downloads"><a class="button button-secondary" href="https://github.com/ProfDrLuigi/Carracho/releases" rel="noreferrer">Client downloads</a></nav>
+<h2>Carracho Client 1.1.11</h2>
+<h3>Preserve user icons after automatic reconnect</h3>
+<p>Fixed user icons occasionally reverting to the default icon after an automatic reconnect. When activating a bookmark that had reconnected in the background, the Client could replace the updated user list with the initial login list, which intentionally contains no avatars on modern connections. Reconnect setup now preserves the pictures and user updates already received from the Server, including users who arrived after login, presence and status messages.</p>
+<p>If a background login finishes while its bookmark is being activated, the new session snapshot is installed before live updates are processed. This avoids restoring an older connection&#x27;s user list during the transition. Regression checks cover the background reconnect and subsequent foreground setup with a local test Server.</p>
+<h3>Recover missing avatars and guard delayed replies</h3>
+<p>User information refreshes now restore the user&#x27;s picture as well as their status message and group color. Responses are checked against the originating connection, authenticated session and requested user record before being applied. A delayed reply therefore cannot overwrite a newer picture update or repaint another Server&#x27;s user list after a bookmark switch.</p>
+<p>If the originating bookmark was moved to the background while the request was in flight, its recovered picture is saved in that bookmark&#x27;s session snapshot. No manual disconnect and reconnect is needed to recover an avatar through the user information refresh. Connection tests verify picture recovery, preservation of newer updates and isolation between bookmark views.</p>
+  </main>
+</body>
+</html>

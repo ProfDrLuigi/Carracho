@@ -18,14 +18,14 @@ The modern transport protects far more than login traffic: chat/control packets,
 
 See the collapsible **Security and modern encryption** section below for the protocol details.
 
-### Current release: 1.1.10
+### Current release: 1.1.11
 
-Carracho Client 1.1.10 (build 21) and Server 1.1.8 (build 19) fix file sizes above 4 GB being displayed as 4.29 GB. Modern connections now carry exact 64-bit sizes for directory listings, file information and search results. Update both Client and Server to use the correction; Classic clients retain their historical protocol format.
+Carracho Client 1.1.11 (build 22) fixes user icons disappearing after an automatic reconnect. Activating a bookmark that reconnected in the background now preserves the latest user pictures, online users and status messages. Missing pictures can also be recovered through user information requests. This is a Client update; Server 1.1.8 (build 19) remains the current Server version.
 
-- Client: **1.1.10 (build 21)**
+- Client: **1.1.11 (build 22)**
 - Server: **1.1.8 (build 19)**
 
-The full release notes are available in [`README_1.1.10.md`](README_1.1.10.md).
+The full release notes are available in [`README_1.1.11.md`](README_1.1.11.md).
 
 ## At a glance
 
