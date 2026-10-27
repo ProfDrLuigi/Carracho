@@ -105,6 +105,10 @@
           <li>The latest user list, presence and status messages survive reconnect setup.</li>
           <li>User information refreshes recover missing avatars without requiring a manual disconnect and reconnect.</li>
           <li>Delayed replies cannot overwrite newer user pictures or update another server&#x27;s visible user list.</li>
+          <li>Added explicit adaptive text colors for Offline Messages, conversation names and the Message Center header to address unreadable dark text.</li>
+          <li>Large screenshots are decoded, resized and compressed outside the UI thread before attachment upload.</li>
+          <li>Image selection dialogs belong to their editor window, including nested News editor sheets.</li>
+          <li>Unavailable upload connections now report an error promptly instead of waiting for network retries.</li>
           <li>Updated the Client to <strong>1.1.11 / build 22</strong>. The Server remains <strong>1.1.8 / build 19</strong>.</li>
           <!-- RELEASE_HIGHLIGHTS_END -->
         </ul>
@@ -268,7 +272,7 @@ bash ServerLinux/build.sh
           <div class="eyebrow">Current release</div>
           <h2>Carracho release 1.1.11</h2>
           <p>
-            Carracho Client 1.1.11 (build 22) fixes user icons disappearing after an automatic reconnect. Activating a bookmark that reconnected in the background now preserves the latest user pictures, online users and status messages. Missing pictures can also be recovered through user information requests. This is a Client update; Server 1.1.8 (build 19) remains the current Server version. Client 1.1.11 (build 22) · Server 1.1.8 (build 19).
+            Carracho Client 1.1.11 (build 22) fixes user icons disappearing after an automatic reconnect, sets explicit adaptive text colors in Message Center and improves screenshot attachments in private messages, chat and News. Image preparation now runs outside the UI thread, attachment dialogs belong to their editor window and unavailable upload connections report an error promptly. This is a Client update; Server 1.1.8 (build 19) remains the current Server version. Client 1.1.11 (build 22) · Server 1.1.8 (build 19).
           </p>
         </div>
         <div class="release-actions">

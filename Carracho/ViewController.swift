@@ -7409,32 +7409,42 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         let remaining = max(0, LegacyMediaTransfer.maximumImagesPerNewsPost - newsReplyAttachments.imageCount)
         let selected = Array(urls.prefix(remaining))
         guard !selected.isEmpty else { return }
-        do {
-            let prepared = try selected.map { try CarrachoMediaImageProcessor.prepare(url: $0) }
-            let expectedClient = mediaClient
-            let expectedContext = newsReplyContextKey
-            newsReplyMediaBusy = true
-            updateInlineNewsReplyState()
-            uploadPreparedMedia(prepared, client: expectedClient) { [weak self] result in
-                guard let self else { return }
+        let expectedClient = mediaClient
+        let expectedContext = newsReplyContextKey
+        newsReplyMediaBusy = true
+        updateInlineNewsReplyState()
+        CarrachoMediaImageProcessor.prepare(urls: selected) { [weak self] preparation in
+            guard let self else { return }
+            guard self.mediaClient === expectedClient, self.newsReplyContextKey == expectedContext else {
                 self.newsReplyMediaBusy = false
-                guard self.mediaClient === expectedClient, self.newsReplyContextKey == expectedContext else {
-                    self.updateInlineNewsReplyState()
-                    return
-                }
-                switch result {
-                case let .success(ids):
-                    self.addUploadedImages(ids: ids, prepared: prepared, to: self.newsReplyAttachments)
-                    self.saveInlineNewsReplyDraft()
-                case let .failure(error):
-                    self.newsReplyValidationLabel.stringValue = LF("Image upload failed: %@", Self.displayMessage(for: error))
-                    self.newsReplyValidationLabel.isHidden = false
-                }
                 self.updateInlineNewsReplyState()
+                return
             }
-        } catch {
-            newsReplyValidationLabel.stringValue = LF("Image could not be prepared: %@", Self.displayMessage(for: error))
-            newsReplyValidationLabel.isHidden = false
+            do {
+                let prepared = try preparation.get()
+                uploadPreparedMedia(prepared, client: expectedClient) { [weak self] result in
+                    guard let self else { return }
+                    self.newsReplyMediaBusy = false
+                    guard self.mediaClient === expectedClient, self.newsReplyContextKey == expectedContext else {
+                        self.updateInlineNewsReplyState()
+                        return
+                    }
+                    switch result {
+                    case let .success(ids):
+                        self.addUploadedImages(ids: ids, prepared: prepared, to: self.newsReplyAttachments)
+                        self.saveInlineNewsReplyDraft()
+                    case let .failure(error):
+                        self.newsReplyValidationLabel.stringValue = LF("Image upload failed: %@", Self.displayMessage(for: error))
+                        self.newsReplyValidationLabel.isHidden = false
+                    }
+                    self.updateInlineNewsReplyState()
+                }
+            } catch {
+                newsReplyMediaBusy = false
+                updateInlineNewsReplyState()
+                newsReplyValidationLabel.stringValue = LF("Image could not be prepared: %@", Self.displayMessage(for: error))
+                newsReplyValidationLabel.isHidden = false
+            }
         }
     }
 
@@ -7507,23 +7517,27 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
         let remaining = max(0, LegacyMediaTransfer.maximumImagesPerChatMessage - channelAttachmentStrip.imageCount)
         let selected = Array(urls.prefix(remaining))
         guard !selected.isEmpty else { return }
-        do {
-            let prepared = try selected.map { try CarrachoMediaImageProcessor.prepare(url: $0) }
-            let expectedClient = mediaClient
-            let expectedChannelID = activeChannel.channelID
-            channelAttachButton.isEnabled = false
-            uploadPreparedMedia(prepared, client: expectedClient) { [weak self] result in
-                guard let self else { return }
-                defer { self.reloadChannelView() }
-                guard self.mediaClient === expectedClient,
-                      self.activeChannel?.channelID == expectedChannelID else { return }
-                switch result {
-                case let .success(ids): self.addUploadedImages(ids: ids, prepared: prepared, to: self.channelAttachmentStrip)
-                case let .failure(error): self.showError(LF("Image upload failed: %@", Self.displayMessage(for: error)))
+        let expectedClient = mediaClient
+        let expectedChannelID = activeChannel.channelID
+        channelAttachButton.isEnabled = false
+        CarrachoMediaImageProcessor.prepare(urls: selected) { [weak self] preparation in
+            guard let self, self.mediaClient === expectedClient, self.activeChannel?.channelID == expectedChannelID else { return }
+            do {
+                let prepared = try preparation.get()
+                uploadPreparedMedia(prepared, client: expectedClient) { [weak self] result in
+                    guard let self else { return }
+                    defer { self.reloadChannelView() }
+                    guard self.mediaClient === expectedClient,
+                          self.activeChannel?.channelID == expectedChannelID else { return }
+                    switch result {
+                    case let .success(ids): self.addUploadedImages(ids: ids, prepared: prepared, to: self.channelAttachmentStrip)
+                    case let .failure(error): self.showError(LF("Image upload failed: %@", Self.displayMessage(for: error)))
+                    }
                 }
+            } catch {
+                reloadChannelView()
+                showError(LF("Image could not be prepared: %@", Self.displayMessage(for: error)))
             }
-        } catch {
-            showError(LF("Image could not be prepared: %@", Self.displayMessage(for: error)))
         }
     }
 
@@ -7533,23 +7547,27 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
             showError(LF("A chat message can contain at most %@ images.", String(LegacyMediaTransfer.maximumImagesPerChatMessage)))
             return
         }
-        do {
-            let prepared = try CarrachoMediaImageProcessor.prepare(data: data)
-            let expectedClient = mediaClient
-            let expectedChannelID = activeChannel.channelID
-            channelAttachButton.isEnabled = false
-            uploadPreparedMedia([prepared], client: expectedClient) { [weak self] result in
-                guard let self else { return }
-                defer { self.reloadChannelView() }
-                guard self.mediaClient === expectedClient,
-                      self.activeChannel?.channelID == expectedChannelID else { return }
-                switch result {
-                case let .success(ids): self.addUploadedImages(ids: ids, prepared: [prepared], to: self.channelAttachmentStrip)
-                case let .failure(error): self.showError(LF("Image upload failed: %@", Self.displayMessage(for: error)))
+        let expectedClient = mediaClient
+        let expectedChannelID = activeChannel.channelID
+        channelAttachButton.isEnabled = false
+        CarrachoMediaImageProcessor.prepare(data: data) { [weak self] preparation in
+            guard let self, self.mediaClient === expectedClient, self.activeChannel?.channelID == expectedChannelID else { return }
+            do {
+                let prepared = try preparation.get()
+                uploadPreparedMedia([prepared], client: expectedClient) { [weak self] result in
+                    guard let self else { return }
+                    defer { self.reloadChannelView() }
+                    guard self.mediaClient === expectedClient,
+                          self.activeChannel?.channelID == expectedChannelID else { return }
+                    switch result {
+                    case let .success(ids): self.addUploadedImages(ids: ids, prepared: [prepared], to: self.channelAttachmentStrip)
+                    case let .failure(error): self.showError(LF("Image upload failed: %@", Self.displayMessage(for: error)))
+                    }
                 }
+            } catch {
+                reloadChannelView()
+                showError(LF("Clipboard image could not be prepared: %@", Self.displayMessage(for: error)))
             }
-        } catch {
-            showError(LF("Clipboard image could not be prepared: %@", Self.displayMessage(for: error)))
         }
     }
 
@@ -7562,24 +7580,32 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
             showError(LF("This post can contain at most %@ images.", String(maximum)))
             return
         }
-        chooseMediaImages(maximum: remaining) { [weak self, weak textView, weak attachButton] urls in
-            guard let self, let textView else { return }
-            do {
-                let prepared = try urls.map { try CarrachoMediaImageProcessor.prepare(url: $0) }
-                attachButton?.isEnabled = false
-                busyChanged?(true)
-                self.uploadPreparedMedia(prepared, client: mediaClient) { [weak self, weak textView, weak attachButton] result in
+        chooseMediaImages(maximum: remaining, for: textView.window) { [weak self, weak textView, weak attachButton] urls in
+            guard let self, let textView, !urls.isEmpty else { return }
+            attachButton?.isEnabled = false
+            busyChanged?(true)
+            CarrachoMediaImageProcessor.prepare(urls: urls) { [weak self, weak textView, weak attachButton] preparation in
+                guard let self, textView != nil, self.mediaClient === mediaClient else {
                     attachButton?.isEnabled = true
                     busyChanged?(false)
-                    guard let self, textView != nil else { return }
-                    switch result {
-                    case let .success(ids): self.addUploadedImages(ids: ids, prepared: prepared, to: strip)
-                    case let .failure(error): self.showError(LF("Image upload failed: %@", Self.displayMessage(for: error)))
-                    }
+                    return
                 }
-            } catch {
-                busyChanged?(false)
-                self.showError(LF("Image could not be prepared: %@", Self.displayMessage(for: error)))
+                do {
+                    let prepared = try preparation.get()
+                    self.uploadPreparedMedia(prepared, client: mediaClient) { [weak self, weak textView, weak attachButton] result in
+                        attachButton?.isEnabled = true
+                        busyChanged?(false)
+                        guard let self, textView != nil, self.mediaClient === mediaClient else { return }
+                        switch result {
+                        case let .success(ids): self.addUploadedImages(ids: ids, prepared: prepared, to: strip)
+                        case let .failure(error): self.showError(LF("Image upload failed: %@", Self.displayMessage(for: error)))
+                        }
+                    }
+                } catch {
+                    attachButton?.isEnabled = true
+                    busyChanged?(false)
+                    self.showError(LF("Image could not be prepared: %@", Self.displayMessage(for: error)))
+                }
             }
         }
     }
@@ -7592,20 +7618,26 @@ final class ViewController: NSViewController, NSTableViewDataSource, NSTableView
             showError(LF("This post can contain at most %@ images.", String(maximum)))
             return
         }
-        do {
-            let prepared = try CarrachoMediaImageProcessor.prepare(data: data)
-            busyChanged?(true)
-            uploadPreparedMedia([prepared], client: mediaClient) { [weak self, weak textView] result in
+        busyChanged?(true)
+        CarrachoMediaImageProcessor.prepare(data: data) { [weak self, weak textView] preparation in
+            guard let self, textView != nil, self.mediaClient === mediaClient else {
                 busyChanged?(false)
-                guard let self, textView != nil else { return }
-                switch result {
-                case let .success(ids): self.addUploadedImages(ids: ids, prepared: [prepared], to: strip)
-                case let .failure(error): self.showError(LF("Image upload failed: %@", Self.displayMessage(for: error)))
-                }
+                return
             }
-        } catch {
-            busyChanged?(false)
-            showError(LF("Clipboard image could not be prepared: %@", Self.displayMessage(for: error)))
+            do {
+                let prepared = try preparation.get()
+                uploadPreparedMedia([prepared], client: mediaClient) { [weak self, weak textView] result in
+                    busyChanged?(false)
+                    guard let self, textView != nil, self.mediaClient === mediaClient else { return }
+                    switch result {
+                    case let .success(ids): self.addUploadedImages(ids: ids, prepared: [prepared], to: strip)
+                    case let .failure(error): self.showError(LF("Image upload failed: %@", Self.displayMessage(for: error)))
+                    }
+                }
+            } catch {
+                busyChanged?(false)
+                showError(LF("Clipboard image could not be prepared: %@", Self.displayMessage(for: error)))
+            }
         }
     }
 

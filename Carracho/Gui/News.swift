@@ -1298,18 +1298,27 @@ extension ViewController {
         body.imageFileHandler = { [weak self, weak body, weak alert] urls in
             guard let self, let body, let mediaClient = self.mediaClient else { return }
             let remaining = max(0, LegacyMediaTransfer.maximumImagesPerNewsPost - attachments.imageCount)
-            do {
-                let prepared = try Array(urls.prefix(remaining)).map { try CarrachoMediaImageProcessor.prepare(url: $0) }
-                alert?.buttons.first?.isEnabled = false
-                self.uploadPreparedMedia(prepared, client: mediaClient) { [weak self, weak body, weak alert] result in
+            alert?.buttons.first?.isEnabled = false
+            CarrachoMediaImageProcessor.prepare(urls: Array(urls.prefix(remaining))) { [weak self, weak body, weak alert] preparation in
+                guard let self, body != nil, self.mediaClient === mediaClient else {
                     alert?.buttons.first?.isEnabled = true
-                    guard let self, body != nil else { return }
-                    switch result {
-                    case let .success(ids): self.addUploadedImages(ids: ids, prepared: prepared, to: attachments)
-                    case let .failure(error): self.showError(LF("Image upload failed: %@", Self.displayMessage(for: error)))
-                    }
+                    return
                 }
-            } catch { self.showError(LF("Image could not be prepared: %@", Self.displayMessage(for: error))) }
+                do {
+                    let prepared = try preparation.get()
+                    self.uploadPreparedMedia(prepared, client: mediaClient) { [weak self, weak body, weak alert] result in
+                        alert?.buttons.first?.isEnabled = true
+                        guard let self, body != nil, self.mediaClient === mediaClient else { return }
+                        switch result {
+                        case let .success(ids): self.addUploadedImages(ids: ids, prepared: prepared, to: attachments)
+                        case let .failure(error): self.showError(LF("Image upload failed: %@", Self.displayMessage(for: error)))
+                        }
+                    }
+                } catch {
+                    alert?.buttons.first?.isEnabled = true
+                    self.showError(LF("Image could not be prepared: %@", Self.displayMessage(for: error)))
+                }
+            }
         }
         body.imageDataHandler = { [weak self, weak body, weak alert] data in
             guard let self, let body else { return }
@@ -1516,18 +1525,27 @@ extension ViewController {
         body.imageFileHandler = { [weak self, weak body, weak alert] urls in
             guard let self, let body, let mediaClient = self.mediaClient else { return }
             let remaining = max(0, LegacyMediaTransfer.maximumImagesPerNewsPost - attachments.imageCount)
-            do {
-                let prepared = try Array(urls.prefix(remaining)).map { try CarrachoMediaImageProcessor.prepare(url: $0) }
-                alert?.buttons.first?.isEnabled = false
-                self.uploadPreparedMedia(prepared, client: mediaClient) { [weak self, weak body, weak alert] result in
+            alert?.buttons.first?.isEnabled = false
+            CarrachoMediaImageProcessor.prepare(urls: Array(urls.prefix(remaining))) { [weak self, weak body, weak alert] preparation in
+                guard let self, body != nil, self.mediaClient === mediaClient else {
                     alert?.buttons.first?.isEnabled = true
-                    guard let self, body != nil else { return }
-                    switch result {
-                    case let .success(ids): self.addUploadedImages(ids: ids, prepared: prepared, to: attachments)
-                    case let .failure(error): self.showError(LF("Image upload failed: %@", Self.displayMessage(for: error)))
-                    }
+                    return
                 }
-            } catch { self.showError(LF("Image could not be prepared: %@", Self.displayMessage(for: error))) }
+                do {
+                    let prepared = try preparation.get()
+                    self.uploadPreparedMedia(prepared, client: mediaClient) { [weak self, weak body, weak alert] result in
+                        alert?.buttons.first?.isEnabled = true
+                        guard let self, body != nil, self.mediaClient === mediaClient else { return }
+                        switch result {
+                        case let .success(ids): self.addUploadedImages(ids: ids, prepared: prepared, to: attachments)
+                        case let .failure(error): self.showError(LF("Image upload failed: %@", Self.displayMessage(for: error)))
+                        }
+                    }
+                } catch {
+                    alert?.buttons.first?.isEnabled = true
+                    self.showError(LF("Image could not be prepared: %@", Self.displayMessage(for: error)))
+                }
+            }
         }
         body.imageDataHandler = { [weak self, weak body, weak alert] data in
             guard let self, let body else { return }

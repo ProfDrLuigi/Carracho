@@ -20,7 +20,7 @@ See the collapsible **Security and modern encryption** section below for the pro
 
 ### Current release: 1.1.11
 
-Carracho Client 1.1.11 (build 22) fixes user icons disappearing after an automatic reconnect. Activating a bookmark that reconnected in the background now preserves the latest user pictures, online users and status messages. Missing pictures can also be recovered through user information requests. This is a Client update; Server 1.1.8 (build 19) remains the current Server version.
+Carracho Client 1.1.11 (build 22) fixes user icons disappearing after an automatic reconnect, sets explicit adaptive text colors in Message Center and improves screenshot attachments in private messages, chat and News. Image preparation now runs outside the UI thread, attachment dialogs belong to their editor window and unavailable upload connections report an error promptly. This is a Client update; Server 1.1.8 (build 19) remains the current Server version.
 
 - Client: **1.1.11 (build 22)**
 - Server: **1.1.8 (build 19)**

@@ -2170,7 +2170,7 @@ extension ViewController {
         }
     }
 
-    func chooseMediaImages(maximum: Int, completion: @escaping @MainActor ([URL]) -> Void) {
+    func chooseMediaImages(maximum: Int, for parentWindow: NSWindow? = nil, completion: @escaping @MainActor ([URL]) -> Void) {
         guard maximum > 0 else { completion([]); return }
         let panel = NSOpenPanel()
         panel.title = L("Choose Images")
@@ -2179,11 +2179,18 @@ extension ViewController {
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = maximum > 1
         panel.allowedFileTypes = ["png", "jpg", "jpeg"]
-        panel.begin { response in
-            Task { @MainActor in
+        let finished: (NSApplication.ModalResponse) -> Void = { response in
+            DispatchQueue.main.async {
                 guard response == .OK else { return }
                 completion(Array(panel.urls.prefix(maximum)))
             }
+        }
+        var owner = parentWindow ?? view.window
+        while let sheet = owner?.attachedSheet { owner = sheet }
+        if let owner {
+            panel.beginSheetModal(for: owner, completionHandler: finished)
+        } else {
+            panel.begin(completionHandler: finished)
         }
     }
 

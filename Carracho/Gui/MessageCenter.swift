@@ -111,6 +111,7 @@ extension ViewController {
             privateMessageHeaderAvatar.heightAnchor.constraint(equalToConstant: 36),
         ])
         privateMessageHeaderNameLabel.font = .systemFont(ofSize: 14, weight: .semibold)
+        privateMessageHeaderNameLabel.textColor = .labelColor
         privateMessageHeaderNameLabel.lineBreakMode = .byTruncatingTail
         privateMessageHeaderStatusLabel.font = .systemFont(ofSize: 10.5)
         privateMessageHeaderStatusLabel.textColor = CarrachoTheme.secondaryText
@@ -1017,6 +1018,8 @@ extension ViewController {
         ])
 
         let name = NSTextField(labelWithString: L("Offline Messages"))
+        // Explicit semantic colors also track the app's Dark appearance on older macOS.
+        name.textColor = .labelColor
         name.font = .systemFont(ofSize: messageCenterFontSize, weight: offlineMessageCenterUnreadCount > 0 ? .semibold : .medium)
         name.lineBreakMode = .byTruncatingTail
         name.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -1530,6 +1533,7 @@ extension ViewController {
         let members = guestHistoryMembers(for: conversation)
         let unreadCount = min(999, members.reduce(0) { $0 + $1.unreadCount })
         let name = NSTextField(labelWithString: privateConversationDisplayName(conversation))
+        name.textColor = .labelColor
         name.font = .systemFont(ofSize: messageCenterFontSize, weight: unreadCount > 0 ? .semibold : .medium)
         name.lineBreakMode = .byTruncatingTail
         name.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -2011,27 +2015,33 @@ extension ViewController {
         let remaining = max(0, LegacyMediaTransfer.maximumImagesPerPrivateMessage - privateMessageAttachments.imageCount)
         let selected = Array(urls.prefix(remaining))
         guard !selected.isEmpty else { return }
-        do {
-            let prepared = try selected.map { try CarrachoMediaImageProcessor.prepare(url: $0) }
-            privateMessageSendButton.isEnabled = false
-            privateMessageComposerStatusLabel.stringValue = L("Uploading image…")
-            uploadPreparedMedia(prepared, client: mediaClient) { [weak self, weak mediaClient] result in
-                guard let self, self.mediaClient === mediaClient else { return }
-                switch result {
-                case let .success(ids):
-                    self.addUploadedImages(ids: ids, prepared: prepared, to: self.privateMessageAttachments)
-                    self.privateMessageComposerStatusLabel.stringValue = LF("Message to %@", conversation.nickname)
-                case let .failure(error):
-                    self.showError(LF("Image upload failed: %@", Self.displayMessage(for: error)))
+        privateMessageSendButton.isEnabled = false
+        privateMessageComposerStatusLabel.stringValue = L("Uploading image…")
+        CarrachoMediaImageProcessor.prepare(urls: selected) { [weak self] preparation in
+            guard let self, self.mediaClient === mediaClient,
+                  self.selectedPrivateConversationID == conversationID else { return }
+            do {
+                let prepared = try preparation.get()
+                uploadPreparedMedia(prepared, client: mediaClient) { [weak self, weak mediaClient] result in
+                    guard let self, self.mediaClient === mediaClient,
+                          self.selectedPrivateConversationID == conversationID else { return }
+                    switch result {
+                    case let .success(ids):
+                        self.addUploadedImages(ids: ids, prepared: prepared, to: self.privateMessageAttachments)
+                        self.privateMessageComposerStatusLabel.stringValue = LF("Message to %@", conversation.nickname)
+                    case let .failure(error):
+                        self.showError(LF("Image upload failed: %@", Self.displayMessage(for: error)))
+                    }
+                    if let current = self.privateMessageConversations[conversationID] {
+                        self.privateMessageSendButton.isEnabled = self.client.isConnected && self.liveUser(for: current) != nil
+                    } else {
+                        self.privateMessageSendButton.isEnabled = false
+                    }
                 }
-                if let current = self.privateMessageConversations[conversationID] {
-                    self.privateMessageSendButton.isEnabled = self.client.isConnected && self.liveUser(for: current) != nil
-                } else {
-                    self.privateMessageSendButton.isEnabled = false
-                }
+            } catch {
+                refreshPrivateMessageCenter(scrollToBottom: false)
+                showError(LF("Image could not be prepared: %@", Self.displayMessage(for: error)))
             }
-        } catch {
-            showError(LF("Image could not be prepared: %@", Self.displayMessage(for: error)))
         }
     }
 
@@ -2049,27 +2059,33 @@ extension ViewController {
                          String(LegacyMediaTransfer.maximumImagesPerPrivateMessage)))
             return
         }
-        do {
-            let prepared = try CarrachoMediaImageProcessor.prepare(data: data)
-            privateMessageSendButton.isEnabled = false
-            privateMessageComposerStatusLabel.stringValue = L("Uploading image…")
-            uploadPreparedMedia([prepared], client: mediaClient) { [weak self, weak mediaClient] result in
-                guard let self, self.mediaClient === mediaClient else { return }
-                switch result {
-                case let .success(ids):
-                    self.addUploadedImages(ids: ids, prepared: [prepared], to: self.privateMessageAttachments)
-                    self.privateMessageComposerStatusLabel.stringValue = LF("Message to %@", conversation.nickname)
-                case let .failure(error):
-                    self.showError(LF("Image upload failed: %@", Self.displayMessage(for: error)))
+        privateMessageSendButton.isEnabled = false
+        privateMessageComposerStatusLabel.stringValue = L("Uploading image…")
+        CarrachoMediaImageProcessor.prepare(data: data) { [weak self] preparation in
+            guard let self, self.mediaClient === mediaClient,
+                  self.selectedPrivateConversationID == conversationID else { return }
+            do {
+                let prepared = try preparation.get()
+                uploadPreparedMedia([prepared], client: mediaClient) { [weak self, weak mediaClient] result in
+                    guard let self, self.mediaClient === mediaClient,
+                          self.selectedPrivateConversationID == conversationID else { return }
+                    switch result {
+                    case let .success(ids):
+                        self.addUploadedImages(ids: ids, prepared: [prepared], to: self.privateMessageAttachments)
+                        self.privateMessageComposerStatusLabel.stringValue = LF("Message to %@", conversation.nickname)
+                    case let .failure(error):
+                        self.showError(LF("Image upload failed: %@", Self.displayMessage(for: error)))
+                    }
+                    if let current = self.privateMessageConversations[conversationID] {
+                        self.privateMessageSendButton.isEnabled = self.client.isConnected && self.liveUser(for: current) != nil
+                    } else {
+                        self.privateMessageSendButton.isEnabled = false
+                    }
                 }
-                if let current = self.privateMessageConversations[conversationID] {
-                    self.privateMessageSendButton.isEnabled = self.client.isConnected && self.liveUser(for: current) != nil
-                } else {
-                    self.privateMessageSendButton.isEnabled = false
-                }
+            } catch {
+                refreshPrivateMessageCenter(scrollToBottom: false)
+                showError(LF("Clipboard image could not be prepared: %@", Self.displayMessage(for: error)))
             }
-        } catch {
-            showError(LF("Clipboard image could not be prepared: %@", Self.displayMessage(for: error)))
         }
     }
 

@@ -186,8 +186,12 @@ final class LegacyMediaClient {
                         finish(.failure(error))
                     }
                 }
-            case let .failed(error): finish(.failure(LegacyMediaClientError.transport(error.localizedDescription)))
-            case .cancelled: break
+            case let .waiting(error), let .failed(error):
+                // An unavailable transfer port must report an error promptly instead of
+                // leaving the composer looking stuck while Network.framework retries.
+                finish(.failure(LegacyMediaClientError.transport(error.localizedDescription)))
+            case .cancelled:
+                finish(.failure(LegacyMediaClientError.transport("The media connection was closed.")))
             default: break
             }
         }

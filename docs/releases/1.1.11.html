@@ -23,13 +23,17 @@
     <a class="release-back" href="../">← Carracho</a>
     <nav class="release-downloads" aria-label="Downloads"><a class="button button-secondary" href="https://github.com/ProfDrLuigi/Carracho/releases" rel="noreferrer">Client downloads</a> <a class="button button-secondary" href="https://github.com/ProfDrLuigi/Carracho-Server/releases" rel="noreferrer">Server downloads</a></nav>
 <h1>Carracho 1.1.11</h1>
-<p>Carracho <strong>Client 1.1.11 (build 22)</strong> fixes user icons disappearing after an automatic reconnect. Activating a bookmark that reconnected in the background now preserves the latest user pictures, online users and status messages. Missing pictures can also be recovered through user information requests. This is a Client update; <strong>Server 1.1.8 (build 19)</strong> remains the current Server version.</p>
+<p>Carracho <strong>Client 1.1.11 (build 22)</strong> fixes user icons disappearing after an automatic reconnect, sets explicit adaptive text colors in Message Center and improves screenshot attachments in private messages, chat and News. Image preparation now runs outside the UI thread, attachment dialogs belong to their editor window and unavailable upload connections report an error promptly. This is a Client update; <strong>Server 1.1.8 (build 19)</strong> remains the current Server version.</p>
 <h2>Highlights</h2>
 <ul>
 <li>User icons remain visible when activating a bookmark after a background reconnect.</li>
 <li>The latest user list, presence and status messages survive reconnect setup.</li>
 <li>User information refreshes recover missing avatars without requiring a manual disconnect and reconnect.</li>
 <li>Delayed replies cannot overwrite newer user pictures or update another server&#x27;s visible user list.</li>
+<li>Added explicit adaptive text colors for Offline Messages, conversation names and the Message Center header to address unreadable dark text.</li>
+<li>Large screenshots are decoded, resized and compressed outside the UI thread before attachment upload.</li>
+<li>Image selection dialogs belong to their editor window, including nested News editor sheets.</li>
+<li>Unavailable upload connections now report an error promptly instead of waiting for network retries.</li>
 <li>Updated the Client to <strong>1.1.11 / build 22</strong>. The Server remains <strong>1.1.8 / build 19</strong>.</li>
 </ul>
 <h2>Carracho Client 1.1.11</h2>
@@ -39,6 +43,17 @@
 <h3>Recover missing avatars and guard delayed replies</h3>
 <p>User information refreshes now restore the user&#x27;s picture as well as their status message and group color. Responses are checked against the originating connection, authenticated session and requested user record before being applied. A delayed reply therefore cannot overwrite a newer picture update or repaint another Server&#x27;s user list after a bookmark switch.</p>
 <p>If the originating bookmark was moved to the background while the request was in flight, its recovered picture is saved in that bookmark&#x27;s session snapshot. No manual disconnect and reconnect is needed to recover an avatar through the user information refresh. Connection tests verify picture recovery, preservation of newer updates and isolation between bookmark views.</p>
+<h3>Use adaptive text colors in Message Center</h3>
+<p>Set explicit adaptive text colors for the Offline Messages item, conversation names and the Message Center header to address a report of black, unreadable text on macOS 12.7.6. These labels now follow the selected Light or Dark appearance instead of relying on the default label color.</p>
+<p>The Client builds successfully and the Offline Messages row has been checked in Light and Dark appearances, both selected and unselected. Verification on macOS 12.7.6 itself is still pending; the reported appearance issue has not been reproduced on that OS in the development environment.</p>
+<h3>Keep screenshot attachment preparation responsive</h3>
+<p>Image preparation for private messages, chat and News now runs on a background queue. Large images are decoded directly to the compose size with ImageIO instead of decoding and drawing the full image with AppKit on the UI thread. This keeps the interface responsive while screenshots are resized and compressed before uploading, while preserving orientation and the existing attachment size limits.</p>
+<p>The affected composer actions are disabled before preparation starts and restored after completion or a preparation error. Results are checked against the originating conversation, channel or editor context before being added, so switching views or server connections during preparation cannot place an attachment in another conversation.</p>
+<h3>Keep attachment dialogs with their editor window</h3>
+<p>Image selection dialogs now attach to the actual editor window, including News editor sheets, instead of opening as an unrelated modal panel. Cancelling the picker does not start an upload, and the surrounding editor remains available after the picker closes.</p>
+<h3>Report unavailable upload connections promptly</h3>
+<p>Media transfers now report a Network.framework waiting or failed connection as an error promptly. An unavailable upload port therefore does not leave the composer looking stuck while the network connection retries. A cancelled media connection also completes with an error; an upload accepted by a server that never acknowledges it remains bounded by the existing timeout.</p>
+<p>Regression checks cover large PNG screenshots, clipboard TIFF images, orientation, image size limits, invalid input, encrypted upload/download, the nested News image picker, private-message and News posting with attachments, and a server that accepts an upload but never sends its acknowledgement. The specific upload/send hang reported on macOS 12.7.6 has not been reproduced in the development environment and needs testing on that system.</p>
 <h2>Carracho Server 1.1.8</h2>
 <h3>Send exact 64-bit sizes to modern clients</h3>
 <p>The macOS Server and native Linux Server now send exact file sizes in modern-only metadata for directory listings and file information replies. Previously, both Server implementations clamped these values to the historical 32-bit maximum of 4,294,967,295 bytes even for modern connections. Large-file sizes are now retained before encoding, and each directory page carries one 64-bit value for each entry.</p>
@@ -50,7 +65,7 @@
 <ul>
 <li><strong>Client:</strong> 1.1.11 (build 22).</li>
 <li><strong>Server:</strong> 1.1.8 (build 19), unchanged. The Server section above documents the current Server release.</li>
-<li>The reconnect avatar correction requires only the updated Client. No Server update, database migration or index rebuild is needed for this correction.</li>
+<li>The reconnect avatar, Message Center color and attachment changes require only the updated Client. No Server update, database migration or index rebuild is needed for these changes.</li>
 <li>The 64-bit file-size improvements from Client 1.1.10 remain included; exact large-file sizes still require Server 1.1.8 or later and a modern connection.</li>
 <li>Modern and explicit Classic/Legacy connections remain supported. No wire-protocol changes were introduced in Client 1.1.11.</li>
 </ul>

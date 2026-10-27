@@ -1,53 +1,78 @@
 import AppKit
 import CryptoKit
 import Foundation
+import ImageIO
 import WebKit
 
-struct CarrachoPreparedMediaImage {
+nonisolated struct CarrachoPreparedMediaImage: Sendable {
     var filename: String
     var data: Data
 }
 
-enum CarrachoMediaImageProcessor {
+nonisolated enum CarrachoMediaImageProcessor {
     static let maximumComposeDimension: CGFloat = 2048
+    private static let preparationQueue = DispatchQueue(label: "com.carracho.media-preparation", qos: .userInitiated)
+
+    @MainActor static func prepare(urls: [URL], completion: @escaping @MainActor (Result<[CarrachoPreparedMediaImage], Error>) -> Void) {
+        preparationQueue.async {
+            let result = Result { try urls.map { try prepare(url: $0) } }
+            DispatchQueue.main.async { completion(result) }
+        }
+    }
+
+    @MainActor static func prepare(data: Data, completion: @escaping @MainActor (Result<CarrachoPreparedMediaImage, Error>) -> Void) {
+        preparationQueue.async {
+            let result = Result { try prepare(data: data) }
+            DispatchQueue.main.async { completion(result) }
+        }
+    }
 
     static func prepare(url: URL) throws -> CarrachoPreparedMediaImage {
-        guard let image = NSImage(contentsOf: url) else { throw LegacyMediaClientError.invalidImage }
-        return try prepare(image: image, suggestedFilename: url.lastPathComponent,
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary) else {
+            throw LegacyMediaClientError.invalidImage
+        }
+        return try prepare(source: source, suggestedFilename: url.lastPathComponent,
                            preferPNG: url.pathExtension.lowercased() == "png")
     }
 
     static func prepare(data: Data, suggestedFilename: String = "clipboard.png") throws -> CarrachoPreparedMediaImage {
-        guard let image = NSImage(data: data) else { throw LegacyMediaClientError.invalidImage }
-        return try prepare(image: image, suggestedFilename: suggestedFilename, preferPNG: true)
+        guard let source = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary) else {
+            throw LegacyMediaClientError.invalidImage
+        }
+        return try prepare(source: source, suggestedFilename: suggestedFilename, preferPNG: true)
     }
 
-    private static func prepare(image: NSImage, suggestedFilename: String, preferPNG: Bool) throws -> CarrachoPreparedMediaImage {
-        guard image.size.width > 0, image.size.height > 0 else { throw LegacyMediaClientError.invalidImage }
-        let scale = min(1, maximumComposeDimension / max(image.size.width, image.size.height))
-        let size = NSSize(width: max(1, floor(image.size.width * scale)), height: max(1, floor(image.size.height * scale)))
-        guard let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(size.width), pixelsHigh: Int(size.height),
-                                            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
-                                            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0),
-              let context = NSGraphicsContext(bitmapImageRep: bitmap) else { throw LegacyMediaClientError.invalidImage }
-        NSGraphicsContext.saveGraphicsState(); NSGraphicsContext.current = context
-        NSColor.clear.setFill(); NSRect(origin: .zero, size: size).fill()
-        image.draw(in: NSRect(origin: .zero, size: size), from: .zero, operation: .sourceOver, fraction: 1,
-                   respectFlipped: true, hints: [.interpolation: NSImageInterpolation.high])
-        NSGraphicsContext.restoreGraphicsState()
-
+    private static func prepare(source: CGImageSource, suggestedFilename: String, preferPNG: Bool) throws -> CarrachoPreparedMediaImage {
+        // Decode directly to the compose size instead of drawing a full-resolution screenshot
+        // with AppKit on the UI thread. The transform also preserves camera orientation.
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: Int(maximumComposeDimension),
+            kCGImageSourceShouldCacheImmediately: true,
+        ]
+        guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary),
+              image.width > 0, image.height > 0 else { throw LegacyMediaClientError.invalidImage }
         let stem = URL(fileURLWithPath: suggestedFilename).deletingPathExtension().lastPathComponent
         let safeStem = String((stem.isEmpty ? "image" : stem).prefix(220))
-        if preferPNG, let png = bitmap.representation(using: .png, properties: [:]), png.count <= LegacyMediaTransfer.maximumImageBytes {
+        if preferPNG, let png = encoded(image, type: "public.png", properties: [:]), png.count <= LegacyMediaTransfer.maximumImageBytes {
             return CarrachoPreparedMediaImage(filename: safeStem + ".png", data: png)
         }
-        for quality in [0.88, 0.78, 0.68, 0.56] as [CGFloat] {
-            if let jpg = bitmap.representation(using: .jpeg, properties: [.compressionFactor: quality]),
+        for quality in [0.88, 0.78, 0.68, 0.56] {
+            if let jpg = encoded(image, type: "public.jpeg", properties: [kCGImageDestinationLossyCompressionQuality: quality]),
                jpg.count <= LegacyMediaTransfer.maximumImageBytes {
                 return CarrachoPreparedMediaImage(filename: safeStem + ".jpg", data: jpg)
             }
         }
         throw LegacyMediaClientError.invalidImage
+    }
+
+    private static func encoded(_ image: CGImage, type: String, properties: [CFString: Any]) -> Data? {
+        let output = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(output, type as CFString, 1, nil) else { return nil }
+        CGImageDestinationAddImage(destination, image, properties as CFDictionary)
+        guard CGImageDestinationFinalize(destination) else { return nil }
+        return output as Data
     }
 }
 

@@ -29,6 +29,17 @@
 <h3>Recover missing avatars and guard delayed replies</h3>
 <p>User information refreshes now restore the user&#x27;s picture as well as their status message and group color. Responses are checked against the originating connection, authenticated session and requested user record before being applied. A delayed reply therefore cannot overwrite a newer picture update or repaint another Server&#x27;s user list after a bookmark switch.</p>
 <p>If the originating bookmark was moved to the background while the request was in flight, its recovered picture is saved in that bookmark&#x27;s session snapshot. No manual disconnect and reconnect is needed to recover an avatar through the user information refresh. Connection tests verify picture recovery, preservation of newer updates and isolation between bookmark views.</p>
+<h3>Use adaptive text colors in Message Center</h3>
+<p>Set explicit adaptive text colors for the Offline Messages item, conversation names and the Message Center header to address a report of black, unreadable text on macOS 12.7.6. These labels now follow the selected Light or Dark appearance instead of relying on the default label color.</p>
+<p>The Client builds successfully and the Offline Messages row has been checked in Light and Dark appearances, both selected and unselected. Verification on macOS 12.7.6 itself is still pending; the reported appearance issue has not been reproduced on that OS in the development environment.</p>
+<h3>Keep screenshot attachment preparation responsive</h3>
+<p>Image preparation for private messages, chat and News now runs on a background queue. Large images are decoded directly to the compose size with ImageIO instead of decoding and drawing the full image with AppKit on the UI thread. This keeps the interface responsive while screenshots are resized and compressed before uploading, while preserving orientation and the existing attachment size limits.</p>
+<p>The affected composer actions are disabled before preparation starts and restored after completion or a preparation error. Results are checked against the originating conversation, channel or editor context before being added, so switching views or server connections during preparation cannot place an attachment in another conversation.</p>
+<h3>Keep attachment dialogs with their editor window</h3>
+<p>Image selection dialogs now attach to the actual editor window, including News editor sheets, instead of opening as an unrelated modal panel. Cancelling the picker does not start an upload, and the surrounding editor remains available after the picker closes.</p>
+<h3>Report unavailable upload connections promptly</h3>
+<p>Media transfers now report a Network.framework waiting or failed connection as an error promptly. An unavailable upload port therefore does not leave the composer looking stuck while the network connection retries. A cancelled media connection also completes with an error; an upload accepted by a server that never acknowledges it remains bounded by the existing timeout.</p>
+<p>Regression checks cover large PNG screenshots, clipboard TIFF images, orientation, image size limits, invalid input, encrypted upload/download, the nested News image picker, private-message and News posting with attachments, and a server that accepts an upload but never sends its acknowledgement. The specific upload/send hang reported on macOS 12.7.6 has not been reproduced in the development environment and needs testing on that system.</p>
   </main>
 </body>
 </html>

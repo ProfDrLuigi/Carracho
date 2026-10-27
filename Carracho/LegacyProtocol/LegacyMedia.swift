@@ -189,7 +189,7 @@ struct LegacyYouTubeReference: Equatable, Hashable {
 }
 
 enum LegacyMediaTransfer {
-    static let maximumImageBytes = 4 * 1024 * 1024
+    nonisolated static let maximumImageBytes = 4 * 1024 * 1024
     static let maximumDimension = 4096
     static let maximumImagesPerChatMessage = 4
     static let maximumImagesPerPrivateMessage = 4
