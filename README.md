@@ -18,14 +18,14 @@ The modern transport protects far more than login traffic: chat/control packets,
 
 See the collapsible **Security and modern encryption** section below for the protocol details.
 
-### Current release: 1.1.11
+### Current release: 1.1.12
 
-Carracho Client 1.1.11 (build 22) fixes user icons disappearing after an automatic reconnect, sets explicit adaptive text colors in Message Center and improves screenshot attachments in private messages, chat and News. Image preparation now runs outside the UI thread, attachment dialogs belong to their editor window and unavailable upload connections report an error promptly. This is a Client update; Server 1.1.8 (build 19) remains the current Server version.
+Carracho Client 1.1.12 (build 23) corrects the appearance of settings cards on macOS 10.15 Catalina. Card backgrounds now resolve their colors using the window's appearance, addressing white cards with unreadable light text in the dark Settings window. Server 1.1.8 (build 19) remains the current Server version; this correction requires only the updated Client.
 
-- Client: **1.1.11 (build 22)**
+- Client: **1.1.12 (build 23)**
 - Server: **1.1.8 (build 19)**
 
-The full release notes are available in [`README_1.1.11.md`](README_1.1.11.md).
+The full release notes are available in [`README_1.1.12.md`](README_1.1.12.md).
 
 ## At a glance
 

@@ -7,6 +7,16 @@ enum CarrachoTheme {
         appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
     }
 
+    // Catalina has no performAsCurrentDrawingAppearance. NSColor's dynamic provider
+    // resolves against the thread's current appearance when converted to CGColor.
+    @available(macOS, introduced: 10.14, deprecated: 11.0)
+    static func withLegacyDrawingAppearance(_ appearance: NSAppearance, perform body: () -> Void) {
+        let previous = NSAppearance.current
+        NSAppearance.current = appearance
+        defer { NSAppearance.current = previous }
+        body()
+    }
+
     static func cardColor(for appearance: NSAppearance) -> NSColor {
         isDark(appearance)
             ? NSColor(calibratedRed: 0.115, green: 0.118, blue: 0.140, alpha: 1)
@@ -314,6 +324,11 @@ final class CarrachoCardView: NSView {
         refreshColors()
     }
 
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        refreshColors()
+    }
+
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
         refreshColors()
@@ -321,12 +336,14 @@ final class CarrachoCardView: NSView {
 
     private func refreshColors() {
         guard let layer else { return }
-        if #available(macOS 11.0, *) { effectiveAppearance.performAsCurrentDrawingAppearance {
-            layer.backgroundColor = fillColor.cgColor
+        let updateLayerColors = {
+            layer.backgroundColor = self.fillColor.cgColor
             layer.borderColor = CarrachoTheme.hairline.withAlphaComponent(0.55).cgColor
-        } } else {
-            layer.backgroundColor = fillColor.cgColor
-            layer.borderColor = CarrachoTheme.hairline.cgColor
+        }
+        if #available(macOS 11.0, *) {
+            effectiveAppearance.performAsCurrentDrawingAppearance(updateLayerColors)
+        } else {
+            CarrachoTheme.withLegacyDrawingAppearance(effectiveAppearance, perform: updateLayerColors)
         }
         layer.cornerRadius = cornerRadius
         layer.borderWidth = 1
