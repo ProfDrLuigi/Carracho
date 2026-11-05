@@ -3,6 +3,16 @@
     <channel>
         <title>Carracho</title>
         <item>
+            <title>1.1.12</title>
+            <pubDate>Thu, 05 Nov 2026 08:37:14 +0100</pubDate>
+            <link>https://profdrLuigi.github.io/Carracho/</link>
+            <sparkle:version>23</sparkle:version>
+            <sparkle:shortVersionString>1.1.12</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>10.15</sparkle:minimumSystemVersion>
+            <sparkle:releaseNotesLink>https://profdrLuigi.github.io/Carracho/releases/Carracho-Client-1.1.12.html</sparkle:releaseNotesLink>
+            <enclosure url="https://github.com/ProfDrLuigi/Carracho/releases/download/Carracho1.1.12/Carracho-Client-1.1.12.zip" length="13801089" type="application/octet-stream" sparkle:edSignature="BI0LYwaD/CEpKnl3BkFs7Wvck9ull5fKdGpYL3PgyB/JMRkc1BTeM5ZX3xR4OxmwNTRLoHXsaJ9TNF5nlKx8AQ=="/>
+        </item>
+        <item>
             <title>1.1.11</title>
             <pubDate>Tue, 27 Oct 2026 17:12:33 +0100</pubDate>
             <link>https://profdrLuigi.github.io/Carracho/</link>
